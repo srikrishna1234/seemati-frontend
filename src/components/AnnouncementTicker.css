@@ -1,0 +1,53 @@
+/* frontend/src/components/AnnouncementTicker.css */
+
+.ticker-wrap {
+  width: 100%;
+  overflow: hidden;
+  background: #fff9e6;
+  border-top: 1px solid #f2e7c9;
+  border-bottom: 1px solid #f2e7c9;
+}
+
+/* the moving strip */
+.ticker {
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  transform: translateX(100%); /* start off-right */
+  animation: scroll-left linear infinite;
+  padding: 8px 0;
+  /* ensure smooth animation */
+  will-change: transform;
+}
+
+/* pause class applied by JS (touch/focus) or on hover via :hover on non-touch devices */
+.ticker.paused,
+.ticker-wrap:hover .ticker,
+.ticker-wrap:focus .ticker {
+  animation-play-state: paused;
+}
+
+/* individual repeated items */
+.ticker__item {
+  display: inline-block;
+  padding: 0 40px;
+  font-weight: 600;
+  color: #b21f1f;
+  font-size: 14px;
+}
+
+/* animate from off-right to off-left */
+@keyframes scroll-left {
+  0% { transform: translateX(100%); }
+  100% { transform: translateX(-100%); }
+}
+
+/* optional reverse direction (if you add that feature later) */
+.ticker.reverse {
+  transform: translateX(-100%);
+  animation: scroll-right linear infinite;
+}
+@keyframes scroll-right {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}

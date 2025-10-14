@@ -1,0 +1,152 @@
+// frontend/src/pages/AdminProductList.js
+import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+
+const API_BASE = process.env.REACT_APP_API_URL || '';
+
+export default function AdminProductList() {
+  const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    let mounted = true;
+    async function load() {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetch(`${API_BASE}/admin-api/products`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (mounted) setProducts(data);
+      } catch (err) {
+        if (mounted) setError(err.message || 'Failed to load');
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+    load();
+    return () => { mounted = false; };
+  }, []);
+
+  function firstImageUrl(product) {
+    if (product && Array.isArray(product.images) && product.images.length > 0) {
+      const img = product.images[0];
+      if (img.url && img.url.startsWith('/')) return `${API_BASE}${img.url}`;
+      if (img.filename) return `${API_BASE}/uploads/${img.filename}`;
+    }
+    return `${API_BASE}/images/placeholder.png`;
+  }
+
+  async function handleDelete(productId) {
+    if (!productId) return;
+    const ok = window.confirm('Delete this product permanently?');
+    if (!ok) return;
+    try {
+      const res = await fetch(`${API_BASE}/admin-api/products/${productId}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`Delete failed ${res.status}: ${txt}`);
+      }
+      setProducts(prev => prev.filter(p => String(p._id || p.id) !== String(productId)));
+    } catch (err) {
+      console.error('Delete error', err);
+      alert('Could not delete product: ' + (err.message || err));
+    }
+  }
+
+  function handleEdit(productId) {
+    if (!productId) return;
+    // navigate to your edit route — change if your route is different
+    navigate(`/admin/products/${productId}/edit`);
+  }
+
+  if (loading) return <div>Loading products…</div>;
+  if (error) return <div style={{ color: 'red' }}>Error: {error}</div>;
+
+  return (
+    <div style={{ padding: 12 }}>
+      <h2>Products</h2>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
+            <th style={{ padding: '8px' }}>Image</th>
+            <th style={{ padding: '8px' }}>Title</th>
+            <th style={{ padding: '8px' }}>Price</th>
+            <th style={{ padding: '8px' }}>Stock</th>
+            <th style={{ padding: '8px' }}>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {products.length === 0 && (
+            <tr>
+              <td colSpan="5" style={{ padding: 12 }}>No products found</td>
+            </tr>
+          )}
+          {products.map((p) => (
+            <tr key={p._id || p.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+              <td style={{ padding: '8px', width: 110 }}>
+                <img
+                  src={firstImageUrl(p)}
+                  alt={p.title || 'product'}
+                  style={{
+                    width: 90,
+                    height: 90,
+                    objectFit: 'cover',
+                    borderRadius: 6,
+                    border: '1px solid #e6e6e6'
+                  }}
+                  onError={(e) => {
+                    if (e.target.src !== `${API_BASE}/images/placeholder.png`) {
+                      e.target.src = `${API_BASE}/images/placeholder.png`;
+                    }
+                  }}
+                />
+              </td>
+              <td style={{ padding: '8px' }}>{p.title}</td>
+              <td style={{ padding: '8px' }}>₹{p.price}</td>
+              <td style={{ padding: '8px' }}>{p.stock ?? 0}</td>
+              <td style={{ padding: '8px' }}>
+                <button
+                  type="button"
+                  onClick={() => handleEdit(p._id || p.id)}
+                  style={{
+                    marginRight: 8,
+                    padding: '6px 12px',
+                    borderRadius: 6,
+                    border: '1px solid #ccc',
+                    cursor: 'pointer',
+                    background: '#fff'
+                  }}
+                  aria-label={`Edit ${p.title}`}
+                >
+                  Edit
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleDelete(p._id || p.id)}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 6,
+                    border: '1px solid #e6a1a1',
+                    background: '#fff',
+                    cursor: 'pointer',
+                    color: '#b30000'
+                  }}
+                  aria-label={`Delete ${p.title}`}
+                >
+                  Delete
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}

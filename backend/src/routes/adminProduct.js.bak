@@ -1,0 +1,293 @@
+// backend/src/routes/adminProduct.js
+const express = require('express');
+const router = express.Router();
+const path = require('path');
+const fs = require('fs');
+const mongoose = require('mongoose');
+
+const Product = require('../../models/Product');
+const { deleteFile } = require('../../utils/storage'); // existing delete helper (S3 or public/images)
+const { upload, uploadDir } = require('../../utils/upload'); // our multer helper (stores to backend/uploads)
+
+// Helpers
+function isObjectIdString(s) {
+  return typeof s === 'string' && mongoose.Types.ObjectId.isValid(s);
+}
+function makeImageUrl(filename) {
+  // uploaded images are served from /uploads by your app
+  return '/uploads/' + filename;
+}
+
+// Attempt to delete from uploads dir as a fallback (non-throwing)
+async function tryDeleteFromUploads(filename) {
+  if (!filename) return;
+  try {
+    const fileNameOnly = path.basename(String(filename));
+    const abs = path.join(uploadDir, fileNameOnly);
+    if (fs.existsSync(abs)) {
+      await fs.promises.unlink(abs);
+      console.log('Deleted from uploads dir:', abs);
+    }
+  } catch (e) {
+    console.warn('Error deleting from uploads dir (ignored):', e && e.message ? e.message : e);
+  }
+}
+
+// GET list
+router.get('/admin-api/products', async (req, res) => {
+  try {
+    const products = await Product.find({}).lean();
+    res.json(products);
+  } catch (err) {
+    console.error('GET products list error', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// GET single
+router.get('/admin-api/products/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'Invalid product id' });
+    }
+    const product = await Product.findById(id).lean();
+    if (!product) return res.status(404).json({ message: 'Product not found' });
+    res.json(product);
+  } catch (err) {
+    console.error('GET product error (detailed):', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Soft-delete an image
+router.post('/admin-api/products/:productId/images/:imageId/soft-delete', async (req, res) => {
+  try {
+    const { productId, imageId } = req.params;
+    if (!isObjectIdString(productId) || !isObjectIdString(imageId)) {
+      return res.status(400).json({ message: 'Invalid id(s)' });
+    }
+    const product = await Product.findById(productId);
+    if (!product) return res.status(404).json({ message: 'Product not found' });
+    const img = product.images.id(imageId);
+    if (!img) return res.status(404).json({ message: 'Image not found' });
+    if (img.deleted) {
+      return res.json({ success: true, message: 'Image already marked deleted' });
+    }
+    img.deleted = true;
+    img.deletedAt = new Date();
+    await product.save();
+    res.json({ success: true, message: 'Image marked for deletion (soft)' });
+  } catch (err) {
+    console.error('Soft-delete image error:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Undo soft-delete
+router.post('/admin-api/products/:productId/images/:imageId/undo-delete', async (req, res) => {
+  try {
+    const { productId, imageId } = req.params;
+    if (!isObjectIdString(productId) || !isObjectIdString(imageId)) {
+      return res.status(400).json({ message: 'Invalid id(s)' });
+    }
+    const product = await Product.findById(productId);
+    if (!product) return res.status(404).json({ message: 'Product not found' });
+    const img = product.images.id(imageId);
+    if (!img) return res.status(404).json({ message: 'Image not found' });
+    img.deleted = false;
+    img.deletedAt = undefined;
+    await product.save();
+    res.json({ success: true, message: 'Image restore (undo) successful' });
+  } catch (err) {
+    console.error('Undo-delete image error:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Hard-delete image
+router.delete('/admin-api/products/:productId/images/:imageId', async (req, res) => {
+  try {
+    const { productId, imageId } = req.params;
+    if (!isObjectIdString(productId) || !isObjectIdString(imageId)) {
+      return res.status(400).json({ message: 'Invalid id(s)' });
+    }
+    const product = await Product.findById(productId);
+    if (!product) return res.status(404).json({ message: 'Product not found' });
+    const img = product.images.id(imageId);
+    if (!img) return res.status(404).json({ message: 'Image not found' });
+
+    // attempt to delete via existing helper (S3 or public/images)
+    const key = (img.filename && String(img.filename)) || (img.url ? path.basename(String(img.url)) : null);
+    try {
+      if (key) await deleteFile(key);
+    } catch (e) {
+      console.warn('deleteFile error (ignored):', e && e.message ? e.message : e);
+    }
+
+    // also try to remove from backend/uploads (fallback)
+    await tryDeleteFromUploads(key);
+
+    img.remove(); // remove subdoc
+    await product.save();
+    return res.json({ success: true, message: 'Image permanently deleted' });
+  } catch (err) {
+    console.error('Hard-delete image error:', err);
+    res.status(500).json({ message: 'Server error', detail: err?.message });
+  }
+});
+
+// UPDATE product (edit)
+// Accepts multipart/form-data with optional files (images)
+router.put('/admin-api/products/:id', upload.array('images', 12), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const permanent = req.query.permanent === 'true';
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'Invalid product id' });
+    }
+
+    const product = await Product.findById(id);
+    if (!product) return res.status(404).json({ message: 'Product not found' });
+
+    // Allowed text fields
+    const allowedFields = ['title', 'price', 'brand', 'category', 'description', 'sku'];
+    allowedFields.forEach(f => {
+      if (req.body[f] !== undefined) {
+        // coerce numeric price
+        if (f === 'price') {
+          product.price = Number(req.body.price) || 0;
+        } else {
+          product[f] = req.body[f];
+        }
+      }
+    });
+
+    // stock handling
+    if (req.body.stock !== undefined) {
+      const n = parseInt(req.body.stock, 10);
+      product.stock = Number.isNaN(n) ? 0 : n;
+    } else if (req.body.countInStock !== undefined) {
+      const n = parseInt(req.body.countInStock, 10);
+      product.stock = Number.isNaN(n) ? 0 : n;
+    }
+
+    // colors and sizes (comma-separated from frontend)
+    if (req.body.colors !== undefined) {
+      if (typeof req.body.colors === 'string') {
+        product.colors = req.body.colors.split(',').map(s => s.trim()).filter(Boolean);
+      } else if (Array.isArray(req.body.colors)) {
+        product.colors = req.body.colors.map(String).map(s => s.trim()).filter(Boolean);
+      }
+    }
+    if (req.body.sizes !== undefined) {
+      if (typeof req.body.sizes === 'string') {
+        product.sizes = req.body.sizes.split(',').map(s => s.trim()).filter(Boolean);
+      } else if (Array.isArray(req.body.sizes)) {
+        product.sizes = req.body.sizes.map(String).map(s => s.trim()).filter(Boolean);
+      }
+    }
+
+    // Handle existingImages list from client (kept) - could be ids or urls
+    let keptRaw = [];
+    if (req.body.existingImages) {
+      try {
+        const parsed = JSON.parse(req.body.existingImages);
+        if (Array.isArray(parsed)) keptRaw = parsed;
+      } catch (e) {
+        console.warn('Could not parse existingImages JSON:', e);
+      }
+    }
+
+    const keptById = new Set();
+    const keptByUrl = new Set();
+    keptRaw.forEach(item => {
+      if (isObjectIdString(item)) keptById.add(String(item));
+      else if (typeof item === 'string') keptByUrl.add(item);
+    });
+
+    // Mark removed images (soft or permanent)
+    const previousImages = Array.isArray(product.images) ? product.images : [];
+    for (const img of previousImages.slice()) {
+      const idStr = String(img._id);
+      const urlStr = String(img.url || '');
+      if (!(keptById.has(idStr) || keptByUrl.has(urlStr))) {
+        if (permanent) {
+          try {
+            await deleteFile(img.filename || path.basename(img.url || ''));
+          } catch (e) {
+            console.warn('deleteFile during update error:', e && e.message ? e.message : e);
+          }
+          await tryDeleteFromUploads(img.filename || path.basename(img.url || ''));
+          product.images.id(img._id).remove();
+        } else {
+          const sub = product.images.id(img._id);
+          if (sub) {
+            sub.deleted = true;
+            sub.deletedAt = new Date();
+          }
+        }
+      }
+    }
+
+    // Uploaded images -> push as subdocs
+    const uploadedImages = (req.files || []).map(f => ({
+      filename: f.filename,
+      url: makeImageUrl(f.filename),
+      deleted: false,
+      deletedAt: undefined
+    }));
+    for (const ui of uploadedImages) product.images.push(ui);
+
+    await product.save();
+    const updated = await Product.findById(id).lean();
+    res.json(updated);
+  } catch (err) {
+    console.error('Update product error:', err);
+    res.status(500).json({ message: 'Server error', detail: err?.message });
+  }
+});
+
+// CREATE product
+router.post('/admin-api/products', upload.array('images', 12), async (req, res) => {
+  try {
+    const payload = {
+      title: req.body.title || 'Untitled product',
+      description: req.body.description || '',
+      price: Number(req.body.price) || 0,
+      sku: req.body.sku || '',
+      stock: Number(req.body.stock) || 0,
+      brand: req.body.brand || '',
+      category: req.body.category || '',
+      colors: [],
+      sizes: []
+    };
+
+    if (req.body.colors) {
+      if (typeof req.body.colors === 'string') payload.colors = req.body.colors.split(',').map(s => s.trim()).filter(Boolean);
+      else if (Array.isArray(req.body.colors)) payload.colors = req.body.colors.map(String).map(s => s.trim()).filter(Boolean);
+    }
+    if (req.body.sizes) {
+      if (typeof req.body.sizes === 'string') payload.sizes = req.body.sizes.split(',').map(s => s.trim()).filter(Boolean);
+      else if (Array.isArray(req.body.sizes)) payload.sizes = req.body.sizes.map(String).map(s => s.trim()).filter(Boolean);
+    }
+
+    const uploadedImages = (req.files || []).map(f => ({
+      filename: f.filename,
+      url: makeImageUrl(f.filename),
+      deleted: false,
+      deletedAt: undefined
+    }));
+    payload.images = uploadedImages;
+
+    const p = new Product(payload);
+    await p.save();
+    res.status(201).json(p);
+  } catch (err) {
+    console.error('Create product error:', err);
+    res.status(500).json({ message: 'Server error', detail: err?.message });
+  }
+});
+
+module.exports = router;

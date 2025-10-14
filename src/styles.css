@@ -1,0 +1,140 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* optional: smooth fonts */
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Make the announcement ticker non-blocking so it won't intercept clicks */
+.announcement-ticker,
+.announcementTicker,
+.announcement-wrapper {
+  pointer-events: none;
+  position: relative;
+  z-index: 1;
+}
+
+/* If the ticker contains links or buttons, make only them clickable */
+.announcement-ticker a,
+.announcement-ticker button,
+.announcementTicker a,
+.announcementTicker button,
+.announcement-wrapper a,
+.announcement-wrapper button {
+  pointer-events: auto;
+}
+
+/* make the moving ticker non-blocking so it doesn't intercept clicks */
+.ticker-wrap,
+.ticker {
+  pointer-events: none !important; /* don't let it capture clicks */
+  position: relative;
+  z-index: 1;
+}
+
+/* allow links/buttons inside the ticker to still be clickable (if you need them) */
+.ticker a,
+.ticker button,
+.ticker__item {
+  pointer-events: auto !important;
+  z-index: 2;
+}
+
+/* safety: ensure our product card buttons sit on top */
+.product-card-button,
+.product-card .btn,
+.product-card button,
+.product-card a.btn {
+  position: relative;
+  z-index: 99999 !important;
+  pointer-events: auto !important;
+}
+
+/* -------------------------
+   Product image zoom + pan
+   Usage:
+     - Wrap the product <img> inside an element with class:
+         .product-image-container
+       e.g. <div className="product-image-container"><img className="product-image" ... /></div>
+     - Ensure this CSS file is imported/used by your app (it is by default).
+   ------------------------- */
+
+/* Container keeps the image centered and clips overflow */
+.product-image-container {
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  /* default mouse position in percent (center) */
+  --mx: 50%;
+  --my: 50%;
+
+  /* improve rendering performance */
+  -webkit-transform-style: preserve-3d;
+  transform-style: preserve-3d;
+}
+
+/* Image basic rules */
+.product-image {
+  width: 100%;
+  height: auto;
+  object-fit: contain;        /* ensure full product visible inside container */
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  will-change: transform;
+
+  /* transition for smooth zoom/pan */
+  transition: transform 380ms cubic-bezier(.2,.9,.2,1), box-shadow 240ms ease;
+  transform-origin: center center; /* baseline origin (we modify via translate) */
+}
+
+/* Hover state: scale (zoom) + translate (pan toward cursor)
+   The translate values are calculated from CSS variables --mx/--my which are percentages.
+   We subtract 50% to get a centered offset (-50%..+50%), then multiply by a factor to limit pan amount.
+*/
+.product-image-container:hover .product-image,
+.product-image-container:focus-within .product-image {
+  /* scale: stronger zoom (1.30 = 30%) */
+  /* translate: we convert percentage offset into smaller translate to avoid runaway pan */
+  transform: scale(1.30)
+    translate(
+      calc((var(--mx, 50%) - 50%) * 0.6),
+      calc((var(--my, 50%) - 50%) * 0.45)
+    );
+  box-shadow: 0 18px 40px rgba(0,0,0,0.14);
+  z-index: 4;
+  cursor: zoom-in;
+}
+
+/* Focus/keyboard accessibility: allow keyboard users to trigger zoom */
+.product-image-container:focus-within .product-image,
+.product-image:focus {
+  outline: none;
+}
+
+/* Subtle reduction of zoom for very small screens (optional) */
+@media (max-width: 640px) {
+  .product-image-container:hover .product-image {
+    transform: scale(1.18)
+      translate(calc((var(--mx, 50%) - 50%) * 0.4), calc((var(--my, 50%) - 50%) * 0.35));
+  }
+}
+
+/* Utility: if you have a fixed height card image area, keep that visually consistent */
+.product-image-box {
+  /* example fixed height; optional - use only if your markup uses it */
+  height: 14rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* small helper to keep product card buttons clickable above the image */
+.product-image-container .product-card-actions {
+  position: relative;
+  z-index: 10;
+}

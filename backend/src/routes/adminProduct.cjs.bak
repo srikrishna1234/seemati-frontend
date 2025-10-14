@@ -1,0 +1,332 @@
+// backend/src/routes/adminProduct.cjs
+// Safe admin product routes (CommonJS)
+// Mount at /admin-api in server.js so frontend can call /admin-api/products
+
+const express = require('express');
+const path = require('path');
+const fs = require('fs');
+const mongoose = require('mongoose');
+const multer = require('multer');
+
+// optional jsonwebtoken (may be used if JWT_SECRET configured)
+let jwt = null;
+try { jwt = require('jsonwebtoken'); } catch (e) { jwt = null; }
+
+const router = express.Router();
+
+// Resolve Product model
+let Product = null;
+try {
+  const prodPath = path.join(__dirname, '..', '..', 'models', 'Product.js');
+  Product = require(prodPath);
+  Product = Product && (Product.default || Product);
+} catch (e) {
+  console.error('[adminProduct] Failed to load Product model:', e && e.message ? e.message : e);
+  Product = null;
+}
+
+// -------------------
+// Authentication helper
+// -------------------
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || null;
+const JWT_SECRET = process.env.JWT_SECRET || null;
+
+function getBearerToken(req) {
+  const h = req.get('authorization') || req.get('Authorization') || '';
+  if (!h) return null;
+  return h.replace(/^\s*Bearer\s+/i, '').trim() || null;
+}
+
+// Middleware: allow ADMIN_TOKEN or valid JWT
+function checkAdminAuth(req, res, next) {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      return res.status(401).json({ ok: false, message: 'Unauthorized' });
+    }
+
+    // 1) Exact admin token
+    if (ADMIN_TOKEN && token === ADMIN_TOKEN) {
+      req.admin = { via: 'admin_token' };
+      return next();
+    }
+
+    // 2) JWT verify
+    if (jwt && JWT_SECRET) {
+      try {
+        const payload = jwt.verify(token, JWT_SECRET);
+        req.admin = { via: 'jwt', payload };
+        return next();
+      } catch (e) {
+        // invalid token -> continue to unauthorized
+      }
+    }
+
+    return res.status(401).json({ ok: false, message: 'Unauthorized' });
+  } catch (err) {
+    console.error('[adminProduct] auth middleware error:', err);
+    return res.status(500).json({ ok: false, message: 'Server error' });
+  }
+}
+
+// -------------------
+// Helper functions
+// -------------------
+
+// Helper slugify (simple and robust)
+function slugify(input) {
+  if (!input) return null;
+  const s = String(input).toLowerCase();
+  return s
+    .replace(/[\u2000-\u206F\u2E00-\u2E7F'!"#$%&()*+,./:;<=>?@\[\\\]^`{|}~]+/g, '-')
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/--+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+// Ensure unique slug (appends -1, -2... if necessary)
+async function ensureUniqueSlug(baseSlug) {
+  if (!Product) return String(new mongoose.Types.ObjectId());
+  if (!baseSlug) {
+    // fallback to object id
+    return String(new mongoose.Types.ObjectId());
+  }
+  let slug = baseSlug;
+  let i = 0;
+  while (await Product.findOne({ slug })) {
+    i += 1;
+    slug = `${baseSlug}-${i}`;
+    if (i > 1000) {
+      slug = `${baseSlug}-${String(new mongoose.Types.ObjectId()).slice(0, 6)}`;
+      break;
+    }
+  }
+  return slug;
+}
+
+// -------------------
+// Multer upload endpoint (uploads to backend/uploads)
+// -------------------
+const uploadDir = path.join(__dirname, '..', '..', 'uploads');
+if (!fs.existsSync(uploadDir)) {
+  try { fs.mkdirSync(uploadDir, { recursive: true }); } catch (e) { /* ignore */ }
+}
+
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, uploadDir);
+  },
+  filename: function (req, file, cb) {
+    const ts = Date.now();
+    const safe = String(file.originalname || 'file').replace(/\s+/g, '-').replace(/[^a-zA-Z0-9._-]/g, '');
+    cb(null, `${ts}-${safe}`);
+  }
+});
+const uploader = multer({ storage });
+
+// POST /products/upload
+router.post('/products/upload', checkAdminAuth, uploader.single('file'), (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ ok: false, message: 'No file uploaded' });
+    const filename = req.file.filename;
+    const url = `/uploads/${filename}`;
+    console.log('[adminProduct] Uploaded:', filename, 'by', req.admin ? req.admin.via : 'unknown');
+    return res.json({ ok: true, filename, url });
+  } catch (err) {
+    console.error('[adminProduct] upload error:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ ok: false, message: 'Upload failed' });
+  }
+});
+
+// -------------------
+// List / CRUD for products
+// -------------------
+
+// GET /products => list admin products
+router.get('/products', async (req, res) => {
+  try {
+    if (!Product) return res.status(500).json({ ok: false, message: 'Server error' });
+    const products = await Product.find({}).sort({ createdAt: -1 }).lean().exec();
+    return res.json(products);
+  } catch (err) {
+    console.error('[adminProduct] GET /products error:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ ok: false, message: 'Server error' });
+  }
+});
+
+// GET /products/:id => fetch single product
+router.get('/products/:id', async (req, res) => {
+  try {
+    if (!Product) return res.status(500).json({ ok: false, message: 'Server error' });
+    const id = req.params.id;
+    const product = await Product.findById(id).lean().exec();
+    if (!product) return res.status(404).json({ ok: false, message: 'Not found' });
+    return res.json(product);
+  } catch (err) {
+    console.error('[adminProduct] GET /products/:id error:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ ok: false, message: 'Server error' });
+  }
+});
+
+// POST /products -> create (requires auth)
+router.post('/products', checkAdminAuth, async (req, res) => {
+  try {
+    if (!Product) return res.status(500).json({ ok: false, message: 'Server error' });
+
+    const body = req.body || {};
+
+    const title = (body.title || body.name || 'Untitled').trim();
+    const description = body.description || '';
+    const price = body.price !== undefined ? Number(body.price) : 0;
+    const mrp = body.mrp !== undefined ? Number(body.mrp) : (body.price !== undefined ? Number(body.price) : 0);
+    const stock = body.stock !== undefined ? Number(body.stock) : 0;
+    const sku = body.sku || '';
+    const brand = body.brand || '';
+    const category = body.category || '';
+    const videoUrl = body.videoUrl || '';
+
+    let images = Array.isArray(body.images) ? body.images.slice() : [];
+    // normalize images objects/strings
+    images = images.map(img => {
+      if (!img) return null;
+      if (typeof img === 'string') {
+        return { url: img, filename: (img.split('/').pop() || img) };
+      }
+      if (typeof img === 'object') {
+        return { filename: img.filename || (img.url && String(img.url).split('/').pop()), url: img.url || img.path || null };
+      }
+      return null;
+    }).filter(Boolean);
+
+    // colors / sizes
+    let colors = body.colors;
+    if (typeof colors === 'string') colors = colors.split(',').map(s => s.trim()).filter(Boolean);
+    if (!Array.isArray(colors)) colors = [];
+
+    let sizes = body.sizes;
+    if (typeof sizes === 'string') sizes = sizes.split(',').map(s => s.trim()).filter(Boolean);
+    if (!Array.isArray(sizes)) sizes = [];
+
+    // slug
+    const rawSlugCandidate = (body.slug || '').trim() || slugify(title) || null;
+    const slug = await ensureUniqueSlug(rawSlugCandidate);
+
+    const doc = {
+      title,
+      description,
+      price,
+      mrp,
+      stock,
+      sku,
+      brand,
+      category,
+      videoUrl,
+      images,
+      colors,
+      sizes,
+      slug,
+      deleted: !!body.deleted
+    };
+
+    const created = await Product.create(doc);
+    return res.status(201).json({ ok: true, product: created });
+  } catch (err) {
+    console.error('[adminProduct] POST /products:', err && err.stack ? err.stack : err);
+    if (err && err.code === 11000) {
+      return res.status(409).json({ ok: false, message: 'Duplicate key error' });
+    }
+    return res.status(500).json({ ok: false, message: 'Server error' });
+  }
+});
+
+// PUT /products/:id -> update (requires auth)
+router.put('/products/:id', checkAdminAuth, async (req, res) => {
+  try {
+    if (!Product) return res.status(500).json({ ok: false, message: 'Server error' });
+    const id = req.params.id;
+    const body = req.body || {};
+
+    const update = {};
+    if (body.title !== undefined) update.title = body.title;
+    if (body.description !== undefined) update.description = body.description;
+    if (body.price !== undefined) update.price = Number(body.price);
+    if (body.mrp !== undefined) update.mrp = Number(body.mrp);
+    if (body.stock !== undefined) update.stock = Number(body.stock);
+    if (body.sku !== undefined) update.sku = body.sku;
+    if (body.brand !== undefined) update.brand = body.brand;
+    if (body.category !== undefined) update.category = body.category;
+    if (body.videoUrl !== undefined) update.videoUrl = body.videoUrl;
+    if (body.deleted !== undefined) update.deleted = !!body.deleted;
+
+    if (body.colors !== undefined) {
+      let colors = body.colors;
+      if (typeof colors === 'string') colors = colors.split(',').map(s => s.trim()).filter(Boolean);
+      update.colors = Array.isArray(colors) ? colors : [];
+    }
+
+    if (body.sizes !== undefined) {
+      let sizes = body.sizes;
+      if (typeof sizes === 'string') sizes = sizes.split(',').map(s => s.trim()).filter(Boolean);
+      update.sizes = Array.isArray(sizes) ? sizes : [];
+    }
+
+    // existingImages: JSON string with list of filenames/urls to keep
+    if (body.existingImages !== undefined) {
+      try {
+        const keep = typeof body.existingImages === 'string' ? JSON.parse(body.existingImages) : body.existingImages;
+        if (Array.isArray(keep)) {
+          update.images = keep.map(x => {
+            if (typeof x === 'string') {
+              return x.startsWith('/') || x.startsWith('http') ? { url: x } : { filename: x };
+            }
+            return x;
+          });
+        }
+      } catch (e) {
+        // ignore parse error
+      }
+    }
+
+    // if client sends images array (explicit), accept it
+    if (body.images !== undefined && Array.isArray(body.images)) {
+      update.images = body.images.map(img => {
+        if (!img) return null;
+        if (typeof img === 'string') return { url: img, filename: img.split('/').pop() };
+        if (typeof img === 'object') return { filename: img.filename, url: img.url || img.path || null };
+        return null;
+      }).filter(Boolean);
+    }
+
+    // slug update
+    if (body.slug !== undefined && body.slug !== null && String(body.slug).trim() !== '') {
+      update.slug = String(body.slug).trim();
+    } else if (update.title) {
+      const baseSlug = slugify(update.title);
+      update.slug = await ensureUniqueSlug(baseSlug);
+    }
+
+    const updated = await Product.findByIdAndUpdate(id, { $set: update }, { new: true }).lean().exec();
+    if (!updated) return res.status(404).json({ ok: false, message: 'Not found' });
+    return res.json({ ok: true, product: updated });
+  } catch (err) {
+    console.error('[adminProduct] PUT /products/:id error:', err && err.stack ? err.stack : err);
+    if (err && err.code === 11000) return res.status(409).json({ ok: false, message: 'Duplicate key error' });
+    return res.status(500).json({ ok: false, message: 'Server error' });
+  }
+});
+
+// DELETE endpoint (optional) - requires auth
+router.delete('/products/:id', checkAdminAuth, async (req, res) => {
+  try {
+    if (!Product) return res.status(500).json({ ok: false, message: 'Server error' });
+    const id = req.params.id;
+    const removed = await Product.findByIdAndDelete(id).lean().exec();
+    if (!removed) return res.status(404).json({ ok: false, message: 'Not found' });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[adminProduct] DELETE /products/:id error:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ ok: false, message: 'Server error' });
+  }
+});
+
+module.exports = router;
