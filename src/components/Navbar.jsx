@@ -2,6 +2,7 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useCartState } from "../context/CartContext";
+import { loadCart, CART_KEY } from "../utils/cartHelpers";
 
 const WISHLIST_KEY = "wishlist_v1";
 
@@ -15,19 +16,49 @@ function readWishlistCount() {
   }
 }
 
+// read total quantity from cart (supports both shapes)
+function readCartQuantity() {
+  try {
+    const raw = loadCart();
+    const arr = Array.isArray(raw) ? raw : raw.items ?? [];
+    if (!Array.isArray(arr)) return 0;
+    return arr.reduce((sum, it) => sum + (Number(it?.qty || it?.quantity || 0) || 0), 0);
+  } catch (e) {
+    // fallback to legacy localStorage read
+    try {
+      const raw2 = localStorage.getItem(CART_KEY) || "[]";
+      const arr2 = JSON.parse(raw2);
+      if (!Array.isArray(arr2)) return 0;
+      return arr2.reduce((sum, it) => sum + (Number(it?.qty || it?.quantity || 0) || 0), 0);
+    } catch (e2) {
+      return 0;
+    }
+  }
+}
+
 export function Navbar() {
-  const { items } = useCartState();
+  // items from app context (if your app uses context this will reflect the global cart)
+  let contextItems = [];
+  try {
+    const ctx = useCartState();
+    contextItems = ctx?.items ?? [];
+  } catch (e) {
+    contextItems = [];
+  }
+
   const navigate = useNavigate();
   const location = useLocation();
   const btnRef = useRef(null);
 
   const [wishlistCount, setWishlistCount] = useState(readWishlistCount());
+  const [storageCartQty, setStorageCartQty] = useState(readCartQuantity());
   const [isAuthed, setIsAuthed] = useState(false);
 
-  const totalQty = (items || []).reduce((sum, it) => {
+  const totalQtyFromContext = (contextItems || []).reduce((sum, it) => {
     const q = Number(it?.quantity ?? it?.qty ?? 0);
     return sum + (Number.isFinite(q) ? q : 0);
   }, 0);
+  const totalQty = totalQtyFromContext || storageCartQty;
 
   useEffect(() => {
     function onWishlistUpdate() {
@@ -36,15 +67,26 @@ export function Navbar() {
     window.addEventListener("wishlist-updated", onWishlistUpdate);
     function onStorage(e) {
       if (e.key === WISHLIST_KEY) onWishlistUpdate();
+      if (e.key === CART_KEY) {
+        setStorageCartQty(readCartQuantity());
+      }
     }
     window.addEventListener("storage", onStorage);
+
     return () => {
       window.removeEventListener("wishlist-updated", onWishlistUpdate);
       window.removeEventListener("storage", onStorage);
     };
   }, []);
 
-  // auth check function (memoized)
+  useEffect(() => {
+    function onCartUpdated() {
+      setStorageCartQty(readCartQuantity());
+    }
+    window.addEventListener("cart-updated", onCartUpdated);
+    return () => window.removeEventListener("cart-updated", onCartUpdated);
+  }, []);
+
   const checkAuth = useCallback(async () => {
     try {
       const res = await fetch("/api/auth/me", { credentials: "include" });
@@ -59,17 +101,17 @@ export function Navbar() {
     }
   }, []);
 
-  // run auth check on mount AND whenever location changes
   useEffect(() => {
     let mounted = true;
     (async () => {
       if (!mounted) return;
       await checkAuth();
     })();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, [location.pathname, checkAuth]);
 
-  // Also listen for a custom event so other parts of the app can notify auth change
   useEffect(() => {
     function handleAuthChanged() {
       checkAuth();
@@ -133,7 +175,6 @@ export function Navbar() {
       console.error("Logout failed:", e);
     } finally {
       setIsAuthed(false);
-      // notify other parts (optional)
       window.dispatchEvent(new Event("auth-changed"));
       navigate("/admin/login", { replace: true });
     }
@@ -160,7 +201,7 @@ export function Navbar() {
       </div>
 
       <nav style={{ marginLeft: 16 }}>
-        <Link to="/" style={{ marginRight: 12 }}>
+        <Link to="/shop" style={{ marginRight: 12 }}>
           Shop
         </Link>
         <Link to="/cart" style={{ marginRight: 12 }}>
@@ -246,7 +287,6 @@ export function Navbar() {
           </span>
         </button>
 
-        {/* Logout button shown when authenticated */}
         {isAuthed ? (
           <button
             onClick={handleLogout}

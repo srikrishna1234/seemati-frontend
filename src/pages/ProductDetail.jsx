@@ -1,447 +1,719 @@
-import React, { useEffect, useState, useCallback, useRef } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+// src/pages/ProductDetail.jsx
+import React, { useEffect, useState, useRef, useCallback } from "react";
+import { useParams, Link, useNavigate } from "react-router-dom";
+import { getImageUrl, getImageUrls } from "../utils/imageUtils";
+import { addOrIncrementItem, loadCart, computeTotals, SHIPPING_THRESHOLD } from "../utils/cartHelpers";
 import { useCartDispatch } from "../context/CartContext";
-import { FaRegBookmark, FaBookmark } from "react-icons/fa";
 
-const BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:4000";
-const PLACEHOLDER = "/images/placeholder.png";
+/* ---------- wishlist helpers ---------- */
 const WISHLIST_KEY = "wishlist_v1";
 
-/* Helpers (same logic as ProductCard) */
-function stringToAbsolute(s) {
-  if (!s) return null;
-  const trimmed = String(s).trim();
-  if (!trimmed) return null;
-  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed;
-  if (trimmed.startsWith("//")) return window.location.protocol + trimmed;
-  if (trimmed.startsWith("/")) return `${BASE_URL}${trimmed}`;
-  if (/\.[a-zA-Z0-9]{2,6}$/.test(trimmed)) return `${BASE_URL}/uploads/${trimmed}`;
-  return `${BASE_URL}/${trimmed}`;
-}
-function resolveImageUrl(raw) {
-  if (!raw) return null;
-  const candidateToUrl = (c) => {
-    if (!c) return null;
-    if (typeof c === "object") {
-      const url = c.url || c.path || c.filename || c.fileName || c.src || null;
-      return stringToAbsolute(url);
-    }
-    if (typeof c === "string") return stringToAbsolute(c);
-    return null;
-  };
-
-  if (Array.isArray(raw) && raw.length > 0) {
-    const arr = raw.map(candidateToUrl).filter(Boolean);
-    return arr.length > 0 ? arr : null;
-  }
-  const single = candidateToUrl(raw);
-  return single ? [single] : null;
-}
-
-function readWishlist() {
+function loadWishlist() {
   try {
     const raw = localStorage.getItem(WISHLIST_KEY) || "[]";
-    return JSON.parse(raw);
-  } catch (e) {
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch {
     return [];
   }
 }
-function writeWishlist(arr) {
+
+function saveWishlist(arr) {
   try {
-    localStorage.setItem(WISHLIST_KEY, JSON.stringify(arr || []));
-    window.dispatchEvent(new CustomEvent("wishlist-updated", { detail: { count: (arr || []).length } }));
+    localStorage.setItem(WISHLIST_KEY, JSON.stringify(arr));
+    try { window.dispatchEvent(new Event("wishlist-updated")); } catch (e) {}
   } catch (e) {
-    console.error("writeWishlist failed", e);
+    console.warn("saveWishlist failed", e);
   }
 }
 
-export default function ProductDetail({ product: productProp }) {
-  const { id: paramId } = useParams();
+/* ---------- burst animation ---------- */
+function burstAt(containerEl, options = {}) {
+  if (!containerEl) containerEl = document.body;
+  const { count = 20, spread = 160, lifetime = 900, colors = ["#f59e0b", "#ef4444", "#10b981", "#0b5cff", "#7c3aed"] } = options;
+
+  const rect = containerEl.getBoundingClientRect();
+  const wrapper = document.createElement("div");
+  wrapper.style.position = "absolute";
+  wrapper.style.left = `${rect.left + window.scrollX}px`;
+  wrapper.style.top = `${rect.top + window.scrollY}px`;
+  wrapper.style.width = `${rect.width}px`;
+  wrapper.style.height = `${rect.height}px`;
+  wrapper.style.pointerEvents = "none";
+  wrapper.style.overflow = "visible";
+  wrapper.style.zIndex = 9999;
+  document.body.appendChild(wrapper);
+
+  const cx = rect.width / 2;
+  const cy = rect.height / 2;
+  const particles = [];
+
+  for (let i = 0; i < count; i++) {
+    const el = document.createElement("div");
+    const size = Math.floor(Math.random() * 8) + 6;
+    el.style.position = "absolute";
+    el.style.left = `${cx - size / 2}px`;
+    el.style.top = `${cy - size / 2}px`;
+    el.style.width = `${size}px`;
+    el.style.height = `${size}px`;
+    el.style.borderRadius = "4px";
+    el.style.background = colors[Math.floor(Math.random() * colors.length)];
+    el.style.opacity = "1";
+    el.style.transform = "translate3d(0,0,0) scale(1)";
+    el.style.willChange = "transform, opacity";
+    wrapper.appendChild(el);
+
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 2 + Math.random() * (spread / 30);
+    const vx = Math.cos(angle) * speed;
+    const vy = Math.sin(angle) * speed - Math.random() * 1.5;
+    const rot = (Math.random() - 0.5) * 10;
+    particles.push({ el, x: cx, y: cy, vx, vy, rot });
+  }
+
+  const start = performance.now();
+  function frame(t) {
+    const dt = t - start;
+    const norm = Math.min(1, dt / lifetime);
+    particles.forEach((p) => {
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vy += 0.06;
+      const scale = 1 - norm * 0.6;
+      p.el.style.transform = `translate3d(${p.x - cx}px, ${p.y - cy}px, 0) rotate(${p.rot * norm}deg) scale(${Math.max(0.2, scale)})`;
+      p.el.style.opacity = String(1 - norm);
+    });
+    if (norm < 1) requestAnimationFrame(frame);
+    else setTimeout(() => { try { wrapper.remove(); } catch {} }, 60);
+  }
+  requestAnimationFrame(frame);
+}
+
+/* single-run burst helper */
+function checkAndTriggerBurst(subtotal, containerEl) {
+  try {
+    const KEY = "seemati_free_burst_done_v1";
+    const done = localStorage.getItem(KEY) === "1";
+    if (subtotal >= SHIPPING_THRESHOLD && !done) {
+      burstAt(containerEl || document.body, { count: 30, spread: 220, lifetime: 1000 });
+      localStorage.setItem(KEY, "1");
+    } else if (subtotal < SHIPPING_THRESHOLD && done) {
+      localStorage.removeItem(KEY);
+    }
+  } catch (e) {
+    console.warn("burst check failed", e);
+  }
+}
+
+/* image zoom hook (reused) */
+function useImageZoom() {
+  const imgRef = useRef(null);
+  function onImgMouseMove(e) {
+    const img = imgRef.current;
+    if (!img) return;
+    const rect = img.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const px = (x / rect.width) * 100;
+    const py = (y / rect.height) * 100;
+    img.style.transformOrigin = `${px}% ${py}%`;
+  }
+  function onImgEnter() {
+    const img = imgRef.current;
+    if (!img) return;
+    img.style.transition = "transform 160ms cubic-bezier(.2,.9,.2,1)";
+    img.style.transform = "scale(1.22)";
+    img.style.willChange = "transform";
+  }
+  function onImgLeave() {
+    const img = imgRef.current;
+    if (!img) return;
+    img.style.transform = "scale(1)";
+    img.style.transition = "transform 260ms cubic-bezier(.2,.9,.2,1)";
+    setTimeout(() => { if (img) img.style.willChange = ""; }, 300);
+  }
+  return { imgRef, onImgMouseMove, onImgEnter, onImgLeave };
+}
+
+/* ---------------- ProductDetail component ---------------- */
+export default function ProductDetailPage({ products = [] }) {
+  const { slug } = useParams();
   const navigate = useNavigate();
   const cartDispatch = useCartDispatch();
 
-  const [product, setProduct] = useState(productProp || null);
-  const [loading, setLoading] = useState(!productProp);
-  const [error, setError] = useState(null);
-  const [images, setImages] = useState([]);
-  const [mainIndex, setMainIndex] = useState(0);
-  const [saved, setSaved] = useState(false);
-
-  // zoom state
-  const [isZoomed, setIsZoomed] = useState(false);
-  const [origin, setOrigin] = useState({ x: 50, y: 50 }); // percent
-  const mainWrapRef = useRef(null);
-
-  // for touch swipe
-  const touchStartX = useRef(null);
-  const touchEndX = useRef(null);
-
-  useEffect(() => {
-    if (productProp) return;
-    if (!paramId) return;
-    setLoading(true);
-    fetch(`${BASE_URL}/api/products/${paramId}`)
-      .then((r) => {
-        if (!r.ok) throw new Error(`Fetch failed: ${r.status}`);
-        return r.json();
-      })
-      .then((data) => {
-        const p = data.product || data;
-        setProduct(p);
-        setLoading(false);
-      })
-      .catch((err) => {
-        console.error("Product fetch error", err);
-        setError(err.message || "Failed to load product");
-        setLoading(false);
-      });
-  }, [paramId, productProp]);
-
-  useEffect(() => {
-    if (!product) {
-      setImages([]);
-      setMainIndex(0);
-      setSaved(false);
-      return;
-    }
-
-    const rawCandidates = [
-      product.images,
-      product.imagesList,
-      product.image,
-      product.thumbnails,
-      product.thumbnail,
-      product.primaryImage,
-      product.gallery,
-    ];
-
-    let final = null;
-    for (const c of rawCandidates) {
-      const resolved = resolveImageUrl(c);
-      if (resolved && resolved.length > 0) {
-        final = resolved;
-        break;
-      }
-    }
-
-    if (!final) {
-      const keys = Object.keys(product);
-      for (const k of keys) {
-        const v = product[k];
-        if (typeof v === "string" && (v.endsWith(".png") || v.endsWith(".jpg") || v.endsWith(".jpeg") || v.endsWith(".webp"))) {
-          final = [stringToAbsolute(v)];
-          break;
-        }
-      }
-    }
-
-    if (!final) final = [PLACEHOLDER];
-
-    setImages(final);
-    setMainIndex(0);
-
-    // wishlist saved state
-    const cur = readWishlist();
-    const pid = product._id || product.id || "";
-    setSaved(cur.some((it) => (it._id || it.id || it.productId) === pid));
-  }, [product]);
-
-  // keyboard navigation
-  const handleKey = useCallback(
-    (e) => {
-      if (!images || images.length <= 1) return;
-      if (e.key === "ArrowRight") setMainIndex((i) => (i + 1) % images.length);
-      if (e.key === "ArrowLeft") setMainIndex((i) => (i - 1 + images.length) % images.length);
-    },
-    [images]
-  );
-  useEffect(() => {
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [handleKey]);
-
-  // touch handlers for swipe
-  function onTouchStart(e) {
-    touchStartX.current = e.touches[0].clientX;
-  }
-  function onTouchMove(e) {
-    touchEndX.current = e.touches[0].clientX;
-  }
-  function onTouchEnd() {
-    if (touchStartX.current == null || touchEndX.current == null) {
-      touchStartX.current = null;
-      touchEndX.current = null;
-      return;
-    }
-    const dx = touchEndX.current - touchStartX.current;
-    const threshold = 40; // px
-    if (dx > threshold) {
-      // swipe right -> previous
-      setMainIndex((i) => (i - 1 + images.length) % images.length);
-    } else if (dx < -threshold) {
-      // swipe left -> next
-      setMainIndex((i) => (i + 1) % images.length);
-    }
-    touchStartX.current = null;
-    touchEndX.current = null;
-  }
-
-  // Add to cart (uses your existing context dispatch)
-  function handleAddToCart() {
-    if (!product) return;
-    const price = Number(product.price ?? product.sellingPrice ?? product.amount ?? 0) || 0;
-    const mrp = (() => {
-      const keys = ["mrp", "MRP", "maxPrice", "originalPrice", "listPrice", "list_price", "compareAtPrice", "compare_price", "strikePrice", "retailPrice", "rrp", "recommendedRetailPrice", "price_max", "price_original", "original_price", "compare_at_price"];
-      for (const k of keys) {
-        if (Object.prototype.hasOwnProperty.call(product, k)) {
-          const n = Number(product[k]);
-          if (Number.isFinite(n) && n > 0) return n;
-        }
+  const [product, setProduct] = useState(() => {
+    try {
+      if (Array.isArray(products) && products.length > 0) {
+        return products.find((p) => p.slug === slug || p._id === slug || p.id === slug) ?? null;
       }
       return null;
-    })();
-
-    const item = {
-      productId: product._id || product.id,
-      title: product.title,
-      price: price,
-      mrp: mrp || null,
-      quantity: 1,
-      size: null,
-      color: null,
-      image: images[mainIndex] || null,
-      rawProduct: product,
-    };
-    try {
-      cartDispatch({ type: "ADD_ITEM", payload: item });
-    } catch (err) {
-      console.error("Quick add failed", err);
+    } catch {
+      return null;
     }
-  }
+  });
 
-  // Save for later (wishlist using localStorage)
-  function handleSaveForLater() {
+  const [loading, setLoading] = useState(product ? false : true);
+  const [error, setError] = useState(null);
+  const [adding, setAdding] = useState(false);
+  const productImageContainerRef = useRef(null);
+
+  const { imgRef, onImgMouseMove, onImgEnter, onImgLeave } = useImageZoom();
+
+  // wishlist state
+  const [saved, setSaved] = useState(false);
+
+  // option selections
+  const [selectedColor, setSelectedColor] = useState(null);
+  const [selectedSize, setSelectedSize] = useState(null);
+  const [quantity, setQuantity] = useState(1);
+
+  // gallery state
+  const [galleryUrls, setGalleryUrls] = useState([]); // array of resolved urls
+  const [galleryIndex, setGalleryIndex] = useState(0);
+
+  // load wishlist status and make sure selection defaults when product loads
+  useEffect(() => {
+    try {
+      const arr = loadWishlist();
+      const pid = product?._id ?? product?.id ?? product?.slug;
+      setSaved(arr.some(i => (i.productId ?? i._id ?? i.id ?? i.slug) === pid));
+    } catch {
+      setSaved(false);
+    }
+
+    // default selections
+    if (product) {
+      if (Array.isArray(product.colors) && product.colors.length > 0) {
+        setSelectedColor((prev) => prev ?? product.colors[0]);
+      } else {
+        setSelectedColor(null);
+      }
+      if (Array.isArray(product.sizes) && product.sizes.length > 0) {
+        setSelectedSize((prev) => prev ?? product.sizes[0]);
+      } else {
+        setSelectedSize(null);
+      }
+      // reset quantity
+      setQuantity(1);
+    }
+  }, [product?.slug, product?.colors, product?.sizes, product?._id, product?.id]);
+
+  // fetch product if not present
+  useEffect(() => {
+    let mounted = true;
+    async function fetchProduct() {
+      if (product) {
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
+      setError(null);
+
+      const endpoints = [
+        `/api/products/${encodeURIComponent(slug)}`,
+        `/api/products/slug/${encodeURIComponent(slug)}`,
+        `/api/products?slug=${encodeURIComponent(slug)}`,
+      ];
+
+      let lastError = null;
+      for (const ep of endpoints) {
+        try {
+          const res = await fetch(ep, { credentials: "include" });
+          if (!mounted) return;
+          const text = await res.text().catch(() => "");
+          if (!res.ok) {
+            if (res.status === 404) continue;
+            lastError = `Request to ${ep} failed: ${res.status} ${text}`;
+            continue;
+          }
+          let data = null;
+          try { data = text ? JSON.parse(text) : null; } catch (err) { lastError = `Invalid JSON from ${ep}`; continue; }
+
+          let resolved = null;
+          if (data) {
+            if (Array.isArray(data)) resolved = data.find(p => p.slug === slug || p._id === slug || p.id === slug) ?? data[0] ?? null;
+            else if (Array.isArray(data.products)) resolved = data.products.find(p => p.slug === slug || p._id === slug || p.id === slug) ?? data.products[0] ?? null;
+            else if (data.product && (data.product._id || data.product.slug || data.product.id)) resolved = data.product;
+            else if (data._id || data.slug || data.id) resolved = data;
+            else if (data.items && Array.isArray(data.items)) resolved = data.items.find(p => p.slug === slug || p._id === slug || p.id === slug) ?? data.items[0] ?? null;
+          }
+
+          if (resolved) { setProduct(resolved); setLoading(false); return; }
+          else { lastError = `No product in response from ${ep}`; continue; }
+        } catch (err) {
+          lastError = err.message || String(err);
+          console.warn("[ProductDetail] fetch error", err);
+        }
+      }
+
+      if (mounted) { setLoading(false); setProduct(null); setError(lastError || "Product not found."); }
+    }
+
+    fetchProduct();
+    return () => { mounted = false; };
+  }, [slug]);
+
+  // Build gallery URLs whenever product.images (or product.image/thumbnail fallback) changes
+  useEffect(() => {
+    const imgs = Array.isArray(product?.images) ? [...product.images] : [];
+    // if old single-image fields used, include them as well
+    if ((imgs.length === 0) && product?.image) imgs.push(product.image);
+    if ((imgs.length === 0) && product?.thumbnail) imgs.push(product.thumbnail);
+
+    const urls = getImageUrls(imgs);
+    setGalleryUrls(urls);
+    setGalleryIndex(0);
+  }, [product?.images, product?.image, product?.thumbnail, product?.slug, product?._id]);
+
+  // Floating shipping helper state
+  const [cartTotals, setCartTotals] = useState(() => {
+    try { const raw = loadCart(); return computeTotals(Array.isArray(raw) ? { items: raw } : raw); } catch { return computeTotals({ items: [] }); }
+  });
+
+  useEffect(() => {
+    function onCartUpdated() {
+      try { const raw = loadCart(); const comp = computeTotals(Array.isArray(raw) ? { items: raw } : raw); setCartTotals(comp); } catch (e) {}
+    }
+    window.addEventListener("cart-updated", onCartUpdated);
+    onCartUpdated();
+    return () => window.removeEventListener("cart-updated", onCartUpdated);
+  }, []);
+
+  // keyboard gallery navigation
+  const onKey = useCallback((e) => {
+    if (!galleryUrls || galleryUrls.length <= 1) return;
+    if (e.key === "ArrowLeft") setGalleryIndex((i) => (i - 1 + galleryUrls.length) % galleryUrls.length);
+    if (e.key === "ArrowRight") setGalleryIndex((i) => (i + 1) % galleryUrls.length);
+  }, [galleryUrls]);
+
+  useEffect(() => {
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onKey]);
+
+  // wishlist toggle
+  function toggleWishlist(e) {
+    e?.preventDefault?.();
     if (!product) return;
-    const cur = readWishlist();
-    const keyId = product._id || product.id || "";
-    const exists = cur.find((it) => (it._id || it.id || it.productId) === keyId);
-
+    const pid = product._id ?? product.id ?? product.slug ?? null;
+    if (!pid) return;
+    const arr = loadWishlist();
+    const exists = arr.find(i => (i.productId ?? i._id ?? i.id ?? i.slug) === pid);
+    let next;
     if (exists) {
-      const next = cur.filter((it) => (it._id || it.id || it.productId) !== keyId);
-      writeWishlist(next);
+      next = arr.filter(i => (i.productId ?? i._id ?? i.id ?? i.slug) !== pid);
+      saveWishlist(next);
       setSaved(false);
     } else {
-      const toSave = {
-        _id: product._id || product.id || keyId,
+      const payload = {
+        productId: pid,
+        _id: product._id ?? pid,
+        id: product.id ?? pid,
+        slug: product.slug ?? undefined,
         title: product.title,
-        price: Number(product.price ?? product.sellingPrice ?? 0) || 0,
-        mrp: null,
-        image: images[mainIndex] || null,
-        raw: product,
+        price: Number(product.price ?? 0),
+        image: product.image ?? (product.images && product.images[0] && (product.images[0].url || product.images[0])) ?? null
       };
-      const next = [...cur, toSave];
-      writeWishlist(next);
+      next = [...arr, payload];
+      saveWishlist(next);
       setSaved(true);
     }
   }
 
-  // mouse handlers for zoom origin
-  function handleMouseMove(e) {
-    if (!mainWrapRef.current) return;
-    const rect = mainWrapRef.current.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * 100;
-    const y = ((e.clientY - rect.top) / rect.height) * 100;
-
-    // clamp so top of head doesn't disappear (adjust if your photography needs different values)
-    const clampedY = Math.min(85, Math.max(12, y));
-    const clampedX = Math.min(88, Math.max(12, x));
-
-    setOrigin({ x: clampedX, y: clampedY });
+  // helper to clamp quantity according to stock (if stock known)
+  function clampQty(q) {
+    const n = Math.max(1, Math.floor(Number(q) || 1));
+    if (product && typeof product.stock === "number") {
+      return Math.min(n, Math.max(1, product.stock));
+    }
+    return n;
   }
 
-  function handleMouseEnter() {
-    setIsZoomed(true);
+  // quantity update handlers
+  function incQty() {
+    setQuantity((q) => clampQty(q + 1));
   }
-  function handleMouseLeave() {
-    setIsZoomed(false);
+  function decQty() {
+    setQuantity((q) => clampQty(q - 1));
+  }
+  function onQtyChange(e) {
+    setQuantity(clampQty(e.target.value));
   }
 
-  if (loading) return <div style={{ padding: 20 }}>Loading product…</div>;
-  if (error) return <div style={{ padding: 20, color: "red" }}>Error: {error}</div>;
-  if (!product) return <div style={{ padding: 20 }}>No product found</div>;
+  // handle Add to cart with selected variant/options
+  async function handleAddToCart(e) {
+    e?.preventDefault?.();
+    if (!product) return;
 
-  const mainImage = images[mainIndex] || PLACEHOLDER;
+    // ensure required options are selected
+    if (Array.isArray(product.colors) && product.colors.length > 0 && !selectedColor) {
+      setError("Please select a color.");
+      return;
+    }
+    if (Array.isArray(product.sizes) && product.sizes.length > 0 && !selectedSize) {
+      setError("Please select a size.");
+      return;
+    }
 
-  /* Styles */
-  const containerStyle = {
-    padding: 12,
-    display: "flex",
-    gap: 18,
-    alignItems: "flex-start",
-    overflow: "visible", // ensure zoom isn't clipped by ancestor
-  };
+    setAdding(true);
+    setError(null);
 
-  const leftColStyle = {
-    width: 520,
-    display: "flex",
-    flexDirection: "column",
-    gap: 8,
-  };
+    const idBase = product._id ?? product.id ?? product.slug ?? Math.random().toString(36).slice(2, 9);
 
-  const mainBoxStyle = {
-    background: "#fff",
-    borderRadius: 12,
-    padding: 12,
-    border: "1px solid #eee",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    overflow: "visible", // important for pop-out zoom
-    position: "relative",
-  };
+    // create a variant key so different size/color combos are treated as separate items
+    const variantKeyParts = [idBase];
+    if (selectedColor) variantKeyParts.push(`c:${String(selectedColor)}`);
+    if (selectedSize) variantKeyParts.push(`s:${String(selectedSize)}`);
+    const variantKey = variantKeyParts.join("|");
 
-  const mainImageStyle = {
-    maxWidth: "100%",
-    maxHeight: 360,
-    objectFit: "contain",
-    display: "block",
-    transition: "transform 420ms cubic-bezier(.2,.8,.2,1), box-shadow 220ms ease",
-    transformOrigin: `${origin.x}% ${origin.y}%`,
-    zIndex: isZoomed ? 9999 : 1,
-    transform: isZoomed ? "scale(1.5)" : "scale(1)",
-  };
+    const itemPayload = {
+      _id: variantKey,
+      productId: idBase,
+      slug: product.slug,
+      title: product.title ?? product.name ?? "Product",
+      price: Number(product.price ?? product.salePrice ?? 0),
+      images: product.images ?? (product.image ? [{ url: product.image }] : []),
+      image: product.imageUrl ?? (product.images && product.images[0] ? product.images[0].url : null),
+      quantity: clampQty(quantity),
+      meta: {
+        color: selectedColor ?? null,
+        size: selectedSize ?? null,
+      },
+    };
 
-  const thumbsRowStyle = {
-    display: "flex",
-    gap: 10,
-    marginTop: 8,
-    flexWrap: "wrap",
-    alignItems: "center",
-  };
+    try {
+      // authoritative update (adds or increments quantity for this _id)
+      const saved = await addOrIncrementItem(itemPayload, itemPayload.quantity);
 
-  // keep a minimal focus style for thumbs
-  const thumbFocusCSS = `
-    .pd-thumb-btn:focus { outline: 2px solid rgba(37,99,235,0.18); outline-offset: 2px; }
-  `;
+      // sync context to saved cart
+      try {
+        if (typeof cartDispatch === "function") {
+          cartDispatch({ type: "INITIALIZE", payload: saved });
+        }
+      } catch (err) {
+        console.warn("[ProductDetail] context initialize failed:", err);
+      }
+
+      // notify listeners
+      try { window.dispatchEvent(new Event("cart-updated")); } catch (e) {}
+
+      // check burst single-run
+      try {
+        const comp = computeTotals(saved);
+        checkAndTriggerBurst(comp.subtotal || 0, productImageContainerRef.current || document.body);
+      } catch (e) {}
+
+      // optionally navigate to cart or show a toast — we'll remain on the page
+    } catch (err) {
+      console.error("Add to cart failed (product page):", err);
+      setError("Unable to add to cart. See console for details.");
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  const leftForFree = Math.max(0, (SHIPPING_THRESHOLD - (cartTotals.subtotal || 0)));
+
+  if (loading) {
+    return <div style={{ padding: 24 }}><p>Loading product…</p></div>;
+  }
+
+  if (!product) {
+    return (
+      <div style={{ padding: 24 }}>
+        <p>Product not found.</p>
+        <Link to="/shop">Back to shop</Link>
+        {error ? <div style={{ color: "#b91c1c", marginTop: 12 }}>Error: {String(error)}</div> : null}
+      </div>
+    );
+  }
+
+  // fallback single-src (preserves prior behavior)
+  const fallbackSrc =
+    product?.thumbnail ||
+    (product?.images && product.images[0] && (product.images[0].url || product.images[0])) ||
+    product?.image ||
+    `${process.env.REACT_APP_API_URL || "http://localhost:4000"}/uploads/placeholder.png`;
+
+  const mainImageSrc = galleryUrls.length > 0 ? galleryUrls[galleryIndex] : getImageUrl({ url: fallbackSrc, size: 1200 });
 
   return (
-    <div style={containerStyle}>
-      <style dangerouslySetInnerHTML={{ __html: thumbFocusCSS }} />
+    <div style={{ padding: 24, position: "relative" }}>
+      <button onClick={() => navigate(-1)} style={{ marginBottom: 12 }}>← Back</button>
 
-      <div style={leftColStyle}>
-        {/* main image wrapper: listens for touch events for swipe */}
-        <div
-          ref={mainWrapRef}
-          style={mainBoxStyle}
-          className="pd-main-wrap"
-          onTouchStart={onTouchStart}
-          onTouchMove={onTouchMove}
-          onTouchEnd={onTouchEnd}
-          onMouseMove={handleMouseMove}
-          onMouseEnter={handleMouseEnter}
-          onMouseLeave={handleMouseLeave}
-        >
-          <img
-            src={mainImage}
-            alt={product.title || "product"}
-            className="pd-main-img"
-            style={mainImageStyle}
-            onError={(e) => {
-              e.currentTarget.onerror = null;
-              e.currentTarget.src = PLACEHOLDER;
+      <div style={{ display: "flex", gap: 40 }}>
+        {/* LEFT: Gallery */}
+        <div style={{ flex: "0 0 520px" }}>
+          <div
+            ref={productImageContainerRef}
+            style={{
+              width: "100%",
+              height: 520,
+              borderRadius: 8,
+              border: "1px solid #f3f3f3",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              overflow: "hidden",
+              background: "#fff",
+              position: "relative"
             }}
-          />
+          >
+            {/* Prev / Next for gallery (only show if multiple) */}
+            {galleryUrls.length > 1 && (
+              <button
+                onClick={() => setGalleryIndex((i) => (i - 1 + galleryUrls.length) % galleryUrls.length)}
+                aria-label="Previous image"
+                style={{
+                  position: "absolute",
+                  left: 8,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  background: "rgba(255,255,255,0.9)",
+                  border: "none",
+                  padding: 8,
+                  borderRadius: 6,
+                  cursor: "pointer",
+                  zIndex: 5
+                }}
+              >◀</button>
+            )}
+
+            <img
+              ref={imgRef}
+              src={mainImageSrc}
+              alt={product.title}
+              onMouseMove={onImgMouseMove}
+              onMouseEnter={onImgEnter}
+              onMouseLeave={onImgLeave}
+              style={{
+                maxWidth: "100%",
+                maxHeight: "100%",
+                objectFit: "contain",
+                display: "block",
+                transition: "transform 180ms cubic-bezier(.2,.9,.2,1)",
+                transform: "scale(1)",
+              }}
+              onError={(e) => { e.target.src = `${process.env.REACT_APP_API_URL || "http://localhost:4000"}/uploads/placeholder.png`; }}
+            />
+
+            {galleryUrls.length > 1 && (
+              <button
+                onClick={() => setGalleryIndex((i) => (i + 1) % galleryUrls.length)}
+                aria-label="Next image"
+                style={{
+                  position: "absolute",
+                  right: 8,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  background: "rgba(255,255,255,0.9)",
+                  border: "none",
+                  padding: 8,
+                  borderRadius: 6,
+                  cursor: "pointer",
+                  zIndex: 5
+                }}
+              >▶</button>
+            )}
+          </div>
+
+          {/* thumbnails */}
+          {galleryUrls.length > 1 && (
+            <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+              {galleryUrls.map((u, i) => (
+                <button
+                  key={u + i}
+                  onClick={() => setGalleryIndex(i)}
+                  style={{
+                    border: i === galleryIndex ? "2px solid #0b5cff" : "1px solid #eee",
+                    padding: 0,
+                    borderRadius: 6,
+                    overflow: "hidden",
+                    width: 76,
+                    height: 76,
+                    background: "#fff",
+                    cursor: "pointer",
+                  }}
+                  aria-label={`Show image ${i + 1}`}
+                >
+                  <img src={u} alt={`${product.title}-${i}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* indicator */}
+          {galleryUrls.length > 1 && <div style={{ marginTop: 8, color: "#6b7280", fontSize: 13 }}>{galleryIndex + 1} / {galleryUrls.length}</div>}
         </div>
 
-        {images && images.length > 1 && (
-          <div style={thumbsRowStyle} role="tablist" aria-label="Product thumbnails">
-            {images.map((src, i) => (
-              <button
-                key={i}
-                onClick={() => setMainIndex(i)}
-                className="pd-thumb-btn"
-                style={{
-                  width: 72,
-                  height: 72,
-                  padding: 6,
-                  borderRadius: 6,
-                  border: i === mainIndex ? "2px solid #2563eb" : "1px solid #eee",
-                  background: "#fff",
-                  cursor: "pointer",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-                aria-label={`Show image ${i + 1}`}
-              >
-                <img
-                  src={src}
-                  alt={`thumb-${i}`}
-                  style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
-                  onError={(e) => {
-                    e.currentTarget.onerror = null;
-                    e.currentTarget.src = PLACEHOLDER;
-                  }}
-                />
-              </button>
-            ))}
+        {/* RIGHT: product info (existing layout) */}
+        <div style={{ flex: "1 1 auto", maxWidth: 720 }}>
+          <h1 style={{ marginTop: 0 }}>{product.title}</h1>
+          {product.description && <p style={{ color: "#374151" }}>{product.description}</p>}
+
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 14, color: "#6b7280", textDecoration: product.mrp > product.price ? "line-through" : "none" }}>
+              MRP: ₹{Number(product.mrp ?? product.compareAtPrice ?? product.price ?? 0).toFixed(2)}
+            </div>
+            <div style={{ marginTop: 6, fontSize: 22, fontWeight: 800, color: "#0b5cff" }}>
+              ₹{Number(product.price ?? 0).toFixed(2)}
+            </div>
           </div>
-        )}
+
+          {/* Options: Colors */}
+          {Array.isArray(product.colors) && product.colors.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ marginBottom: 8, fontWeight: 700 }}>Color</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {product.colors.map((c) => {
+                  const active = selectedColor === c;
+                  return (
+                    <button
+                      key={c}
+                      onClick={() => setSelectedColor(c)}
+                      style={{
+                        padding: "8px 12px",
+                        borderRadius: 8,
+                        border: active ? "2px solid #0b5cff" : "1px solid #e6e6e6",
+                        background: active ? "#eef2ff" : "#fff",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {c}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Options: Sizes */}
+          {Array.isArray(product.sizes) && product.sizes.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ marginBottom: 8, fontWeight: 700 }}>Size</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {product.sizes.map((s) => {
+                  const active = selectedSize === s;
+                  return (
+                    <button
+                      key={s}
+                      onClick={() => setSelectedSize(s)}
+                      style={{
+                        padding: "8px 12px",
+                        borderRadius: 8,
+                        border: active ? "2px solid #0b5cff" : "1px solid #e6e6e6",
+                        background: active ? "#eef2ff" : "#fff",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {s}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Quantity */}
+          <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ fontWeight: 700 }}>Quantity</div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <button onClick={decQty} style={{ width: 36, height: 32 }}>-</button>
+              <input value={quantity} onChange={onQtyChange} style={{ width: 60, textAlign: "center", padding: 6 }} />
+              <button onClick={incQty} style={{ width: 36, height: 32 }}>+</button>
+            </div>
+            {typeof product.stock === "number" && (
+              <div style={{ marginLeft: 12, color: "#6b7280" }}>Stock: {product.stock}</div>
+            )}
+          </div>
+
+          <div style={{ marginTop: 18, display: "flex", gap: 12 }}>
+            <button
+              onClick={handleAddToCart}
+              disabled={adding}
+              style={{
+                background: "#f59e0b",
+                color: "#fff",
+                border: "none",
+                padding: "10px 14px",
+                borderRadius: 6,
+                fontWeight: 700,
+                cursor: adding ? "progress" : "pointer",
+              }}
+            >
+              {adding ? "Adding..." : "Add to cart"}
+            </button>
+
+            <button
+              onClick={toggleWishlist}
+              title={saved ? "Saved to wishlist" : "Save for later"}
+              aria-pressed={saved}
+              style={{
+                padding: "10px 14px",
+                borderRadius: 6,
+                border: saved ? "1px solid #ef4444" : "1px solid #e6e6e6",
+                background: saved ? "#fff0f0" : "#fff",
+                color: saved ? "#ef4444" : "#111",
+                cursor: "pointer",
+                fontWeight: 700,
+              }}
+            >
+              {saved ? "♥ Saved" : "♡ Save"}
+            </button>
+
+            <Link to="/cart"><button style={{ padding: "10px 14px", borderRadius: 6, border: "1px solid #ccc", background: "#fff" }}>Go to cart</button></Link>
+          </div>
+
+          {error ? <div style={{ color: "#b91c1c", marginTop: 12 }}>{error}</div> : null}
+
+          <div style={{ marginTop: 18, color: "#6b7280" }}>
+            <div>Brand: {product.brand ?? "—"}</div>
+            <div>Category: {product.category ?? "—"}</div>
+          </div>
+        </div>
       </div>
 
-      {/* Right: product info */}
-      <div style={{ flex: 1 }}>
-        <h1 style={{ margin: 0, fontSize: 28 }}>{product.title}</h1>
-
-        <div style={{ marginTop: 8, color: "#6b7280" }}>{product.description}</div>
-
-        <div style={{ marginTop: 12, display: "flex", gap: 12 }}>
-          <div style={{ background: "#f3f4f6", padding: 10, borderRadius: 8 }}>
-            <div style={{ fontSize: 12, color: "#6b7280" }}>MRP</div>
-            <div style={{ fontWeight: 700 }}>{product.mrp ? `₹${product.mrp}` : "—"}</div>
-          </div>
-          <div style={{ background: "#f3f4f6", padding: 10, borderRadius: 8 }}>
-            <div style={{ fontSize: 12, color: "#6b7280" }}>Our Price</div>
-            <div style={{ fontWeight: 700, color: "#16a34a" }}>{product.price ? `₹${product.price}` : "—"}</div>
-          </div>
-        </div>
-
-        <div style={{ marginTop: 12, display: "flex", gap: 10 }}>
-          <button
-            onClick={handleAddToCart}
-            style={{ background: "#2563eb", color: "#fff", border: "none", padding: "10px 14px", borderRadius: 8 }}
-          >
-            Add to Cart
-          </button>
-
-          <button onClick={() => navigate(-1)} style={{ border: "1px solid #e5e7eb", padding: "10px 12px", borderRadius: 8 }}>
-            Back
-          </button>
-
-          <button
-            onClick={handleSaveForLater}
-            style={{
-              marginLeft: 8,
-              borderRadius: 8,
-              padding: "10px 12px",
-              border: "1px solid #d1fae5",
-              background: saved ? "#059669" : "#ecfdf5",
-              color: saved ? "#fff" : "#065f46",
-              cursor: "pointer",
-            }}
-            aria-pressed={saved}
-          >
-            {saved ? (
-              <>
-                <FaBookmark /> Saved
-              </>
-            ) : (
-              <>
-                <FaRegBookmark /> Save for later
-              </>
-            )}
-          </button>
-        </div>
+      {/* Floating free-shipping banner */}
+      <div
+        aria-hidden="false"
+        style={{
+          position: "fixed",
+          left: 20,
+          right: 20,
+          bottom: 20,
+          margin: "0 auto",
+          maxWidth: 980,
+          background: "#e6fffa",
+          border: "1px solid #bbf7d0",
+          color: "#064e3b",
+          padding: "12px 18px",
+          borderRadius: 999,
+          boxShadow: "0 6px 18px rgba(2,6,23,0.06)",
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          justifyContent: "center",
+          zIndex: 9999,
+        }}
+      >
+        {leftForFree > 0 ? (
+          <>
+            <span style={{ fontWeight: 700 }}>📦</span>
+            <div style={{ fontWeight: 700 }}>Add ₹{leftForFree.toFixed(2)} more to get free shipping.</div>
+            <div style={{ color: "#065f46" }}>Subtotal ₹{(cartTotals.subtotal || 0).toFixed(2)}</div>
+            <button onClick={() => navigate("/cart")} style={{ marginLeft: 12, background: "#0b5cff", color: "#fff", padding: "8px 12px", borderRadius: 6, border: "none" }}>
+              View Cart
+            </button>
+          </>
+        ) : (
+          <>
+            <span style={{ fontWeight: 700 }}>🎉</span>
+            <div style={{ fontWeight: 700 }}>You have free shipping! Subtotal ₹{(cartTotals.subtotal || 0).toFixed(2)}</div>
+            <button onClick={() => burstAt(productImageContainerRef.current || document.body, { count: 36 })} style={{ marginLeft: 12, background: "#10b981", color: "#fff", padding: "8px 12px", borderRadius: 6, border: "none" }}>
+              Celebrate
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

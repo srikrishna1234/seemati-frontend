@@ -1,4 +1,4 @@
-// src/context/CartContext.js
+// src/context/CartContext.jsx
 import React, { createContext, useReducer, useContext, useEffect } from "react";
 
 const CartStateContext = createContext(null);
@@ -22,9 +22,12 @@ function saveCart(state) {
 }
 
 function calculateTotals(items) {
-  const subtotal = items.reduce((s, it) => s + (Number(it.price || 0) * (it.quantity || 1)), 0);
-  const shipping = subtotal > 999 ? 0 : 60; // example
-  const tax = Math.round(subtotal * 0.05); // 5% example
+  const subtotal = items.reduce(
+    (s, it) => s + Number(it.price || 0) * (it.quantity || 1),
+    0
+  );
+  const shipping = subtotal > 999 ? 0 : 60; // Free shipping above ₹999
+  const tax = Math.round(subtotal * 0.05); // Example: 5% tax
   const discount = 0;
   const total = subtotal + shipping + tax - discount;
   return { subtotal, shipping, tax, discount, total };
@@ -38,9 +41,12 @@ function reducer(state, action) {
     case "ADD_ITEM": {
       const item = action.payload;
       const items = [...state.items];
-      const idx = items.findIndex(i => i.productId === item.productId);
+      const idx = items.findIndex((i) => i.productId === item.productId);
       if (idx > -1) {
-        items[idx].quantity = Math.min(99, (items[idx].quantity || 1) + (item.quantity || 1));
+        items[idx].quantity = Math.min(
+          99,
+          (items[idx].quantity || 1) + (item.quantity || 1)
+        );
       } else {
         items.push({ ...item, quantity: item.quantity || 1 });
       }
@@ -51,14 +57,20 @@ function reducer(state, action) {
     }
     case "SET_QTY": {
       const { productId, quantity } = action.payload;
-      const items = state.items.map(i => i.productId === productId ? { ...i, quantity: Math.max(1, quantity) } : i);
+      const items = state.items.map((i) =>
+        i.productId === productId
+          ? { ...i, quantity: Math.max(1, quantity) }
+          : i
+      );
       const totals = calculateTotals(items);
       const next = { ...state, items, totals };
       saveCart(next);
       return next;
     }
     case "REMOVE_ITEM": {
-      const items = state.items.filter(i => i.productId !== action.payload.productId);
+      const items = state.items.filter(
+        (i) => i.productId !== action.payload.productId
+      );
       const totals = calculateTotals(items);
       const next = { ...state, items, totals };
       saveCart(next);
@@ -75,7 +87,10 @@ function reducer(state, action) {
 }
 
 export function CartProvider({ children }) {
-  const [state, dispatch] = useReducer(reducer, { items: [], totals: calculateTotals([]) });
+  const [state, dispatch] = useReducer(reducer, {
+    items: [],
+    totals: calculateTotals([]),
+  });
 
   // initialize once from localStorage
   useEffect(() => {
@@ -86,7 +101,9 @@ export function CartProvider({ children }) {
 
   return (
     <CartStateContext.Provider value={state}>
-      <CartDispatchContext.Provider value={dispatch}>{children}</CartDispatchContext.Provider>
+      <CartDispatchContext.Provider value={dispatch}>
+        {children}
+      </CartDispatchContext.Provider>
     </CartStateContext.Provider>
   );
 }
@@ -94,12 +111,14 @@ export function CartProvider({ children }) {
 // SAFE consumer hooks: never return undefined
 export function useCartState() {
   const ctx = useContext(CartStateContext);
-  // return a safe default if provider missing
   return ctx ?? { items: [], totals: calculateTotals([]) };
 }
 
 export function useCartDispatch() {
   const dispatch = useContext(CartDispatchContext);
-  // return a no-op dispatch if provider missing (keeps callers safe)
   return dispatch ?? (() => {});
 }
+
+// ✅ Option A additions (for compatibility with /contexts shim)
+export const useCart = useCartState;   // alias for uniform naming
+export default CartProvider;           // default export for easy import

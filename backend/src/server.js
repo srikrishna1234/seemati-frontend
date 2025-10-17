@@ -240,21 +240,33 @@ async function main() {
   // Ensure /admin-api/products/upload exists (multer file upload)
   // This prevents 404s when admin upload is called directly from frontend.
   // -------------------------
-  app.post("/admin-api/products/upload", upload.single("file"), (req, res) => {
-    try {
-      if (!checkAdminAuth(req)) {
-        return res.status(401).json({ ok: false, message: "Unauthorized" });
-      }
-      if (!req.file) return res.status(400).json({ ok: false, message: "No file uploaded" });
-      const filename = req.file.filename;
-      const url = `/uploads/${filename}`;
-      console.log("[admin-upload] Uploaded:", filename);
-      return res.json({ ok: true, filename, url });
-    } catch (err) {
-      console.error("[admin-upload] error:", err && err.stack ? err.stack : err);
-      return res.status(500).json({ ok: false, message: "Upload failed" });
+  // Accept any file field name and return array of uploaded file objects
+app.post("/admin-api/products/upload", upload.any(), (req, res) => {
+  try {
+    if (!checkAdminAuth(req)) {
+      return res.status(401).json({ ok: false, message: "Unauthorized" });
     }
-  });
+
+    const files = req.files || [];
+    if (!files.length) {
+      return res.status(400).json({ ok: false, message: "No file uploaded" });
+    }
+
+    const host = process.env.SERVER_URL || `http://localhost:${process.env.PORT || 4000}`;
+    const out = files.map((f) => {
+      const filename = f.filename;
+      const url = `${host}/uploads/${filename}`;
+      return { filename, originalname: f.originalname, url, size: f.size };
+    });
+
+    console.log(`[admin-upload] uploaded ${out.length} file(s):`, out.map(o => o.filename).join(", "));
+    return res.json(out); // return array for easier frontend merge
+  } catch (err) {
+    console.error("[admin-upload] error:", err && err.stack ? err.stack : err);
+    return res.status(500).json({ ok: false, message: "Upload failed" });
+  }
+});
+
 
   // Also allow preflight for that path (should be covered by global options, but explicit is fine)
   app.options("/admin-api/products/upload", cors({ origin: FRONTEND_ORIGIN, credentials: true }));

@@ -4,6 +4,9 @@ const path = require('path');
 const cors = require('cors');
 
 const app = express();
+const path = require('path');
+const uploadRoutes = require('./routes/uploadRoutes');
+
 
 // NOTE: route imports - use paths relative to backend/src (this file)
 const orderRoutes = require("./routes/orders"); // fixed path
@@ -26,6 +29,10 @@ const settingsRoutes = require('./routes/settings'); // <--- require settings ro
 
 app.use('/admin-api', adminProductRoutes);
 app.use('/admin-api', settingsRoutes);
+
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/products', uploadRoutes);
+app.use('/admin-api/products', uploadRoutes);
 
 // mount OTP routes
 try {

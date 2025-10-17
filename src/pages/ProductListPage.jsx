@@ -1,64 +1,70 @@
 // src/pages/ProductListPage.jsx
-import React, { useEffect, useState } from "react";
-import ProductCard from "../components/ProductCard";
+import React, { useEffect, useRef, useState } from "react";
+import ShopProductCard from "../shop/ShopProductCard";
+import axios from "../api/axiosInstance";
 
-const BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:4000";
-
-export default function ProductListPage() {
+export default function ProductListPage({ limit = 8 }) {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState(null);
+  const [error, setError] = useState(null);
+  const mountedRef = useRef(false);
 
   useEffect(() => {
-    let mounted = true;
-    async function load() {
-      setLoading(true);
-      setErr(null);
-      try {
-        const res = await fetch(`${BASE_URL}/admin-api/products`);
-        if (!res.ok) {
-          const txt = await res.text().catch(() => "");
-          throw new Error(`Failed to load products: ${res.status} ${txt}`);
-        }
-        const data = await res.json();
-        if (!mounted) return;
-        // API returns array (normalized in your server)
-        setProducts(Array.isArray(data) ? data : (data.products || []));
-      } catch (e) {
-        console.error("Product list load error", e);
-        if (mounted) setErr(e.message || "Failed to load products");
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    }
-    load();
-    return () => { mounted = false; };
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
   }, []);
 
-  if (loading) return <div className="p-6">Loading products…</div>;
-  if (err) return <div className="p-6 text-red-600">Error: {err}</div>;
+  useEffect(() => {
+    async function load() {
+      setLoading(true);
+      setError(null);
+      try {
+        const fields = "title,price,mrp,compareAtPrice,slug,thumbnail,images,description";
+        const res = await axios.get(`/api/products?page=1&limit=${limit}&fields=${encodeURIComponent(fields)}`);
+        const data = res.data?.products ?? res.data ?? [];
+        const normalized = (Array.isArray(data) ? data : []).map((p) => {
+          const images = Array.isArray(p.images)
+            ? p.images.map((i) => (typeof i === "string" ? { url: i } : (i.url ? { url: i.url } : (i.filename ? { url: `/uploads/${i.filename}` } : null)))).filter(Boolean)
+            : [];
+          return { ...p, images };
+        });
+        if (!mountedRef.current) return;
+        setProducts(normalized);
+      } catch (err) {
+        console.error("Home product load error:", err);
+        if (!mountedRef.current) return;
+        setError(err.message || "Failed to load products");
+      } finally {
+        if (mountedRef.current) setLoading(false);
+      }
+    }
+
+    load();
+  }, [limit]);
 
   return (
-    <div className="max-w-6xl mx-auto p-6">
-      <h2 className="text-2xl font-semibold mb-6">Products</h2>
+    <div style={{ padding: 20 }}>
+      <h1 style={{ marginBottom: 12 }}>Products</h1>
 
-      {products.length === 0 ? (
-        <div className="text-gray-600">No products found.</div>
-      ) : (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
-            gap: 20,
-            alignItems: "start",
-          }}
-        >
-          {products.map((p) => {
-            const id = p._id || p.id || Math.random().toString(36).slice(2, 9);
-            // render ProductCard — it handles image, price, add/view/save styling
-            return <ProductCard key={id} product={p} to={`/product/${id}`} />;
-          })}
-        </div>
+      {loading && <div>Loading featured products…</div>}
+      {error && <div style={{ color: "crimson" }}>Failed to load products: {error}</div>}
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
+          gap: 18,
+          alignItems: "start",
+          marginTop: 12,
+        }}
+      >
+        {products.map((p) => (
+          <ShopProductCard key={p.slug || p._id || p.id} product={p} />
+        ))}
+      </div>
+
+      {!loading && !products.length && !error && (
+        <div style={{ marginTop: 12 }}>No featured products.</div>
       )}
     </div>
   );

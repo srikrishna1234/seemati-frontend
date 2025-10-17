@@ -1,144 +1,191 @@
 // src/admin/AdminProductList.js
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import api from "../api/axiosInstance"; // our axios instance
-const API_BASE = process.env.REACT_APP_API_BASE_URL || "http://localhost:4000";
+
+/**
+ * AdminProductList replacement
+ * - fetches admin product list
+ * - Edit button tries both common edit route styles:
+ *     /admin/products/:id/edit   (preferred)
+ *     /admin/products/edit/:id
+ *   It will navigate to the first one it believes your app supports.
+ * - If navigation fails (route not found) you can open the edit URL in a new tab (for debugging)
+ */
 
 export default function AdminProductList() {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [query, setQuery] = useState("");
+  const [pageSize, setPageSize] = useState(10);
   const navigate = useNavigate();
 
-  // Ensure image url becomes absolute
-  function absImageUrl(url) {
-    if (!url) return null;
-    const s = String(url);
-    if (s.startsWith("http://") || s.startsWith("https://")) return s;
-    if (s.startsWith("/")) return `${API_BASE}${s}`;
-    return `${API_BASE}/${s}`;
+  async function fetchProducts() {
+    setLoading(true);
+    setError(null);
+    try {
+      // Using admin-api endpoint (your logs show /admin-api/products)
+      const res = await fetch(`/admin-api/products?page=1&limit=${pageSize}`, { credentials: "include" });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(`Fetch failed: ${res.status} ${txt}`);
+      }
+      const data = await res.json();
+      const list = Array.isArray(data) ? data : data.products ?? [];
+      setProducts(list);
+    } catch (err) {
+      console.error("Failed to load products", err);
+      setError(String(err));
+      setProducts([]);
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
-    let mounted = true;
-    async function load() {
-      setLoading(true);
-      setError(null);
-      try {
-        // call the admin product endpoint
-        const resp = await api.get("/admin-api/products");
-        if (!mounted) return;
-        // handle array or wrapped object
-        const data = Array.isArray(resp.data) ? resp.data : (resp.data?.products || resp.data?.data || []);
-        setProducts(data || []);
-      } catch (err) {
-        console.error("Failed to load products", err);
-        const msg = err?.response?.data?.message || err.message || "Failed to load products";
-        setError(msg);
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    }
-    load();
-    return () => { mounted = false; };
-  }, []);
+    fetchProducts();
+  }, [pageSize]);
 
-  function handleEdit(id) {
-    navigate(`/admin/products/edit/${id}`);
+  async function handleDelete(prod) {
+    const id = prod._id ?? prod.id ?? prod.slug;
+    if (!window.confirm(`Delete "${prod.title ?? prod.name ?? id}" ?`)) return;
+    try {
+      const res = await fetch(`/admin-api/products/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(`Delete failed: ${res.status} ${txt}`);
+      }
+      await fetchProducts();
+    } catch (err) {
+      console.error("Delete error", err);
+      alert("Delete failed: " + (err.message || err));
+    }
   }
 
-  // client-side filtering
-  const filtered = products.filter((p) => {
-    if (!query) return true;
-    const q = query.toLowerCase();
-    const title = String(p.title || p.name || "").toLowerCase();
-    const category = String(p.category || "").toLowerCase();
-    return title.includes(q) || category.includes(q);
-  });
+  /**
+   * handleEdit:
+   * - prefers route /admin/products/:id/edit
+   * - falls back to /admin/products/edit/:id
+   * - also offers to open the edit URL in a new tab if navigation appears to fail
+   */
+  function handleEdit(prod) {
+    const id = prod._id ?? prod.id ?? prod.slug;
+    if (!id) {
+      alert("Product id/slug missing — cannot edit.");
+      console.error("Edit attempted but product has no id/slug:", prod);
+      return;
+    }
 
-  if (loading) return <div>Loading products...</div>;
-  if (error) return <div style={{ color: "crimson" }}>Error: {String(error)}</div>;
+    // Primary guess: /admin/products/:id/edit
+    const primary = `/admin/products/${encodeURIComponent(id)}/edit`;
+    // Fallback: /admin/products/edit/:id
+    const fallback = `/admin/products/edit/${encodeURIComponent(id)}`;
+
+    // Try to navigate to the primary path.
+    try {
+      console.log(`[AdminProductList] navigating to ${primary}`);
+      navigate(primary);
+      // Give the router a moment; if route doesn't match, developer will see console and can try fallback/open tab.
+    } catch (err) {
+      console.warn("[AdminProductList] navigate primary failed, trying fallback", err);
+      try {
+        navigate(fallback);
+      } catch (err2) {
+        console.error("[AdminProductList] both navigate attempts failed", err2);
+        // final fallback: open in new tab (useful for debugging server-side routes)
+        if (window.confirm("Unable to open edit route in-app. Open edit page in a new tab?")) {
+          window.open(primary, "_blank");
+        }
+      }
+    }
+  }
+
+  // Alternative: open preview in new tab (product page)
+  function handlePreview(prod) {
+    const slugOrId = prod.slug ?? prod._id ?? prod.id;
+    if (!slugOrId) {
+      alert("Cannot preview: slug/id missing");
+      return;
+    }
+    window.open(`/product/${slugOrId}`, "_blank");
+  }
+
+  function handleAdd() {
+    navigate("/admin/products/add");
+  }
 
   return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <div>
-          <h2 style={{ margin: 0, fontSize: 22 }}>Admin — Products ({products.length})</h2>
-          <div style={{ marginTop: 6, color: "#666", fontSize: 13 }}>
-            Manage products — search, edit or add new items
-          </div>
-        </div>
-
+    <div style={{ padding: 20 }}>
+      <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
+        <h1 style={{ margin: 0 }}>Products</h1>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <input
-            type="text"
-            placeholder="Search by title or category"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            style={{
-              padding: "8px 10px",
-              borderRadius: 6,
-              border: "1px solid #ddd",
-              minWidth: 220,
-            }}
+            aria-label="per-page"
+            value={pageSize}
+            onChange={(e) => setPageSize(Math.max(1, Number(e.target.value || 10)))}
+            style={{ width: 90, padding: "6px 8px" }}
           />
-          <button
-            onClick={() => navigate("/admin/products/add")}
-            style={{
-              background: "#16a34a",
-              color: "#fff",
-              border: "none",
-              padding: "10px 14px",
-              borderRadius: 6,
-              cursor: "pointer",
-              boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
-            }}
-          >
-            + Add Product
+          <button onClick={handleAdd} style={{ padding: "8px 12px", background: "#6b21a8", color: "#fff", border: "none", borderRadius: 6 }}>
+            Add
           </button>
         </div>
-      </div>
+      </header>
 
-      {filtered.length === 0 ? (
+      {loading ? (
+        <div>Loading products…</div>
+      ) : error ? (
+        <div style={{ color: "#b91c1c" }}>Error loading products: {error}</div>
+      ) : products.length === 0 ? (
         <div>No products found.</div>
       ) : (
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
-          gap: 16
-        }}>
-          {filtered.map((p) => (
-            <div key={p._id} style={{
-              border: "1px solid #e6e6e6",
-              borderRadius: 8,
-              padding: 12,
-              boxShadow: "0 1px 3px rgba(0,0,0,0.04)"
-            }}>
-              <div style={{ height: 160, marginBottom: 8, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
-                {p.images && p.images.length > 0 ? (
-                  <img
-                    src={absImageUrl(p.images[0].url)}
-                    alt={p.title}
-                    style={{ maxHeight: "100%", maxWidth: "100%", objectFit: "cover" }}
-                  />
-                ) : (
-                  <div style={{ color: "#888" }}>No image</div>
-                )}
-              </div>
-
-              <div style={{ fontWeight: 600 }}>{p.title || p.name || "Untitled"}</div>
-              <div style={{ color: "#555", fontSize: 14, marginTop: 6 }}>
-                ₹{p.price ?? p.mrp ?? "—"} {p.deleted ? <span style={{color:'crimson', marginLeft:8}}>deleted</span> : null}
-              </div>
-              <div style={{ marginTop: 8, fontSize: 13, color: "#666" }}>
-                Category: {p.category || "—"}
-              </div>
-              <div style={{ marginTop: 8 }}>
-                <button style={{ padding: "6px 8px" }} onClick={() => handleEdit(p._id)}>Edit</button>
-              </div>
-            </div>
-          ))}
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
+            <thead>
+              <tr style={{ textAlign: "left", borderBottom: "1px solid #eee" }}>
+                <th style={{ padding: "12px 8px", width: 40 }}>#</th>
+                <th style={{ padding: "12px 8px", width: 120 }}>Image</th>
+                <th style={{ padding: "12px 8px" }}>Title</th>
+                <th style={{ padding: "12px 8px", width: 220 }}>Slug</th>
+                <th style={{ padding: "12px 8px", width: 100 }}>Price</th>
+                <th style={{ padding: "12px 8px", width: 180 }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {products.map((p, idx) => {
+                const id = p._id ?? p.id ?? p.slug ?? String(idx);
+                const img = (p.images && p.images[0] && (p.images[0].url || p.images[0])) || p.thumbnail || p.image || "";
+                return (
+                  <tr key={id} style={{ borderBottom: "1px solid #f3f3f3" }}>
+                    <td style={{ padding: "14px 8px" }}>{idx + 1}</td>
+                    <td style={{ padding: "12px 8px" }}>
+                      <div style={{ width: 80, height: 80, borderRadius: 8, overflow: "hidden", border: "1px solid #f3f3f3", display: "flex", alignItems: "center", justifyContent: "center", background: "#fff" }}>
+                        {img ? <img alt={p.title} src={img.startsWith("http") ? img : `${img}`} style={{ width: "100%", height: "100%", objectFit: "contain" }} /> : <div style={{ color: "#9ca3af", fontSize: 12 }}>No image</div>}
+                      </div>
+                    </td>
+                    <td style={{ padding: "12px 8px" }}>{p.title ?? p.name ?? "-"}</td>
+                    <td style={{ padding: "12px 8px", color: "#6b7280" }}>{p.slug ?? "-"}</td>
+                    <td style={{ padding: "12px 8px" }}>₹{Number(p.price ?? p.mrp ?? 0).toFixed(0)}</td>
+                    <td style={{ padding: "12px 8px" }}>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button onClick={() => handleEdit(p)} style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #e6e6e6", background: "#fff", cursor: "pointer" }}>
+                          Edit
+                        </button>
+                        <button onClick={() => handleDelete(p)} style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #e6e6e6", background: "#fff", cursor: "pointer", color: "#dc2626" }}>
+                          Delete
+                        </button>
+                        <button onClick={() => handlePreview(p)} title="Preview product" style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #e6e6e6", background: "#fff" }}>
+                          Preview
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

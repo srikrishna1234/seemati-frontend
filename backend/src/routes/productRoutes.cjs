@@ -60,33 +60,44 @@ function buildImageUrl(filename) {
 // -----------------------------
 // GET /products  (admin list)
 // -----------------------------
-router.get("/products", adminAuth, async (req, res) => {
+// Public GET /products  (no adminAuth)
+// Query params: ?page=1&limit=24&q=searchTerm&category=...
+router.get("/products", async (req, res) => {
   try {
     if (!Product || !Product.find) return res.status(500).json({ ok: false, message: "Product model not available" });
 
     const page = Math.max(1, parseInt(req.query.page || "1", 10));
-    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit || "50", 10)));
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit || "24", 10)));
     const skip = (page - 1) * limit;
 
-    const filter = {};
-    // allow filtering by deleted flag
-    if (req.query.includeDeleted !== "1") {
-      filter.deleted = { $ne: true };
-    }
-    // optional category filter
+    const filter = { deleted: { $ne: true } };
     if (req.query.category) filter.category = String(req.query.category);
+
+    // simple text search across title/description/slug/sku if q provided
+    if (req.query.q && String(req.query.q).trim() !== "") {
+      const q = String(req.query.q).trim();
+      const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      filter.$or = [
+        { title: re },
+        { description: re },
+        { slug: re },
+        { sku: re },
+      ];
+    }
 
     const [items, total] = await Promise.all([
       Product.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean().exec(),
       Product.countDocuments(filter).exec(),
     ]);
 
-    return res.json({ ok: true, page, limit, total, products: items });
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    return res.json({ ok: true, page, limit, total, totalPages, products: items });
   } catch (err) {
-    console.error("[adminProduct] GET /products error:", err && err.stack ? err.stack : err);
+    console.error("[productRoutes] GET /products error:", err && err.stack ? err.stack : err);
     return res.status(500).json({ ok: false, message: "Server error" });
   }
 });
+
 
 // -----------------------------
 // POST /products  (create)
