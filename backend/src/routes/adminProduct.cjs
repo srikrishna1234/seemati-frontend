@@ -3,6 +3,7 @@
 // Mount at /admin-api in server.js so frontend can call /admin-api/products
 
 const express = require('express');
+const router = express.Router();
 const path = require('path');
 const fs = require('fs');
 const mongoose = require('mongoose');
@@ -11,14 +12,12 @@ const multer = require('multer');
 let jwt = null;
 try { jwt = require('jsonwebtoken'); } catch (e) { jwt = null; }
 
-const router = express.Router();
-
 // Resolve Product model
 let Product = null;
 try {
-  const prodPath = path.join(__dirname, '..', '..', 'models', 'Product.js');
-  Product = require(prodPath);
-  Product = Product && (Product.default || Product);
+  // require by module name/path without .js extension (Node will resolve)
+  Product = require('../../models/Product');
+  console.log('[adminProduct] Product model loaded:', !!Product);
 } catch (e) {
   console.error('[adminProduct] Failed to load Product model:', e && e.message ? e.message : e);
   Product = null;
@@ -154,6 +153,7 @@ router.post('/products/upload', checkAdminAuth, uploader.single('file'), (req, r
 // -------------------
 router.get('/products', async (req, res) => {
   try {
+    if (!Product) return res.status(500).json({ ok: false, message: 'Server error' });
     const products = await Product.find({}).sort({ createdAt: -1 }).lean();
     return res.json(products);
   } catch (err) {
@@ -164,6 +164,7 @@ router.get('/products', async (req, res) => {
 
 router.get('/products/:id', async (req, res) => {
   try {
+    if (!Product) return res.status(500).json({ ok: false, message: 'Server error' });
     const product = await Product.findById(req.params.id).lean();
     if (!product) return res.status(404).json({ ok: false, message: 'Not found' });
     return res.json(product);
