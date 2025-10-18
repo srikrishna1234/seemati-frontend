@@ -6,4 +6,9 @@ const settingSchema = new mongoose.Schema({
   value: { type: mongoose.Schema.Types.Mixed, default: {} }, // store arbitrary JSON
 }, { timestamps: true });
 
-module.exports = mongoose.model('Setting', settingSchema);
+// Reuse existing model if it exists (prevents OverwriteModelError in some hosts)
+const Setting = (mongoose.models && mongoose.models.Setting)
+  ? mongoose.models.Setting
+  : mongoose.model('Setting', settingSchema);
+
+module.exports = Setting;
