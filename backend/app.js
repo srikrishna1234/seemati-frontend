@@ -8,7 +8,7 @@ const path = require('path');
 const connectDB = require('./src/db'); // your DB connector
 
 const cartRoutes = require('./src/routes/cartRoutes');
-const adminProductRouter = require('./src/routes/adminProduct');
+const adminProduct = require('./src/routes/adminProduct.cjs');
 
 const app = express();
 
