@@ -1,6 +1,7 @@
 // src/admin/AdminProductList.js
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { getImageUrl } from "../utils/imageUtils";
 
 /**
  * AdminProductList replacement
@@ -43,6 +44,7 @@ export default function AdminProductList() {
 
   useEffect(() => {
     fetchProducts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageSize]);
 
   async function handleDelete(prod) {
@@ -156,13 +158,14 @@ export default function AdminProductList() {
             <tbody>
               {products.map((p, idx) => {
                 const id = p._id ?? p.id ?? p.slug ?? String(idx);
-                const img = (p.images && p.images[0] && (p.images[0].url || p.images[0])) || p.thumbnail || p.image || "";
+                const imgRaw = (p.images && p.images[0] && (p.images[0].url || p.images[0])) || p.thumbnail || p.image || "";
+                const img = imgRaw ? getImageUrl(imgRaw) : "";
                 return (
                   <tr key={id} style={{ borderBottom: "1px solid #f3f3f3" }}>
                     <td style={{ padding: "14px 8px" }}>{idx + 1}</td>
                     <td style={{ padding: "12px 8px" }}>
                       <div style={{ width: 80, height: 80, borderRadius: 8, overflow: "hidden", border: "1px solid #f3f3f3", display: "flex", alignItems: "center", justifyContent: "center", background: "#fff" }}>
-                        {img ? <img alt={p.title} src={img.startsWith("http") ? img : `${img}`} style={{ width: "100%", height: "100%", objectFit: "contain" }} /> : <div style={{ color: "#9ca3af", fontSize: 12 }}>No image</div>}
+                        {img ? <img alt={p.title} src={img} style={{ width: "100%", height: "100%", objectFit: "contain" }} /> : <div style={{ color: "#9ca3af", fontSize: 12 }}>No image</div>}
                       </div>
                     </td>
                     <td style={{ padding: "12px 8px" }}>{p.title ?? p.name ?? "-"}</td>

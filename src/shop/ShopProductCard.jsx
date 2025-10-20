@@ -157,11 +157,8 @@ export default function ShopProductCard({ product }) {
     product?.image ||
     null;
 
-  const src = thumbField
-    ? typeof thumbField === "string"
-      ? getImageUrl({ url: thumbField, size: 800 })
-      : getImageUrl({ url: thumbField.url || thumbField, size: 800 })
-    : `${process.env.REACT_APP_API_URL || "http://localhost:4000"}/uploads/placeholder.png`;
+  // Use helper to build absolute src (handles placeholder)
+  const src = thumbField ? getImageUrl(thumbField) : getImageUrl(null);
 
   const { imgRef, onImgMouseMove, onImgEnter, onImgLeave } = useImageZoom();
   const cardRef = useRef(null);
@@ -221,7 +218,7 @@ export default function ShopProductCard({ product }) {
       title: product.title,
       price: Number(product.price ?? 0),
       images: product.images ?? (product.image ? [{ url: product.image }] : []),
-      image: product.imageUrl ?? (product.images && product.images[0] ? product.images[0].url : null),
+      image: product.imageUrl ?? (product.images && product.images[0] ? (product.images[0].url || product.images[0]) : null),
       quantity: 1,
     };
 
@@ -316,7 +313,7 @@ export default function ShopProductCard({ product }) {
               transform: "scale(1)",
             }}
             onError={(e) => {
-              e.target.src = `${process.env.REACT_APP_API_URL || "http://localhost:4000"}/uploads/placeholder.png`;
+              e.target.src = getImageUrl(null);
             }}
           />
         </div>

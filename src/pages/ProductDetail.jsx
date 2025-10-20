@@ -373,7 +373,7 @@ export default function ProductDetailPage({ products = [] }) {
       title: product.title ?? product.name ?? "Product",
       price: Number(product.price ?? product.salePrice ?? 0),
       images: product.images ?? (product.image ? [{ url: product.image }] : []),
-      image: product.imageUrl ?? (product.images && product.images[0] ? product.images[0].url : null),
+      image: product.imageUrl ?? (product.images && product.images[0] ? (product.images[0].url || product.images[0]) : null),
       quantity: clampQty(quantity),
       meta: {
         color: selectedColor ?? null,
@@ -428,14 +428,14 @@ export default function ProductDetailPage({ products = [] }) {
     );
   }
 
-  // fallback single-src (preserves prior behavior)
+  // fallback single-src (preserves prior behavior) — use helper for normalization
   const fallbackSrc =
     product?.thumbnail ||
     (product?.images && product.images[0] && (product.images[0].url || product.images[0])) ||
     product?.image ||
-    `${process.env.REACT_APP_API_URL || "http://localhost:4000"}/uploads/placeholder.png`;
+    null;
 
-  const mainImageSrc = galleryUrls.length > 0 ? galleryUrls[galleryIndex] : getImageUrl({ url: fallbackSrc, size: 1200 });
+  const mainImageSrc = galleryUrls.length > 0 ? galleryUrls[galleryIndex] : getImageUrl(fallbackSrc);
 
   return (
     <div style={{ padding: 24, position: "relative" }}>
@@ -494,7 +494,7 @@ export default function ProductDetailPage({ products = [] }) {
                 transition: "transform 180ms cubic-bezier(.2,.9,.2,1)",
                 transform: "scale(1)",
               }}
-              onError={(e) => { e.target.src = `${process.env.REACT_APP_API_URL || "http://localhost:4000"}/uploads/placeholder.png`; }}
+              onError={(e) => { e.target.src = getImageUrl(null); }}
             />
 
             {galleryUrls.length > 1 && (
