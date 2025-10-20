@@ -1,28 +1,34 @@
 // src/api/axiosInstance.js
-import axios from 'axios';
+import axios from "axios";
 
-const base = process.env.REACT_APP_API_URL || 'http://localhost:4000';
+// CRA only exposes vars starting with REACT_APP_
+const baseURL = process.env.REACT_APP_API_BASE_URL || "http://localhost:4000";
 
-const instance = axios.create({
-  baseURL: base,           // call backend directly (no extra 3000 proxy hop)
-  timeout: 10000,          // 10s timeout to avoid long hanging requests
+const axiosInstance = axios.create({
+  baseURL,
+  timeout: 15000, // 15s timeout
   headers: {
-    'Content-Type': 'application/json',
+    "Content-Type": "application/json",
   },
   withCredentials: true,
 });
 
-instance.interceptors.response.use(
-  (res) => res,
-  (err) => {
-    // normalize axios error to helpful message
-    if (err.response) {
-      const msg = err.response.data?.message || err.response.statusText || `HTTP ${err.response.status}`;
+// Normalize responses and errors
+axiosInstance.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response) {
+      const msg =
+        error.response.data?.message ||
+        error.response.statusText ||
+        `HTTP ${error.response.status}`;
       return Promise.reject(new Error(msg));
+    } else if (error.request) {
+      return Promise.reject(new Error("No response from server"));
+    } else {
+      return Promise.reject(new Error(error.message));
     }
-    if (err.request) return Promise.reject(new Error('No response from server'));
-    return Promise.reject(err);
   }
 );
 
-export default instance;
+export default axiosInstance;
