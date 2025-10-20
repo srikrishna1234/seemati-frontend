@@ -1,6 +1,11 @@
 // src/utils/imageUtils.js
+// Helpers to turn backend image fields into usable absolute URLs.
+
+const ENV_BASE = process.env.REACT_APP_API_BASE_URL || "http://localhost:4000";
+const BASE = String(ENV_BASE).replace(/\/+$/, ""); // remove trailing slash
+
 export function getImageUrl(imgOrUrl) {
-  const BASE = process.env.REACT_APP_API_URL || "http://localhost:4000";
+  // return placeholder when nothing useful provided
   if (!imgOrUrl) return `${BASE}/uploads/placeholder.png`;
 
   const raw = typeof imgOrUrl === "string"
@@ -9,8 +14,13 @@ export function getImageUrl(imgOrUrl) {
 
   if (!raw) return `${BASE}/uploads/placeholder.png`;
 
-  if (raw.startsWith("http://") || raw.startsWith("https://") || raw.startsWith("//")) return raw;
+  // already absolute (http(s) or protocol-relative)
+  if (/^https?:\/\//i.test(raw) || /^\/\//.test(raw)) return raw;
+
+  // starts with single slash -> join to base
   if (raw.startsWith("/")) return `${BASE}${raw}`;
+
+  // otherwise assume filename under /uploads/
   return `${BASE}/uploads/${raw}`;
 }
 
@@ -18,7 +28,7 @@ export function getImageUrl(imgOrUrl) {
  * Accepts an images field (array of strings or objects) and returns an array
  * of usable absolute image URLs (filtered, unique).
  *
- * Example supported item shapes:
+ * Supported item shapes:
  * - "/uploads/1.jpg"
  * - "http://.../1.jpg"
  * - { url: "/uploads/1.jpg" }
