@@ -1,7 +1,7 @@
 // src/shop/ShopProductCard.jsx
 import React, { useRef, useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { getImageUrl } from "../utils/imageUtils";
+// removed dependency on getImageUrl to avoid mismatch — we resolve here
 import { addOrIncrementItem, loadCart, computeTotals, SHIPPING_THRESHOLD } from "../utils/cartHelpers";
 import { useCartDispatch } from "../context/CartContext";
 
@@ -22,11 +22,17 @@ function saveWishlist(arr) {
   try {
     localStorage.setItem(WISHLIST_KEY, JSON.stringify(arr));
     // notify listeners (Navbar listens for this)
-    try { window.dispatchEvent(new Event("wishlist-updated")); } catch (e) {}
+    try {
+      window.dispatchEvent(new Event("wishlist-updated"));
+    } catch (e) {}
   } catch (e) {
     console.warn("saveWishlist failed", e);
   }
 }
+
+/* ---------- burst animation (unchanged) ---------- */
+// ... keep burstAt, checkAndTriggerBurst, useImageZoom, fmt from original file
+// For brevity I'll keep the implementations as in your original file (copy-pasted):
 
 /* ---------- burst animation ---------- */
 function burstAt(containerEl, options = {}) {
@@ -142,6 +148,35 @@ const fmt = (v) => {
   return `₹${n.toFixed(2)}`;
 };
 
+/**
+ * Resolve image URL helper (local)
+ * - replaces localhost host with deployed backend if found
+ * - prefixes relative paths with REACT_APP_API_URL
+ * - returns a fallback data URL if no image provided
+ */
+function resolveImageUrl(url) {
+  const apiBase = process.env.REACT_APP_API_URL || "http://localhost:4000";
+  const fallback =
+    "data:image/svg+xml;utf8," +
+    encodeURIComponent(
+      `<svg xmlns='http://www.w3.org/2000/svg' width='400' height='300'><rect fill='#f3f4f6' width='100%' height='100%'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' fill='#9ca3af' font-family='Arial' font-size='18'>No image</text></svg>`
+    );
+
+  if (!url) return fallback;
+  if (typeof url === "object" && url.url) url = url.url;
+  if (!url) return fallback;
+
+  if (/^https?:\/\//i.test(url)) {
+    if (url.includes("localhost")) {
+      return url.replace(/^https?:\/\/[^/]+/, apiBase);
+    }
+    return url;
+  }
+  // relative or filename
+  if (url.startsWith("/")) return `${apiBase}${url}`;
+  return `${apiBase}/uploads/${url}`;
+}
+
 export default function ShopProductCard({ product }) {
   const idOrSlug = product?.slug || product?._id || "";
   const title = product?.title || "Product";
@@ -158,7 +193,7 @@ export default function ShopProductCard({ product }) {
     null;
 
   // Use helper to build absolute src (handles placeholder)
-  const src = thumbField ? getImageUrl(thumbField) : getImageUrl(null);
+  const src = thumbField ? resolveImageUrl(thumbField) : resolveImageUrl(null);
 
   const { imgRef, onImgMouseMove, onImgEnter, onImgLeave } = useImageZoom();
   const cardRef = useRef(null);
@@ -252,22 +287,6 @@ export default function ShopProductCard({ product }) {
     setAdding(false);
   }
 
-  // expose checkAndTriggerBurst (reused above)
-  function checkAndTriggerBurst(subtotal, containerEl) {
-    try {
-      const KEY = "seemati_free_burst_done_v1";
-      const done = localStorage.getItem(KEY) === "1";
-      if (subtotal >= SHIPPING_THRESHOLD && !done) {
-        burstAt(containerEl || document.body, { count: 30, spread: 220, lifetime: 1000 });
-        localStorage.setItem(KEY, "1");
-      } else if (subtotal < SHIPPING_THRESHOLD && done) {
-        localStorage.removeItem(KEY);
-      }
-    } catch (e) {
-      console.warn("burst check failed", e);
-    }
-  }
-
   return (
     <article
       ref={cardRef}
@@ -313,7 +332,7 @@ export default function ShopProductCard({ product }) {
               transform: "scale(1)",
             }}
             onError={(e) => {
-              e.target.src = getImageUrl(null);
+              e.target.src = resolveImageUrl(null);
             }}
           />
         </div>
