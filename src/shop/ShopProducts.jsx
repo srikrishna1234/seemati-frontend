@@ -1,134 +1,119 @@
 // src/shop/ShopProducts.jsx
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import ShopProductCard from "./ShopProductCard";
-import axios from "../api/axiosInstance";
+import axios from "../api/axiosInstance"; // uses the baseURL from env or default
 
-function FreeShippingBar({ min = 999 }) {
-  return (
-    <div
-      aria-hidden="true"
-      style={{
-        position: "fixed",
-        bottom: 12,
-        left: "50%",
-        transform: "translateX(-50%)",
-        width: "min(900px, 94%)",
-        maxWidth: 960,
-        background: "#10b981",
-        color: "#fff",
-        fontWeight: 700,
-        padding: "12px 22px",
-        borderRadius: 999,
-        boxShadow: "0 10px 30px rgba(16,185,129,0.14)",
-        zIndex: 9999,
-        fontSize: 15,
-        display: "flex",
-        alignItems: "center",
-        gap: 12,
-        justifyContent: "center",
-        pointerEvents: "auto",
-      }}
-    >
-      <span style={{ fontSize: 18 }}>🚚</span>
-      <span style={{ lineHeight: 1 }}>Free Shipping on orders above <strong>₹{min}</strong></span>
-    </div>
-  );
-}
-
-export default function ShopProducts({ limit = 24 }) {
+export default function ShopProducts() {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState(null);
-  const mountedRef = useRef(false);
 
-  // responsive columns state
-  const [cols, setCols] = useState(getCols(window.innerWidth));
-
-  useEffect(() => {
-    mountedRef.current = true;
-    function onResize() { setCols(getCols(window.innerWidth)); }
-    window.addEventListener("resize", onResize);
-    return () => { mountedRef.current = false; window.removeEventListener("resize", onResize); };
-  }, []);
-
-  function getCols(width) {
-    // preference: 4 columns on wide screens, fallbacks below
-    if (width >= 1300) return 4;
-    if (width >= 1000) return 4; // keep 4 for medium-large
-    if (width >= 800) return 3;
-    if (width >= 560) return 2;
-    return 1;
-  }
-
-  async function loadPage(p = 1) {
-    setError(null);
+  async function loadProducts(page = 1, limit = 8) {
     setLoading(true);
+    setError(null);
     try {
-      const fields = "title,price,mrp,compareAtPrice,slug,thumbnail,images,description";
-      const res = await axios.get(`/api/products?page=${p}&limit=${limit}&fields=${encodeURIComponent(fields)}`);
-      const data = res.data?.products ?? res.data ?? [];
-      if (!mountedRef.current) return;
-      if (p === 1) setProducts(Array.isArray(data) ? data : []);
-      else setProducts(prev => [...prev, ...(Array.isArray(data) ? data : [])]);
-      setHasMore((res.data?.products?.length ?? data.length) >= limit);
-      setPage(p);
+      // backend uses /products
+      const res = await axios.get("/products", {
+        params: {
+          page,
+          limit,
+          fields: "title,price,mrp,compareAtPrice,slug,thumbnail,images,description",
+        },
+        withCredentials: true,
+      });
+
+      // server returns { ok: true, products: [...] } — handle both shapes just in case
+      const data = res.data;
+      const list = Array.isArray(data) ? data : data.products ?? data.items ?? [];
+      // Normalize images to have .images[].url as absolute
+      // (ShopProductCard will also resolve but keep normalized here)
+      const apiBase = process.env.REACT_APP_API_URL || "http://localhost:4000";
+      const normalized = list.map((p) => {
+        const images =
+          Array.isArray(p.images) &&
+          p.images
+            .map((i) => {
+              if (!i) return null;
+              if (typeof i === "string") {
+                if (/^https?:\/\//.test(i)) {
+                  return i.includes("localhost") ? i.replace(/^https?:\/\/[^/]+/, apiBase) : i;
+                }
+                return i.startsWith("/") ? `${apiBase}${i}` : `${apiBase}/uploads/${i}`;
+              }
+              if (i.url) {
+                const u = i.url;
+                if (/^https?:\/\//.test(u)) {
+                  return u.includes("localhost") ? u.replace(/^https?:\/\/[^/]+/, apiBase) : u;
+                }
+                return u.startsWith("/") ? `${apiBase}${u}` : `${apiBase}/${u}`;
+              }
+              if (i.filename) {
+                return `${apiBase}/uploads/${i.filename}`;
+              }
+              return null;
+            })
+            .filter(Boolean);
+        return { ...p, images };
+      });
+
+      setProducts(normalized);
     } catch (err) {
-      console.error("Shop load error:", err);
-      if (!mountedRef.current) return;
+      // axiosInstance already normalizes messages — show friendly message
+      console.error("loadProducts error", err);
       setError(err.message || "Failed to load products");
+      setProducts([]);
     } finally {
-      if (mountedRef.current) setLoading(false);
+      setLoading(false);
     }
   }
 
-  useEffect(() => { loadPage(1); }, [limit]);
+  useEffect(() => {
+    loadProducts();
+    // no dependencies -> load once on mount
+  }, []);
 
-  function loadMore() { loadPage(page + 1); }
+  if (loading) {
+    return (
+      <div style={{ padding: 24 }}>
+        <h2>Products</h2>
+        <p>Loading featured products…</p>
+      </div>
+    );
+  }
 
-  // bottom padding keeps free-shipping bar below content
-  const containerStyle = {
-    padding: "8px 28px 420px",
-  };
+  if (error) {
+    return (
+      <div style={{ padding: 24 }}>
+        <h2>Products</h2>
+        <div style={{ color: "#b91c1c" }}>Failed to load products: {String(error)}</div>
+      </div>
+    );
+  }
 
-  // grid styles: set columns via CSS gridTemplateColumns dynamically
-  const gridStyle = {
-    display: "grid",
-    gridTemplateColumns: `repeat(${cols}, minmax(280px, 1fr))`,
-    columnGap: 20,
-    rowGap: 56, // increased vertical gap between rows (makes next row offscreen)
-    alignItems: "start",
-    marginTop: 12,
-  };
+  if (!products || products.length === 0) {
+    return (
+      <div style={{ padding: 24 }}>
+        <h2>Products</h2>
+        <div>No products found.</div>
+      </div>
+    );
+  }
 
   return (
-    <div style={containerStyle}>
-      <h1 style={{ marginTop: 16 }}>Products</h1>
-
-      {error && (
-        <div style={{ color: "crimson", padding: 8 }}>
-          Fetch failed: {error} <button onClick={() => loadPage(1)}>Retry</button>
-        </div>
-      )}
-
-      <div className="products-grid" style={gridStyle}>
+    <div style={{ padding: 24 }}>
+      <h2>Products</h2>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          gap: 16,
+          marginTop: 16,
+        }}
+      >
         {products.map((p) => (
-          <ShopProductCard key={p.slug || p._id} product={p} />
+          <ShopProductCard key={p._id ?? p.id ?? p.slug} product={p} />
         ))}
       </div>
-
-      {loading && <p style={{ padding: 12 }}>Loading products…</p>}
-
-      {!loading && hasMore && (
-        <div style={{ textAlign: "center", margin: 12 }}>
-          <button onClick={loadMore}>Load more</button>
-        </div>
-      )}
-
-      {!loading && !products.length && <p style={{ padding: 12 }}>No products found.</p>}
-
-      <FreeShippingBar min={999} />
     </div>
   );
 }
