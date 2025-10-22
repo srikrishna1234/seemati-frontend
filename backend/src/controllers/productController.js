@@ -1,9 +1,22 @@
 // backend/src/controllers/productController.js
-// In-memory sample products (demo). Normalizes image fields to absolute URLs
-// and ensures a fallback placeholder image when an image is missing.
+// A small, robust product controller used for demo/sample products.
+// Normalizes image fields to fully-qualified URLs using BACKEND_URL env var.
+// Exports: listProducts(req,res), getProduct(req,res)
 
-const HOST = process.env.HOST || process.env.REACT_APP_API_URL || 'http://localhost:4000';
+const BACKEND_URL =
+  // Prefer explicit env var for production deployment
+  process.env.BACKEND_URL ||
+  // fallbacks (kept for compatibility with older env names)
+  process.env.HOST ||
+  process.env.REACT_APP_API_URL ||
+  "http://localhost:4000";
 
+const PLACEHOLDER_PATH = "/images/placeholder.png";
+
+/**
+ * SAMPLE_PRODUCTS - in-memory demo dataset.
+ * In a real app this will be replaced by DB queries (e.g., Product.find()).
+ */
 const SAMPLE_PRODUCTS = [
   {
     id: "p1",
@@ -18,7 +31,7 @@ const SAMPLE_PRODUCTS = [
     title: "Seemati Kurti Pants - Blue",
     price: 399.0,
     description: "Stylish kurti pants with elastic waist.",
-    image: "/images/leggings.png", // example backend-relative path
+    image: "/images/leggings.png", // backend-relative path
     stock: 55,
   },
   {
@@ -26,47 +39,104 @@ const SAMPLE_PRODUCTS = [
     title: "Seemati Palazzo - Maroon",
     price: 499.0,
     description: "Flowy palazzo with soft cotton blend.",
-    image: "", // missing image to demonstrate placeholder fallback
+    image: "", // missing image -> placeholder
     stock: 30,
   },
 ];
 
+/**
+ * Make an absolute URL for an image/path.
+ * - If src is an absolute URL (http/https) it is returned as-is.
+ * - If src is empty/falsey -> placeholder URL (BACKEND_URL + PLACEHOLDER_PATH)
+ * - Otherwise prepend BACKEND_URL (ensures single slash)
+ */
 function makeAbsoluteUrl(src) {
-  if (!src) return `${HOST}/images/placeholder.png`;
-  if (/^https?:\/\//i.test(src)) return src;
-  // ensure leading slash
-  const path = src.startsWith('/') ? src : `/${src}`;
-  return `${HOST}${path}`.replace(/([^:]\/)\/+/g, '$1');
+  if (!src) {
+    return `${BACKEND_URL.replace(/\/+$/, "")}${PLACEHOLDER_PATH}`;
+  }
+  if (typeof src === "string" && /^https?:\/\//i.test(src)) {
+    return src;
+  }
+  const path = typeof src === "string" ? src : String(src);
+  const ensured = path.startsWith("/") ? path : `/${path}`;
+  // remove duplicate slashes while preserving protocol (e.g. https://)
+  return `${BACKEND_URL.replace(/\/+$/, "")}${ensured}`.replace(/([^:]\/)\/+/g, "$1");
 }
 
-function normalizeProduct(p) {
-  // Return a new object (do not mutate original)
-  const obj = { ...p };
-  // Support single `image` field or an `images` array in future
-  const imgs = [];
+/**
+ * Normalize product object shape, returning a NEW object.
+ * - Ensures `images` is an array of absolute URLs (strings).
+ * - Supports several input shapes:
+ *    product.image (string), product.images (array of strings | objects with .url)
+ * - Leaves other product fields untouched.
+ */
+function normalizeProduct(product) {
+  const obj = { ...product }; // shallow clone to avoid mutating original
+
+  // collect possible image values
+  const collected = [];
+
+  // If images is an array, extract strings and objects with url property
   if (Array.isArray(obj.images) && obj.images.length) {
-    imgs.push(...obj.images);
-  } else if (obj.image) {
-    imgs.push(obj.image);
+    for (const item of obj.images) {
+      if (!item) continue;
+      if (typeof item === "string") {
+        collected.push(item);
+      } else if (typeof item === "object" && item.url) {
+        collected.push(item.url);
+      } else if (typeof item === "object" && item.filename) {
+        // some codestores keep only filename: "/uploads/abc.jpg" or "abc.jpg"
+        collected.push(item.filename);
+      }
+    }
   }
-  // Map to absolute URLs and ensure at least one (placeholder if empty)
-  const normalized = imgs.length ? imgs.map(makeAbsoluteUrl) : [`${HOST}/images/placeholder.png`];
-  obj.images = normalized;
-  // Remove single `image` if you prefer (optional). Keep both to be safe:
-  // delete obj.image;
+
+  // If single image field exists, use it
+  if (!collected.length && obj.image) {
+    if (typeof obj.image === "string") {
+      collected.push(obj.image);
+    } else if (typeof obj.image === "object" && obj.image.url) {
+      collected.push(obj.image.url);
+    } else if (typeof obj.image === "object" && obj.image.filename) {
+      collected.push(obj.image.filename);
+    }
+  }
+
+  // Map to absolute URLs
+  const normalizedImages =
+    collected.length > 0 ? collected.map((s) => makeAbsoluteUrl(s)) : [makeAbsoluteUrl(null)];
+
+  // set normalized images array (string URLs)
+  obj.images = normalizedImages;
+
+  // Optionally keep `image` for backward compatibility:
+  if (!obj.image) {
+    obj.image = normalizedImages[0];
+  } else {
+    // update single image to absolute form
+    obj.image = normalizedImages[0];
+  }
+
   return obj;
 }
 
+/**
+ * listProducts - returns all sample products (normalized)
+ */
 function listProducts(req, res) {
   try {
     const normalized = SAMPLE_PRODUCTS.map(normalizeProduct);
+    // Keep response format easy to use: { ok: true, products: [...] }
     return res.json({ ok: true, products: normalized });
   } catch (err) {
-    console.error('listProducts error', err);
-    return res.status(500).json({ ok: false, error: 'Server error' });
+    console.error("listProducts error", err);
+    return res.status(500).json({ ok: false, error: "Server error" });
   }
 }
 
+/**
+ * getProduct - returns single product by id (normalized)
+ */
 function getProduct(req, res) {
   try {
     const id = req.params.id;
@@ -75,8 +145,8 @@ function getProduct(req, res) {
     const normalized = normalizeProduct(item);
     return res.json({ ok: true, product: normalized });
   } catch (err) {
-    console.error('getProduct error', err);
-    return res.status(500).json({ ok: false, error: 'Server error' });
+    console.error("getProduct error", err);
+    return res.status(500).json({ ok: false, error: "Server error" });
   }
 }
 
