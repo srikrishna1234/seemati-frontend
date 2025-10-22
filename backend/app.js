@@ -64,18 +64,6 @@ console.log("Serving uploads from =", uploadsPath);
 app.use("/uploads", express.static(uploadsPath));
 
 /* -------------------------------------------------
-   Routes
--------------------------------------------------- */
-// cart routes mounted at /cart
-app.use("/cart", cartRoutes);
-
-// Admin product routes: mount explicitly under /admin-api
-app.use("/admin-api", adminProductRouter);
-
-// Upload router mounted under /api (provides /api/upload-image etc.)
-app.use("/api", uploadRouter);
-
-/* -------------------------------------------------
    BACKEND / SERVER URL resolution
    - Prefer SERVER_URL (Render env) then BACKEND_URL fallback,
      otherwise local host URL.
@@ -112,6 +100,33 @@ function toAbsoluteImageUrl(img) {
   // Fallback: treat as uploads filename
   return `${SERVER_URL}/uploads/${s.replace(/^\/+/, "")}`;
 }
+
+/* -------------------------------------------------
+   Routes that must be reachable quickly:
+   - Root and /api/ping must be placed BEFORE any router mounted at /api
+     so health checks and uptime monitors always work.
+-------------------------------------------------- */
+app.get("/", (req, res) => {
+  res.json({ message: "Backend is running 🎉", server: SERVER_URL });
+});
+
+// ping used by uptime monitors and frontend health checks
+app.get("/api/ping", (req, res) => res.json({ ok: true, msg: "api ping" }));
+// some monitors issue HEAD requests
+app.head("/api/ping", (req, res) => res.status(200).end());
+
+/* -------------------------------------------------
+   Routes (cart / admin / upload)
+-------------------------------------------------- */
+// cart routes mounted at /cart
+app.use("/cart", cartRoutes);
+
+// Admin product routes: mount explicitly under /admin-api
+app.use("/admin-api", adminProductRouter);
+
+// Upload router mounted under /api (provides /api/upload-image etc.)
+// it's okay to mount uploadRouter after ping, because ping is already defined above
+app.use("/api", uploadRouter);
 
 /* -------------------------------------------------
    Public product listing endpoints (normalized)
@@ -203,16 +218,6 @@ app.get("/admin-api/products", async (req, res, next) => {
     next(err);
   }
 });
-
-/* -------------------------------------------------
-   Root & ping for health checks
--------------------------------------------------- */
-app.get("/", (req, res) => {
-  res.json({ message: "Backend is running 🎉", server: SERVER_URL });
-});
-
-// ping used by uptime monitors and frontend health checks
-app.get("/api/ping", (req, res) => res.json({ ok: true, msg: "api ping" }));
 
 /* -------------------------------------------------
    API 404 handler for specific API-ish paths
