@@ -15,11 +15,7 @@ const uploadRouter = require("./src/routes/upload");
 const app = express();
 
 /* -------------------------------------------------
-   CORS: use cors package with explicit allowed headers
-   - Reads FRONTEND_ORIGIN and ALLOWED_ORIGINS from env
-   - Adds sensible localhost defaults for dev
-   - Echoes origin when credentials allowed (required)
-   - IMPORTANT: don't throw inside origin callback (can cause errors/502)
+   Build whitelist from env (FRONTEND_ORIGIN + ALLOWED_ORIGINS)
 -------------------------------------------------- */
 const buildWhitelist = () => {
   const allowed = new Set();
@@ -33,7 +29,7 @@ const buildWhitelist = () => {
       .forEach((s) => allowed.add(s));
   }
 
-  // Development defaults (useful for local dev)
+  // Local dev defaults
   allowed.add("http://localhost:3000");
   allowed.add("http://127.0.0.1:3000");
 
@@ -42,31 +38,51 @@ const buildWhitelist = () => {
 
 const whitelist = buildWhitelist();
 
+/* -------------------------------------------------
+   Manual header-setting middleware (runs BEFORE cors())
+   - This ensures we echo the exact origin and set credentials header
+   - Avoids returning Access-Control-Allow-Origin: * when the request is credentialed
+-------------------------------------------------- */
+app.use((req, res, next) => {
+  try {
+    const origin = req.headers.origin;
+    if (origin && whitelist.includes(origin)) {
+      // Echo exact origin and allow credentials
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Access-Control-Allow-Credentials", "true");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, X-Requested-With");
+      res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS,HEAD");
+    }
+    // Quick handle preflight here for immediate response (optional)
+    if (req.method === "OPTIONS") {
+      return res.status(204).end();
+    }
+  } catch (e) {
+    // ignore and let cors package handle fallback
+  }
+  next();
+});
+
+/* -------------------------------------------------
+   cors package options (keeps behavior consistent)
+-------------------------------------------------- */
 const corsOptions = {
   origin: function (origin, callback) {
-    // If no origin (curl, server-to-server, mobile) allow it.
+    // Allow server-to-server or curl (no origin)
     if (!origin) return callback(null, true);
-
-    // Exact match required for credentialed requests.
-    // IMPORTANT: do not throw an Error here; instead return false to signal not allowed.
-    if (whitelist.includes(origin)) {
-  res.header("Access-Control-Allow-Origin", origin);
-  return callback(null, true);
-} else {
-  console.warn("CORS blocked request from origin:", origin);
-  return callback(null, false);
-}
-
+    if (whitelist.includes(origin)) return callback(null, true);
+    // Not allowed origin
+    return callback(null, false);
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
   allowedHeaders: ["Content-Type", "Authorization", "Accept", "X-Requested-With"],
   exposedHeaders: ["Content-Length", "ETag"],
-  credentials: true, // set true only if you use cookies/credentials
+  credentials: true,
   optionsSuccessStatus: 204,
 };
 
 app.use(cors(corsOptions));
-app.options("*", cors(corsOptions)); // preflight for all routes
+app.options("*", cors(corsOptions)); // ensure preflights handled
 
 /* -------------------------------------------------
    JSON/body parsing
@@ -87,17 +103,12 @@ app.use("/uploads", express.static(uploadsPath));
 
 /* -------------------------------------------------
    BACKEND / SERVER URL resolution
-   - Prefer SERVER_URL or BACKEND_URL env vars (set these to your production URL if you have them)
-   - Otherwise fallback to a sensible public URL for logs (avoids printing localhost:10000)
 -------------------------------------------------- */
 const PORT = process.env.PORT || 4000;
 const SERVER_URL = (process.env.SERVER_URL || process.env.BACKEND_URL || `https://seemati-backend.onrender.com`).replace(/\/+$/, "");
 
 /**
  * toAbsoluteImageUrl(img)
- * - Accepts: string ("/uploads/x.jpg" or "uploads/x.jpg" or "http://..."),
- *            object with .url or .filename
- * - Returns absolute URL string (SERVER_URL + path) or placeholder image
  */
 function toAbsoluteImageUrl(img) {
   if (!img) return `${SERVER_URL}/images/placeholder.png`;
@@ -111,21 +122,15 @@ function toAbsoluteImageUrl(img) {
   if (!s) return `${SERVER_URL}/images/placeholder.png`;
   if (/^https?:\/\//i.test(s)) return s;
 
-  // If string starts with slash, treat as absolute path on this server
   if (s.startsWith("/")) return `${SERVER_URL}${s}`;
-
-  // If it contains uploads or images, attach safely
   if (s.includes("uploads") || s.includes("images")) {
     return `${SERVER_URL}/${s.replace(/^\/+/, "")}`;
   }
-
-  // Fallback: treat as uploads filename
   return `${SERVER_URL}/uploads/${s.replace(/^\/+/, "")}`;
 }
 
 /* -------------------------------------------------
-   Routes that must be reachable quickly:
-   - Root and /api/ping must be placed BEFORE any router mounted at /api
+   Routes that must be reachable quickly
 -------------------------------------------------- */
 app.get("/", (req, res) => {
   res.json({ message: "Backend is running 🎉", server: SERVER_URL });
@@ -137,13 +142,8 @@ app.head("/api/ping", (req, res) => res.status(200).end());
 /* -------------------------------------------------
    Routes (cart / admin / upload)
 -------------------------------------------------- */
-// cart routes mounted at /cart
 app.use("/cart", cartRoutes);
-
-// Admin product routes: mount explicitly under /admin-api
 app.use("/admin-api", adminProductRouter);
-
-// Upload router mounted under /api (provides /api/upload-image etc.)
 app.use("/api", uploadRouter);
 
 /* -------------------------------------------------
@@ -180,7 +180,7 @@ app.get("/products", async (req, res, next) => {
       return res.json(normalized);
     }
 
-    // Fallback (if Product model missing)
+    // Fallback
     return res.json([
       {
         title: "Sample Leggings",
@@ -192,7 +192,7 @@ app.get("/products", async (req, res, next) => {
       },
     ]);
   } catch (err) {
-    console.error("[app.js] GET /products error:", err && err.stack ? err.stack : err);
+    console.error("[app.js] GET /products error:", err && (err.stack || err));
     return next(err);
   }
 });
@@ -219,7 +219,6 @@ app.get("/admin-api/products", async (req, res, next) => {
       return res.json(normalized);
     }
 
-    // fallback sample
     return res.json([
       {
         title: "Sample Leggings",
@@ -253,12 +252,10 @@ app.use((req, res, next) => {
 
 /* -------------------------------------------------
    Error handler
-   - Special-case CORS errors so you can see origin info in logs
 -------------------------------------------------- */
 app.use((err, req, res, next) => {
   console.error("Unhandled error:", err?.message || err);
   if (err && String(err.message || "").toLowerCase().includes("cors")) {
-    // Include origin info for debugging
     const origin = req.headers.origin || "no-origin";
     console.warn(`CORS blocked request from origin: ${origin} — ${err.message}`);
     return res.status(403).json({ error: "CORS blocked request", message: err.message });
