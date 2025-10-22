@@ -2,7 +2,6 @@
 require("dotenv").config(); // load backend/.env first
 
 const express = require("express");
-const cors = require("cors");
 const path = require("path");
 
 const connectDB = require("./src/db"); // your DB connector
@@ -15,36 +14,51 @@ const uploadRouter = require("./src/routes/upload");
 const app = express();
 
 /* -------------------------------------------------
-   🔧 CORS: flexible handling for local dev + prod
-   ------------------------------------------------- */
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      // allow same-origin requests (e.g., curl, server-to-server)
-      if (!origin) return callback(null, true);
+   🔧 CORS: explicit handling for credentialed requests
+   -------------------------------------------------
+   - Browsers forbid sending credentials (cookies/Authorization)
+     when the server responds with Access-Control-Allow-Origin: *
+   - This middleware echoes back the request origin when it's in
+     the allowed list (FRONTEND_ORIGIN or comma-separated ALLOWED_ORIGINS)
+   - It also responds to OPTIONS preflight requests immediately.
+-------------------------------------------------- */
+app.use((req, res, next) => {
+  try {
+    const origin = req.headers.origin || "";
+    const allowed = [];
 
-      // allow common local dev hosts
-      if (origin.startsWith("http://localhost") || origin.startsWith("http://127.0.0.1")) {
-        return callback(null, true);
-      }
+    if (process.env.FRONTEND_ORIGIN) allowed.push(process.env.FRONTEND_ORIGIN.trim());
+    if (process.env.ALLOWED_ORIGINS) {
+      const extras = process.env.ALLOWED_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean);
+      allowed.push(...extras);
+    }
 
-      // Allow a single FRONTEND_ORIGIN env (common) or a comma list via ALLOWED_ORIGINS
-      const allowedList = [];
-      if (process.env.FRONTEND_ORIGIN) allowedList.push(process.env.FRONTEND_ORIGIN.trim());
-      if (process.env.ALLOWED_ORIGINS) {
-        const extras = process.env.ALLOWED_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean);
-        allowedList.push(...extras);
-      }
+    // Allow localhost dev origins by default (useful for local dev)
+    allowed.push("http://localhost:3000", "http://127.0.0.1:3000");
 
-      if (allowedList.includes(origin)) return callback(null, true);
+    if (allowed.includes(origin)) {
+      // Echo the specific origin (required when credentials are included)
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Access-Control-Allow-Credentials", "true");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+      res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+    } else {
+      // Not allowed origin: be strict (no credentials)
+      // Setting Access-Control-Allow-Origin to "null" is one way to indicate it's disallowed.
+      // Alternatively, omit the header entirely. Here we set a minimal header for safe non-credentialed GETs.
+      res.setHeader("Access-Control-Allow-Origin", "null");
+      res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+    }
 
-      console.warn("❌ Blocked by CORS:", origin);
-      return callback(new Error("Not allowed by CORS"));
-    },
-    credentials: true,
-  })
-);
-app.options("*", cors());
+    // Preflight
+    if (req.method === "OPTIONS") {
+      return res.status(200).end();
+    }
+  } catch (e) {
+    // fallback: continue without CORS headers (will likely be blocked by browser)
+  }
+  next();
+});
 
 /* -------------------------------------------------
    JSON/body parsing
@@ -125,7 +139,6 @@ app.use("/cart", cartRoutes);
 app.use("/admin-api", adminProductRouter);
 
 // Upload router mounted under /api (provides /api/upload-image etc.)
-// it's okay to mount uploadRouter after ping, because ping is already defined above
 app.use("/api", uploadRouter);
 
 /* -------------------------------------------------
