@@ -19,6 +19,7 @@ const app = express();
    - Reads FRONTEND_ORIGIN and ALLOWED_ORIGINS from env
    - Adds sensible localhost defaults for dev
    - Echoes origin when credentials allowed (required)
+   - IMPORTANT: don't throw inside origin callback (can cause errors/502)
 -------------------------------------------------- */
 const buildWhitelist = () => {
   const allowed = new Set();
@@ -43,15 +44,17 @@ const whitelist = buildWhitelist();
 
 const corsOptions = {
   origin: function (origin, callback) {
-    // If no origin (curl, mobile apps, server-to-server) allow it.
+    // If no origin (curl, server-to-server, mobile) allow it.
     if (!origin) return callback(null, true);
 
-    // Exact match required for credentialed requests
+    // Exact match required for credentialed requests.
+    // IMPORTANT: do not throw an Error here; instead return false to signal not allowed.
     if (whitelist.includes(origin)) {
       return callback(null, true);
     } else {
-      // Deny unknown origins with an error (will be handled later)
-      return callback(new Error(`CORS: Origin ${origin} not allowed`));
+      // Deny unknown origins (no credentials headers will be set).
+      // This avoids throwing an exception which may propagate and cause a 502.
+      return callback(null, false);
     }
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
@@ -83,9 +86,11 @@ app.use("/uploads", express.static(uploadsPath));
 
 /* -------------------------------------------------
    BACKEND / SERVER URL resolution
+   - Prefer SERVER_URL or BACKEND_URL env vars (set these to your production URL if you have them)
+   - Otherwise fallback to a sensible public URL for logs (avoids printing localhost:10000)
 -------------------------------------------------- */
 const PORT = process.env.PORT || 4000;
-const SERVER_URL = (process.env.SERVER_URL || process.env.BACKEND_URL || `http://localhost:${PORT}`).replace(/\/+$/, "");
+const SERVER_URL = (process.env.SERVER_URL || process.env.BACKEND_URL || `https://seemati-backend.onrender.com`).replace(/\/+$/, "");
 
 /**
  * toAbsoluteImageUrl(img)
@@ -292,8 +297,13 @@ function listRoutes(appToList) {
 connectDB()
   .then(() => {
     console.log("✅ MongoDB connected (confirmed in app.js)");
-    const server = app.listen(process.env.PORT || 4000, () => {
-      console.log(`✅ Server running on ${SERVER_URL}`);
+
+    // Use the PORT provided by the environment (Render provides it).
+    const server = app.listen(PORT, () => {
+      // Log useful info: the port we actually bound to and the server URL used for generating image links.
+      const boundPort = server.address && server.address().port ? server.address().port : PORT;
+      console.log(`✅ Server listening on port ${boundPort}`);
+      console.log(`✅ Public/server URL for images and links: ${SERVER_URL}`);
       // list registered routes once server is ready
       listRoutes(app);
     });
