@@ -1,5 +1,5 @@
-﻿// backend/src/server.js
-// Minimal robust server entry (CommonJS style compatible) — safe fallback for rebase resolution
+// backend/src/server.js
+// Safe CommonJS-style server entry (keeps things simple for merge resolution)
 'use strict';
 
 const express = require('express');
@@ -15,7 +15,6 @@ dotenv.config();
 
 const PORT = process.env.PORT || 4000;
 const FRONTEND_ORIGIN = (process.env.FRONTEND_ORIGIN || '').trim();
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || null;
 
 function canonicalizeOrigin(raw) {
   if (!raw) return raw;
@@ -24,27 +23,17 @@ function canonicalizeOrigin(raw) {
 
 async function connectMongo() {
   const uri = process.env.MONGODB_URI || process.env.MONGO_URI || null;
-  if (!mongoose) {
-    console.warn('mongoose not installed; skipping Mongo connect.');
-    return;
-  }
-  if (!uri) {
-    console.warn('MONGODB_URI not set — skipping mongo connect');
-    return;
-  }
-  try {
-    await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
-    console.log('✅ MongoDB connected (backend/src/server.js)');
-  } catch (e) {
-    console.error('Mongo connect failed:', e && e.stack ? e.stack : e);
-  }
+  if (!mongoose) { console.warn('mongoose not installed; skipping Mongo connect.'); return; }
+  if (!uri) { console.warn('MONGODB_URI not set — skipping mongo connect'); return; }
+  try { await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true }); console.log('✅ MongoDB connected (server.js)'); } catch (e) { console.error('Mongo connect failed:', e && (e.stack || e)); }
 }
 
 async function main() {
   await connectMongo();
+
   const app = express();
 
-  // CORS allowed list
+  // allowed origins
   const allowed = new Set();
   if (FRONTEND_ORIGIN) allowed.add(canonicalizeOrigin(FRONTEND_ORIGIN));
   allowed.add(canonicalizeOrigin('http://localhost:3000'));
@@ -64,25 +53,28 @@ async function main() {
   };
 
   app.use(cors(corsOptions));
-  app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+  app.use(express.json({ limit: '12mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '12mb' }));
 
-  // session (development safe)
   app.use(session({ secret: process.env.SESSION_SECRET || 'keyboard_cat_dev_secret', resave: false, saveUninitialized: false, cookie: { secure: false } }));
 
-  // uploads
   const uploadDir = path.join(__dirname, '..', '..', 'uploads');
   if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
   app.use('/uploads', express.static(uploadDir));
 
-  // simple admin upload route (disk)
   const storage = multer.diskStorage({ destination: (req, file, cb) => cb(null, uploadDir), filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname.replace(/\s+/g,'-')}`) });
   const upload = multer({ storage });
+
   app.post('/admin-api/products/upload', upload.any(), (req, res) => {
-    const files = req.files || [];
-    const host = process.env.SERVER_URL || `http://localhost:${PORT}`;
-    const out = files.map(f => ({ filename: f.filename, url: `${host}/uploads/${f.filename}`, size: f.size }));
-    return res.json(out);
+    try {
+      const files = req.files || [];
+      const host = process.env.SERVER_URL || `http://localhost:${PORT}`;
+      const out = files.map(f => ({ filename: f.filename, url: `${host}/uploads/${f.filename}`, size: f.size }));
+      return res.json(out);
+    } catch (e) {
+      console.error('[admin-upload] error', e && (e.stack || e));
+      return res.status(500).json({ ok: false, message: 'Upload failed' });
+    }
   });
 
   app.get('/api/ping', (req, res) => res.json({ ok: true, msg: 'api ping' }));
