@@ -17,7 +17,7 @@ const app = express();
 /* -------------------------------------------------
    Build whitelist from env (FRONTEND_ORIGIN + ALLOWED_ORIGINS)
 -------------------------------------------------- */
-const buildWhitelist = () => {
+function buildWhitelist() {
   const allowed = new Set();
 
   if (process.env.FRONTEND_ORIGIN) allowed.add(process.env.FRONTEND_ORIGIN.trim());
@@ -34,44 +34,27 @@ const buildWhitelist = () => {
   allowed.add("http://127.0.0.1:3000");
 
   return Array.from(allowed);
-};
+}
 
 const whitelist = buildWhitelist();
 
 /* -------------------------------------------------
-   Manual header-setting middleware (runs BEFORE cors())
-   - This ensures we echo the exact origin and set credentials header
-   - Avoids returning Access-Control-Allow-Origin: * when the request is credentialed
--------------------------------------------------- */
-app.use((req, res, next) => {
-  try {
-    const origin = req.headers.origin;
-    if (origin && whitelist.includes(origin)) {
-      // Echo exact origin and allow credentials
-      res.setHeader("Access-Control-Allow-Origin", origin);
-      res.setHeader("Access-Control-Allow-Credentials", "true");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, X-Requested-With");
-      res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS,HEAD");
-    }
-    // Quick handle preflight here for immediate response (optional)
-    if (req.method === "OPTIONS") {
-      return res.status(204).end();
-    }
-  } catch (e) {
-    // ignore and let cors package handle fallback
-  }
-  next();
-});
-
-/* -------------------------------------------------
-   cors package options (keeps behavior consistent)
+   CORS: use cors package only and configure it to:
+   - echo exact origin for allowed origins
+   - allow Authorization and Content-Type headers
+   - allow credentials when necessary
 -------------------------------------------------- */
 const corsOptions = {
   origin: function (origin, callback) {
-    // Allow server-to-server or curl (no origin)
+    // allow server-to-server or curl (no origin)
     if (!origin) return callback(null, true);
-    if (whitelist.includes(origin)) return callback(null, true);
-    // Not allowed origin
+
+    // exact match required for credentialed requests
+    if (whitelist.includes(origin)) {
+      return callback(null, true);
+    }
+
+    // not allowed
     return callback(null, false);
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
@@ -82,7 +65,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.options("*", cors(corsOptions)); // ensure preflights handled
+app.options("*", cors(corsOptions)); // let cors handle preflight for all routes
 
 /* -------------------------------------------------
    JSON/body parsing
