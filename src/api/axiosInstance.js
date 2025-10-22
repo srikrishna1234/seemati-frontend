@@ -1,8 +1,10 @@
 // src/api/axiosInstance.js
 import axios from "axios";
 
-// Use the backend base URL (local or deployed)
-const base = process.env.REACT_APP_API_URL || "http://localhost:4000";
+// Use the backend base URL (REACT_APP_API_URL should be set in Vercel/Azure/etc.)
+// Fallback to local dev or the known deployed backend.
+const base =
+  process.env.REACT_APP_API_URL || "https://seemati-backend.onrender.com" || "http://localhost:4000";
 
 // Create axios instance
 const instance = axios.create({
@@ -11,22 +13,27 @@ const instance = axios.create({
   headers: {
     "Content-Type": "application/json",
   },
-  withCredentials: true,
+  // IMPORTANT: token-based Authorization does NOT require cookies/credentials.
+  // Setting withCredentials: true will make the browser send cookies and require
+  // the server to echo the exact origin (not "*"), which caused your CORS issue.
+  withCredentials: false,
 });
 
 /**
  * 🔐 Auth Interceptor
  * Automatically attaches Bearer token for admin requests.
  *
- * It checks in order:
- * 1. localStorage.getItem("adminToken") — dynamically set after login or stored manually.
- * 2. process.env.REACT_APP_ADMIN_TOKEN — fallback (for local dev if you don't have login yet).
+ * NOTE: Avoid placing real secrets into client-side environment variables in production.
+ * If process.env.ADMIN_TOKEN is present it will be bundled into your frontend build —
+ * only use that value for local development.
  */
 instance.interceptors.request.use(
   (req) => {
     try {
-      const localToken = localStorage.getItem("adminToken");
-      const envToken = process.env.REACT_APP_ADMIN_TOKEN || process.env.ADMIN_TOKEN;
+      const localToken = typeof window !== "undefined" ? localStorage.getItem("adminToken") : null;
+      const envToken =
+        (process.env.REACT_APP_ADMIN_TOKEN || process.env.ADMIN_TOKEN) || null;
+
       const token = localToken || envToken;
 
       if (token) {
@@ -34,7 +41,6 @@ instance.interceptors.request.use(
         req.headers.Authorization = `Bearer ${token}`;
       }
 
-      // helpful debug info (same as before)
       if (process.env.NODE_ENV !== "production") {
         console.debug(
           "[axios] req:",
@@ -56,7 +62,6 @@ instance.interceptors.request.use(
 
 /**
  * 🧠 Response Interceptor
- * Keeps your nice debug and normalized error handling.
  */
 if (process.env.NODE_ENV !== "production") {
   instance.interceptors.response.use(
@@ -108,8 +113,7 @@ if (process.env.NODE_ENV !== "production") {
           `HTTP ${err.response.status}`;
         return Promise.reject(new Error(m));
       }
-      if (err.request)
-        return Promise.reject(new Error("No response from server (network)"));
+      if (err.request) return Promise.reject(new Error("No response from server (network)"));
       return Promise.reject(err);
     }
   );
