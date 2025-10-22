@@ -1,9 +1,6 @@
-﻿'use strict';
+// backend/app.js (ESM bootstrap that loads the CommonJS app.cjs)
+// Replace the entire file content with this to remove merge markers and safely require app.cjs
 
-// ESM bootstrap that loads the CommonJS server entry (app.cjs).
-// - Loads dotenv if present in backend/.env (non-fatal).
-// - Prefer app.cjs; fall back to app.js (only if app.cjs missing).
-// - Exits with non-zero status if no entry is found or load fails.
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
@@ -11,48 +8,12 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-(function bootstrap() {
-  try {
-    // Load dotenv from backend/.env if present (optional)
-    try {
-      const dotenvPath = path.join(__dirname, '.env');
-      // require('dotenv') may throw if not installed; ignore errors
-      if (require('fs').existsSync(dotenvPath)) {
-        require('dotenv').config({ path: dotenvPath });
-      }
-    } catch (err) {
-      // intentionally ignore: dotenv is optional for bootstrap
-    }
-
-    // Candidate server entries to try (prefer CommonJS app.cjs)
-    const candidates = [
-      path.join(__dirname, 'app.cjs'),
-      path.join(__dirname, 'app.js'),
-    ];
-
-    let entry = null;
-    const fs = require('fs');
-    for (const candidate of candidates) {
-      try {
-        if (fs.existsSync(candidate)) {
-          entry = candidate;
-          break;
-        }
-      } catch (e) {
-        // continue checking next candidate
-      }
-    }
-
-    if (!entry) {
-      console.error('[bootstrap] No server entry found. Looked for app.cjs and app.js in', __dirname);
-      process.exit(1);
-    }
-
-    console.log(`[bootstrap] Loading CommonJS entry: ${entry}`);
-    require(entry);
-  } catch (err) {
-    console.error('[bootstrap] Failed to load backend server entry:', err && err.stack ? err.stack : err);
-    // non-zero exit to make failures obvious in deploys
-    process.exit(1);
-  }
-})();
+try {
+  const entry = path.join(__dirname, 'app.cjs');
+  console.log(`[bootstrap] Loading CommonJS entry: ${entry}`);
+  require(entry);
+} catch (err) {
+  console.error('[bootstrap] Failed to load backend/app.cjs:', err && err.stack ? err.stack : err);
+  // exit non-zero to make deploy fail loud if something else is wrong
+  process.exit(1);
+}
