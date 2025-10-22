@@ -1,5 +1,5 @@
 // backend/src/server.js
-// Full server entry (ESM).
+// Full server entry (ESM) — merged and cleaned resolved file.
 
 import express from "express";
 import cors from "cors";
@@ -18,6 +18,17 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
+
+// --- helper: canonicalize origin (reduce surprises) ---
+function canonicalizeOrigin(raw) {
+  if (!raw) return raw;
+  try {
+    const u = new URL(String(raw).trim());
+    return u.origin;
+  } catch (e) {
+    return String(raw).trim().replace(/\/+$/, "").toLowerCase();
+  }
+}
 
 // --- Import Product (ESM/CommonJS fallback) ---
 let Product;
@@ -43,13 +54,17 @@ const ADMIN_TOKEN = process.env.ADMIN_TOKEN || null;
 const JWT_SECRET = process.env.JWT_SECRET || null;
 
 async function main() {
-  // connect to mongo
+  // connect to mongo (only if URI provided)
   try {
-    await mongoose.connect(MONGODB_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
-    console.log("✅ MongoDB connected");
+    if (MONGODB_URI) {
+      await mongoose.connect(MONGODB_URI, {
+        useNewUrlParser: true,
+        useUnifiedTopology: true,
+      });
+      console.log("✅ MongoDB connected");
+    } else {
+      console.warn("MONGODB_URI not set — skipping mongo connect");
+    }
   } catch (err) {
     console.error("❌ MongoDB connection failed:", err);
   }
@@ -62,38 +77,38 @@ async function main() {
     next();
   });
 
-  // --- Build allowed origins list ---
-  const allowedOrigins = new Set();
+  // --- Build allowed origins list (merged approach) ---
+  const allowedOriginsSet = new Set();
 
-  // If FRONTEND_ORIGIN is set (production), include it
-  if (FRONTEND_ORIGIN) allowedOrigins.add(FRONTEND_ORIGIN);
+  if (FRONTEND_ORIGIN) allowedOriginsSet.add(canonicalizeOrigin(FRONTEND_ORIGIN));
 
   // Always allow common local dev hosts
-  allowedOrigins.add("http://localhost:3000");
-  allowedOrigins.add("http://127.0.0.1:3000");
+  allowedOriginsSet.add(canonicalizeOrigin("http://localhost:3000"));
+  allowedOriginsSet.add(canonicalizeOrigin("http://127.0.0.1:3000"));
+  allowedOriginsSet.add(canonicalizeOrigin("http://localhost:4000"));
 
-  // Optionally include any extra allowed origins from env
-  if (process.env.ALLOWED_ORIGINS) {
-    process.env.ALLOWED_ORIGINS
+  // Optionally include any extra allowed origins from env (ALLOWED_ORIGINS or CORS_ALLOWED_ORIGINS)
+  const extras = process.env.ALLOWED_ORIGINS || process.env.CORS_ALLOWED_ORIGINS || "";
+  if (extras) {
+    extras
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean)
-      .forEach((s) => allowedOrigins.add(s));
+      .forEach((s) => allowedOriginsSet.add(canonicalizeOrigin(s)));
   }
 
-  console.log("CORS allowed origins:", Array.from(allowedOrigins));
+  console.log("CORS allowed origins:", Array.from(allowedOriginsSet));
 
-  // --- CORS middleware: echo exact origin when allowed ---
+  // --- CORS middleware: canonicalized check and helpful logging ---
   const corsOptions = {
-    origin: function (origin, callback) {
-      // allow requests with no origin (cURL, server-to-server)
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.has(origin)) {
-        return callback(null, true);
-      }
-      return callback(new Error(`CORS policy: origin ${origin} not allowed`), false);
+    origin: function (incomingOrigin, callback) {
+      if (!incomingOrigin) return callback(null, true); // server-to-server or curl
+      const normalized = canonicalizeOrigin(incomingOrigin);
+      if (allowedOriginsSet.has(normalized)) return callback(null, true);
+      console.warn(`CORS reject: origin="${incomingOrigin}" normalized="${normalized}"`);
+      return callback(new Error(`CORS policy: origin ${incomingOrigin} not allowed`), false);
     },
-    credentials: true, // required if you rely on cookies/sessions between frontend and backend
+    credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
     optionsSuccessStatus: 204,
@@ -102,14 +117,17 @@ async function main() {
   app.use(cors(corsOptions));
   app.options("*", cors(corsOptions));
 
-  // Also explicitly set headers for allowed origins (helps some proxies)
+  // Also set explicit headers for allowed origins to help some proxies
   app.use((req, res, next) => {
     try {
       const origin = req.headers.origin;
-      if (origin && allowedOrigins.has(origin)) {
+      if (origin && allowedOriginsSet.has(canonicalizeOrigin(origin))) {
         res.setHeader("Access-Control-Allow-Origin", origin);
         res.setHeader("Access-Control-Allow-Credentials", "true");
-        res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Origin, X-Requested-With");
+        res.setHeader(
+          "Access-Control-Allow-Headers",
+          "Content-Type, Authorization, Accept, Origin, X-Requested-With"
+        );
         res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS,HEAD");
       }
     } catch (err) {
@@ -125,8 +143,8 @@ async function main() {
       resave: false,
       saveUninitialized: false,
       cookie: {
-        sameSite: "none", // keep as-is if you use cross-site cookies in production
-        secure: false, // set to true in production under HTTPS
+        sameSite: "none",
+        secure: false,
         httpOnly: true,
         maxAge: 1000 * 60 * 60 * 24,
       },
@@ -184,20 +202,17 @@ async function main() {
     }
   }
 
-  // --- load other routes ---
+  // --- load other routes (best-effort) ---
   let orderRoutes, authRoutes, otpRoutes, protectedRoutes, productRoutes, adminProductRoutes;
   try {
     orderRoutes = await loadRoute("./routes/orders.cjs");
   } catch {}
-
   try {
     authRoutes = await loadRoute("./routes/auth.cjs");
   } catch {}
-
   try {
     otpRoutes = await loadRoute("./routes/otpRoutes.cjs");
   } catch {}
-
   try {
     protectedRoutes = await loadRoute("./routes/protectedRoutes.cjs");
   } catch {}
@@ -262,7 +277,7 @@ async function main() {
         return { filename: f.filename, url, size: f.size };
       });
 
-      console.log(`[admin-upload] uploaded ${out.length} file(s):`, out.map(o => o.filename).join(", "));
+      console.log(`[admin-upload] uploaded ${out.length} file(s):`, out.map((o) => o.filename).join(", "));
       return res.json(out);
     } catch (err) {
       console.error("[admin-upload] error:", err);
@@ -270,7 +285,7 @@ async function main() {
     }
   });
 
-  app.options("/admin-api/products/upload", cors({ origin: Array.from(allowedOrigins), credentials: true }));
+  app.options("/admin-api/products/upload", cors({ origin: Array.from(allowedOriginsSet), credentials: true }));
 
   // --- QUICK REDIRECT: handle legacy /products requests that frontend may make ---
   // This preserves the query string and forwards the request to /api/products.
@@ -294,7 +309,7 @@ async function main() {
   if (productRoutes) app.use("/api", productRoutes);
   if (adminProductRoutes) app.use("/admin-api", adminProductRoutes);
 
-  // --- Debug route: list uploads dir on server (temporary) ---
+  // --- optional: mount debug uploads route if present ---
   try {
     const debugUploads = await loadRoute("./routes/debugListUploads.js");
     if (debugUploads) {
@@ -305,22 +320,22 @@ async function main() {
     console.warn("[DebugUploads] not mounted:", e && e.message ? e.message : e);
   }
 
-  // ✅ NEW: Mount S3 upload router (if present)
+  // --- optional: mount upload router if present ---
   try {
     const uploadRouter = require("./routes/upload.cjs");
-    console.log("[UploadRouter] Mounting...");
-    app.use("/api", uploadRouter);
+    if (uploadRouter) {
+      console.log("[UploadRouter] Mounting...");
+      app.use("/api", uploadRouter);
+    }
   } catch (e) {
     // ignore if not present
   }
 
-  // --- test ping ---
+  // --- test ping & health ---
   app.get("/api/ping", (req, res) => res.json({ ok: true, msg: "api ping" }));
-
-  // --- health check ---
   app.get("/_health", (req, res) => res.json({ ok: true, uptime: process.uptime() }));
 
-  // --- list routes --- (unchanged)
+  // --- list routes helper ---
   function listRoutes(appToList) {
     const routes = [];
     if (!appToList || !appToList._router) return;
