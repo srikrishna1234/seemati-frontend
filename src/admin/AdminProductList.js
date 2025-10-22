@@ -1,17 +1,7 @@
 // src/admin/AdminProductList.js
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { getImageUrl } from "../utils/imageUtils";
-
-/**
- * AdminProductList replacement
- * - fetches admin product list
- * - Edit button tries both common edit route styles:
- *     /admin/products/:id/edit   (preferred)
- *     /admin/products/edit/:id
- *   It will navigate to the first one it believes your app supports.
- * - If navigation fails (route not found) you can open the edit URL in a new tab (for debugging)
- */
+import { getImageUrl, getImageUrls } from "../utils/imageUtils";
 
 export default function AdminProductList() {
   const [products, setProducts] = useState([]);
@@ -20,22 +10,69 @@ export default function AdminProductList() {
   const [pageSize, setPageSize] = useState(10);
   const navigate = useNavigate();
 
+  // Use REACT_APP_API_URL if provided (must be set in .env for prod builds).
+  // If empty, the fetch uses relative URLs (works with `proxy` in package.json during dev).
+  const API_BASE = (process.env.REACT_APP_API_URL || "").replace(/\/+$/, "");
+
+  // ADMIN token used for admin-only endpoints in dev (fallback provided).
+  // **Do not store real secrets client-side in production.**
+  const ADMIN_TOKEN = process.env.REACT_APP_ADMIN_TOKEN || "seemati123";
+
+  // Candidate endpoints (will try sequentially)
+  function candidateUrls(page, limit) {
+    const qs = `?page=${page}&limit=${limit}`;
+    const paths = [
+      "/admin-api/products",
+      "/api/products",
+      "/products", // last resort — your backend may not expose this
+    ];
+    // full URLs if API_BASE set, otherwise relative paths
+    return paths.map((p) => (API_BASE ? `${API_BASE}${p}${qs}` : `${p}${qs}`));
+  }
+
+  async function tryFetch(urls) {
+    // tries each URL in order and returns the first OK response (json)
+    for (const u of urls) {
+      try {
+        const res = await fetch(u, { credentials: "include" });
+        if (res.ok) {
+          // parse json and return object { data, usedUrl }
+          const body = await res.json();
+          return { body, usedUrl: u, status: res.status };
+        } else {
+          // record non-OK to show later, but keep trying
+          console.warn(`[AdminProductList] ${u} returned ${res.status}`);
+        }
+      } catch (err) {
+        // network error — e.g., backend down, CORS, etc.
+        console.warn(`[AdminProductList] fetch ${u} error:`, err);
+      }
+    }
+    // none succeeded
+    throw new Error("No usable endpoint responded OK");
+  }
+
   async function fetchProducts() {
     setLoading(true);
     setError(null);
     try {
-      // Using admin-api endpoint (your logs show /admin-api/products)
-      const res = await fetch(`/admin-api/products?page=1&limit=${pageSize}`, { credentials: "include" });
-      if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        throw new Error(`Fetch failed: ${res.status} ${txt}`);
-      }
-      const data = await res.json();
-      const list = Array.isArray(data) ? data : data.products ?? [];
+      const urls = candidateUrls(1, pageSize);
+      const result = await tryFetch(urls);
+      // Normalize product list from different possible shapes
+      const data = result.body;
+      let list = [];
+      if (Array.isArray(data)) list = data;
+      else if (Array.isArray(data.products)) list = data.products;
+      else if (Array.isArray(data.products?.docs)) list = data.products.docs || [];
+      else list = data.products ?? [];
+
       setProducts(list);
+      console.log(`[AdminProductList] loaded from ${result.usedUrl} (status ${result.status})`);
     } catch (err) {
       console.error("Failed to load products", err);
-      setError(String(err));
+      // Provide helpful error text including which URLs were attempted
+      const attempted = candidateUrls(1, pageSize).join("  \n");
+      setError(`Failed to load products. Tried endpoints:\n${attempted}\n\nConsole has details.`);
       setProducts([]);
     } finally {
       setLoading(false);
@@ -49,12 +86,17 @@ export default function AdminProductList() {
 
   async function handleDelete(prod) {
     const id = prod._id ?? prod.id ?? prod.slug;
+    if (!id) return alert("Missing product id");
     if (!window.confirm(`Delete "${prod.title ?? prod.name ?? id}" ?`)) return;
     try {
-      const res = await fetch(`/admin-api/products/${encodeURIComponent(id)}`, {
+      const base = API_BASE || "";
+      const res = await fetch(`${base}/admin-api/products/${encodeURIComponent(id)}`, {
         method: "DELETE",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${ADMIN_TOKEN}`, // added auth header
+        },
       });
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
@@ -67,12 +109,6 @@ export default function AdminProductList() {
     }
   }
 
-  /**
-   * handleEdit:
-   * - prefers route /admin/products/:id/edit
-   * - falls back to /admin/products/edit/:id
-   * - also offers to open the edit URL in a new tab if navigation appears to fail
-   */
   function handleEdit(prod) {
     const id = prod._id ?? prod.id ?? prod.slug;
     if (!id) {
@@ -80,24 +116,14 @@ export default function AdminProductList() {
       console.error("Edit attempted but product has no id/slug:", prod);
       return;
     }
-
-    // Primary guess: /admin/products/:id/edit
     const primary = `/admin/products/${encodeURIComponent(id)}/edit`;
-    // Fallback: /admin/products/edit/:id
     const fallback = `/admin/products/edit/${encodeURIComponent(id)}`;
-
-    // Try to navigate to the primary path.
     try {
-      console.log(`[AdminProductList] navigating to ${primary}`);
       navigate(primary);
-      // Give the router a moment; if route doesn't match, developer will see console and can try fallback/open tab.
     } catch (err) {
-      console.warn("[AdminProductList] navigate primary failed, trying fallback", err);
       try {
         navigate(fallback);
       } catch (err2) {
-        console.error("[AdminProductList] both navigate attempts failed", err2);
-        // final fallback: open in new tab (useful for debugging server-side routes)
         if (window.confirm("Unable to open edit route in-app. Open edit page in a new tab?")) {
           window.open(primary, "_blank");
         }
@@ -105,18 +131,22 @@ export default function AdminProductList() {
     }
   }
 
-  // Alternative: open preview in new tab (product page)
   function handlePreview(prod) {
     const slugOrId = prod.slug ?? prod._id ?? prod.id;
-    if (!slugOrId) {
-      alert("Cannot preview: slug/id missing");
-      return;
-    }
+    if (!slugOrId) return alert("Cannot preview: slug/id missing");
     window.open(`/product/${slugOrId}`, "_blank");
   }
 
   function handleAdd() {
     navigate("/admin/products/add");
+  }
+
+  function renderImageForProduct(p) {
+    const images = getImageUrls(p.images ?? p.gallery ?? []);
+    if (images.length) return images[0];
+    const raw = p.thumbnail ?? p.image ?? p.imageUrl ?? "";
+    if (raw) return getImageUrl(raw);
+    return getImageUrl("");
   }
 
   return (
@@ -139,7 +169,7 @@ export default function AdminProductList() {
       {loading ? (
         <div>Loading products…</div>
       ) : error ? (
-        <div style={{ color: "#b91c1c" }}>Error loading products: {error}</div>
+        <div style={{ color: "#b91c1c", whiteSpace: "pre-wrap" }}>Error loading products: {error}</div>
       ) : products.length === 0 ? (
         <div>No products found.</div>
       ) : (
@@ -158,14 +188,25 @@ export default function AdminProductList() {
             <tbody>
               {products.map((p, idx) => {
                 const id = p._id ?? p.id ?? p.slug ?? String(idx);
-                const imgRaw = (p.images && p.images[0] && (p.images[0].url || p.images[0])) || p.thumbnail || p.image || "";
-                const img = imgRaw ? getImageUrl(imgRaw) : "";
+                const img = renderImageForProduct(p);
                 return (
                   <tr key={id} style={{ borderBottom: "1px solid #f3f3f3" }}>
                     <td style={{ padding: "14px 8px" }}>{idx + 1}</td>
                     <td style={{ padding: "12px 8px" }}>
                       <div style={{ width: 80, height: 80, borderRadius: 8, overflow: "hidden", border: "1px solid #f3f3f3", display: "flex", alignItems: "center", justifyContent: "center", background: "#fff" }}>
-                        {img ? <img alt={p.title} src={img} style={{ width: "100%", height: "100%", objectFit: "contain" }} /> : <div style={{ color: "#9ca3af", fontSize: 12 }}>No image</div>}
+                        {img ? (
+                          <img
+                            alt={p.title}
+                            src={img}
+                            style={{ width: "100%", height: "100%", objectFit: "contain" }}
+                            onError={(e) => {
+                              e.target.onerror = null;
+                              e.target.src = getImageUrl("");
+                            }}
+                          />
+                        ) : (
+                          <div style={{ color: "#9ca3af", fontSize: 12 }}>No image</div>
+                        )}
                       </div>
                     </td>
                     <td style={{ padding: "12px 8px" }}>{p.title ?? p.name ?? "-"}</td>

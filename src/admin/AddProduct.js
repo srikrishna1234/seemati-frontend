@@ -1,195 +1,196 @@
 // src/admin/AddProduct.jsx
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import api from "../api/axiosInstance"; // <- now guaranteed to be the configured axios
 
-const AddProduct = () => {
+const ADMIN_TOKEN = process.env.REACT_APP_ADMIN_TOKEN || "seemati123";
+const API_BASE = process.env.REACT_APP_API_URL || ""; // empty => relative paths in dev
+
+export default function AddProduct() {
   const navigate = useNavigate();
-  const [form, setForm] = useState({
-    title: "",
-    description: "",
-    price: "",
-    mrp: "",
-    stock: "",
-    brand: "",
-    category: "",
-    colors: "",
-    sizes: "",
-  });
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [price, setPrice] = useState("");
+  const [mrp, setMrp] = useState("");
+  const [stock, setStock] = useState("");
+  const [brand, setBrand] = useState("");
+  const [category, setCategory] = useState("");
+  const [colors, setColors] = useState("");
+  const [sizes, setSizes] = useState("");
+  const [videoUrl, setVideoUrl] = useState("");
   const [files, setFiles] = useState([]);
-  const [uploading, setUploading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
+  const [uploadedImages, setUploadedImages] = useState([]); // array of { filename, url }
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
 
-  const handleChange = (e) => {
-    setForm({ ...form, [e.target.name]: e.target.value });
-  };
-
-  const handleFileChange = (e) => {
+  function onFilesChange(e) {
     setFiles(Array.from(e.target.files || []));
-  };
+  }
 
-  const handleRemoveFile = (index) => {
-    const newFiles = [...files];
-    newFiles.splice(index, 1);
-    setFiles(newFiles);
-  };
+  async function handleUploadFiles() {
+    if (!files.length) return setMessage("No files selected for upload.");
+    setMessage("");
+    setLoading(true);
+    try {
+      const form = new FormData();
+      files.forEach((f) => form.append("file", f));
+      const url = API_BASE ? `${API_BASE}/admin-api/products/upload` : "/admin-api/products/upload";
+      const res = await fetch(url, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Authorization": `Bearer ${ADMIN_TOKEN}`,
+        },
+        body: form,
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(`Upload failed: ${res.status} ${txt}`);
+      }
+      const body = await res.json();
+      // body is expected to be an array like [{ filename, url, size }, ...]
+      setUploadedImages((prev) => prev.concat(body));
+      setFiles([]); // clear input selection
+      setMessage("Upload successful.");
+    } catch (err) {
+      console.error("upload error", err);
+      setMessage("Upload failed: " + (err.message || err));
+    } finally {
+      setLoading(false);
+    }
+  }
 
-  const handleSubmit = async (e) => {
+  async function handleCreateProduct(e) {
     e.preventDefault();
-    setError("");
-    setSuccess("");
-    setSaving(true);
+    setMessage("");
+    // Build product payload. Use uploadedImages' URLs if present.
+    const images = uploadedImages.map((i) => i.url);
+    const payload = {
+      title,
+      description,
+      price: Number(price) || 0,
+      mrp: Number(mrp) || 0,
+      stock: Number(stock) || 0,
+      brand,
+      category,
+      colors: colors ? colors.split(",").map((c) => c.trim()).filter(Boolean) : [],
+      sizes: sizes ? sizes.split(",").map((s) => s.trim()).filter(Boolean) : [],
+      videoUrl: videoUrl || "",
+      images,
+    };
 
     try {
-      // 1) Upload images first (if any)
-      let uploadedImages = [];
-      if (files.length > 0) {
-        setUploading(true);
-        for (const file of files) {
-          const fd = new FormData();
-          fd.append("file", file);
-
-          // IMPORTANT: do NOT set Content-Type manually when sending FormData.
-          // Use the configured axios instance (it will add Authorization header).
-          const res = await api.post("/admin-api/products/upload", fd);
-
-          if (res.data?.ok && res.data?.url) {
-            uploadedImages.push({
-              filename: res.data.filename,
-              url: res.data.url,
-            });
-          } else {
-            throw new Error(res?.data?.message || "Upload failed");
-          }
-        }
-        setUploading(false);
+      const url = API_BASE ? `${API_BASE}/admin-api/products` : "/admin-api/products";
+      const res = await fetch(url, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${ADMIN_TOKEN}`,
+        },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(`Create failed: ${res.status} ${txt}`);
       }
-
-      // 2) prepare payload
-      const payload = {
-        title: form.title || "",
-        description: form.description || "",
-        price: form.price ? Number(form.price) : 0,
-        mrp: form.mrp ? Number(form.mrp) : undefined,
-        stock: form.stock ? Number(form.stock) : 0,
-        brand: form.brand || "",
-        category: form.category || "",
-        colors: form.colors ? form.colors.split(",").map((c) => c.trim()).filter(Boolean) : [],
-        sizes: form.sizes ? form.sizes.split(",").map((s) => s.trim()).filter(Boolean) : [],
-        images: uploadedImages,
-        // NOTE: do not send slug from client — let server generate and ensure uniqueness
-      };
-
-      // 3) create product
-      const res = await api.post("/admin-api/products", payload);
-
-      if (res.data?.ok || res.status === 201 || res.status === 200) {
-        setSuccess("Product created successfully!");
-        setTimeout(() => navigate("/admin/products"), 900);
-      } else {
-        // If server returns JSON with keyValue (duplicate), prefer that info
-        throw new Error(res?.data?.message || "Create failed");
-      }
+      const data = await res.json();
+      setMessage("Product created.");
+      // navigate back to admin list or open edit
+      navigate("/admin/products");
     } catch (err) {
-      console.error("Failed to create:", err);
-      // If axios error with response, show server message and any keyValue
-      const serverMsg = err?.response?.data;
-      if (serverMsg) {
-        if (serverMsg.keyValue) {
-          setError(`${serverMsg.message} — duplicate: ${JSON.stringify(serverMsg.keyValue)}`);
-        } else {
-          setError(serverMsg.message || JSON.stringify(serverMsg));
-        }
-      } else {
-        setError(err.message || "Failed to create");
-      }
-    } finally {
-      setSaving(false);
-      setUploading(false);
+      console.error("create error", err);
+      setMessage("Create failed: " + (err.message || err));
     }
-  };
+  }
+
+  function removeUploaded(index) {
+    setUploadedImages((prev) => prev.filter((_, i) => i !== index));
+  }
 
   return (
-    <div className="max-w-2xl mx-auto p-4">
-      <h2 className="text-2xl font-semibold mb-4">Add New Product</h2>
+    <div style={{ padding: 20 }}>
+      <h1>Add New Product</h1>
+      <form onSubmit={handleCreateProduct}>
+        <div style={{ marginBottom: 8 }}>
+          <label>Product Title</label>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} />
+        </div>
 
-      <form onSubmit={handleSubmit}>
-        <label className="block mb-2">Product Title</label>
-        <input type="text" name="title" value={form.title} onChange={handleChange} className="w-full border p-2 mb-3 rounded" required />
+        <div style={{ marginBottom: 8 }}>
+          <label>Description</label>
+          <textarea value={description} onChange={(e) => setDescription(e.target.value)} />
+        </div>
 
-        <label className="block mb-2">Description</label>
-        <textarea name="description" value={form.description} onChange={handleChange} className="w-full border p-2 mb-3 rounded" rows="3" />
-
-        <div className="grid grid-cols-3 gap-3">
+        <div style={{ display: "flex", gap: 8 }}>
           <div>
-            <label className="block mb-2">Price (₹)</label>
-            <input type="number" name="price" value={form.price} onChange={handleChange} className="w-full border p-2 rounded" required />
+            <label>Price (₹)</label>
+            <input value={price} onChange={(e) => setPrice(e.target.value)} />
           </div>
           <div>
-            <label className="block mb-2">MRP (₹)</label>
-            <input type="number" name="mrp" value={form.mrp} onChange={handleChange} className="w-full border p-2 rounded" />
+            <label>MRP (₹)</label>
+            <input value={mrp} onChange={(e) => setMrp(e.target.value)} />
           </div>
           <div>
-            <label className="block mb-2">Stock Quantity</label>
-            <input type="number" name="stock" value={form.stock} onChange={handleChange} className="w-full border p-2 rounded" />
+            <label>Stock Quantity</label>
+            <input value={stock} onChange={(e) => setStock(e.target.value)} />
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-3 mt-3">
+        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
           <div>
-            <label className="block mb-2">Brand</label>
-            <input type="text" name="brand" value={form.brand} onChange={handleChange} className="w-full border p-2 rounded" />
+            <label>Brand</label>
+            <input value={brand} onChange={(e) => setBrand(e.target.value)} />
           </div>
           <div>
-            <label className="block mb-2">Category</label>
-            <input type="text" name="category" value={form.category} onChange={handleChange} className="w-full border p-2 rounded" />
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3 mt-3">
-          <div>
-            <label className="block mb-2">Colors (comma separated)</label>
-            <input type="text" name="colors" value={form.colors} onChange={handleChange} className="w-full border p-2 rounded" />
-          </div>
-          <div>
-            <label className="block mb-2">Sizes (comma separated)</label>
-            <input type="text" name="sizes" value={form.sizes} onChange={handleChange} className="w-full border p-2 rounded" />
+            <label>Category</label>
+            <input value={category} onChange={(e) => setCategory(e.target.value)} />
           </div>
         </div>
 
-        <div className="mt-4">
-          <label className="block mb-2">Images (select one or more)</label>
-          <input type="file" multiple onChange={handleFileChange} />
-          {files.length > 0 && (
-            <div className="mt-3">
-              {files.map((f, i) => (
-                <div key={i} className="mb-2">
-                  <img src={URL.createObjectURL(f)} alt="preview" className="h-32 object-cover rounded" />
-                  <button type="button" onClick={() => handleRemoveFile(i)} className="bg-red-500 text-white text-sm px-2 py-1 mt-1 rounded">
-                    Remove
-                  </button>
+        <div style={{ marginTop: 8 }}>
+          <label>Colors (comma separated)</label>
+          <input value={colors} onChange={(e) => setColors(e.target.value)} />
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <label>Sizes (comma separated)</label>
+          <input value={sizes} onChange={(e) => setSizes(e.target.value)} />
+        </div>
+
+        <div style={{ marginTop: 12 }}>
+          <label>Video URL</label>
+          <input value={videoUrl} onChange={(e) => setVideoUrl(e.target.value)} placeholder="https://youtube.com/..." />
+        </div>
+
+        <hr style={{ margin: "12px 0" }} />
+
+        <div>
+          <label>Images (select one or more)</label>
+          <div style={{ margin: "8px 0" }}>
+            <input type="file" multiple onChange={onFilesChange} />
+            <button type="button" onClick={handleUploadFiles} disabled={loading} style={{ marginLeft: 8 }}>
+              {loading ? "Uploading…" : "Upload"}
+            </button>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {uploadedImages.map((img, idx) => (
+              <div key={idx} style={{ border: "1px solid #eee", padding: 6, borderRadius: 6 }}>
+                <img src={img.url} alt={img.filename} style={{ width: 120, height: 120, objectFit: "cover" }} />
+                <div style={{ marginTop: 6 }}>
+                  <button type="button" onClick={() => removeUploaded(idx)}>Remove</button>
                 </div>
-              ))}
-            </div>
-          )}
+              </div>
+            ))}
+          </div>
         </div>
 
-        <div className="flex gap-3 mt-5">
-          <button type="submit" disabled={saving || uploading} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded disabled:opacity-70">
-            {saving || uploading ? "Saving..." : "Create Product"}
-          </button>
-          <button type="button" onClick={() => navigate("/admin/products")} className="bg-gray-200 px-4 py-2 rounded">
-            Cancel
-          </button>
+        <div style={{ marginTop: 12 }}>
+          <button type="submit">Create Product</button>
+          <button type="button" onClick={() => navigate(-1)} style={{ marginLeft: 10 }}>Cancel</button>
         </div>
-
-        {error && <div className="mt-3 text-red-600">❌ {error}</div>}
-        {success && <div className="mt-3 text-green-600">✅ {success}</div>}
       </form>
+
+      {message && <div style={{ marginTop: 12, color: "crimson", whiteSpace: "pre-wrap" }}>{message}</div>}
     </div>
   );
-};
-
-export default AddProduct;
+}

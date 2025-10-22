@@ -1,9 +1,5 @@
 // backend/src/server.js
 // Full server entry (ESM).
-// - connects to MongoDB
-// - serves uploads
-// - mounts product and admin product routes
-// - includes request logger + route lister for debugging
 
 import express from "express";
 import cors from "cors";
@@ -19,14 +15,11 @@ import jwt from "jsonwebtoken";
 
 dotenv.config();
 
-// __dirname equivalent in ESM
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-// For compatibility: allow requiring CommonJS modules if needed
 const require = createRequire(import.meta.url);
 
-// Try to import Product as ES module default; if that fails, fall back to require()
+// --- Import Product (ESM/CommonJS fallback) ---
 let Product;
 try {
   const mod = await import("../models/Product.js");
@@ -41,6 +34,7 @@ try {
   }
 }
 
+// --- Constants ---
 const PORT = process.env.PORT || 4000;
 const MONGODB_URI = process.env.MONGODB_URI || "";
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "http://localhost:3000";
@@ -67,7 +61,7 @@ async function main() {
     next();
   });
 
-  // CORS
+  // --- CORS ---
   app.use(
     cors({
       origin: FRONTEND_ORIGIN,
@@ -78,7 +72,7 @@ async function main() {
   );
   app.options("*", cors({ origin: FRONTEND_ORIGIN, credentials: true }));
 
-  // session middleware
+  // --- session ---
   app.use(
     session({
       secret: process.env.SESSION_SECRET || "keyboard_cat_dev_secret",
@@ -93,15 +87,15 @@ async function main() {
     })
   );
 
-  // body parsers
+  // --- body parsers ---
   app.use(express.json({ limit: "8mb" }));
   app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
-  // cookie parser
+  // --- cookie parser ---
   const cookieParser = require("cookie-parser");
   app.use(cookieParser());
 
-  // static uploads folder
+  // --- static uploads ---
   const uploadDir = path.join(__dirname, "..", "uploads");
   if (!fs.existsSync(uploadDir)) {
     try {
@@ -112,7 +106,7 @@ async function main() {
   }
   app.use("/uploads", express.static(uploadDir));
 
-  // multer setup (disk storage)
+  // --- multer setup (disk storage for admin upload) ---
   const storage = multer.diskStorage({
     destination: function (req, file, cb) {
       cb(null, uploadDir);
@@ -126,12 +120,10 @@ async function main() {
   const upload = multer({ storage });
 
   if (!Product) {
-    console.warn("⚠️ Product model not loaded. Routes will fail until model is fixed.");
+    console.warn("⚠️ Product model not loaded. Routes may fail.");
   }
 
-  // -------------------------
-  // Route loader (ESM-friendly)
-  // -------------------------
+  // --- helper to dynamically import or require route modules ---
   async function loadRoute(modulePath) {
     try {
       const mod = await import(modulePath);
@@ -141,179 +133,125 @@ async function main() {
         const mod = require(modulePath);
         return mod.default || mod;
       } catch (reqErr) {
-        // prefer the import error for debugging
         throw impErr;
       }
     }
   }
 
-  // -------------------------
-  // Load routes
-  // -------------------------
-  let orderRoutes = null;
-  let authRoutes = null;
-  let otpRoutes = null;
-  let protectedRoutes = null;
-  let productRoutes = null;
-  let adminProductRoutes = null;
-
+  // --- load other routes ---
+  let orderRoutes, authRoutes, otpRoutes, protectedRoutes, productRoutes, adminProductRoutes;
   try {
     orderRoutes = await loadRoute("./routes/orders.cjs");
-  } catch (e) {
-    console.warn("orders route not found:", e && e.message ? e.message : e);
-  }
+  } catch {}
 
   try {
     authRoutes = await loadRoute("./routes/auth.cjs");
-  } catch (e) {
-    console.warn("auth route not found:", e && e.message ? e.message : e);
-  }
+  } catch {}
 
   try {
     otpRoutes = await loadRoute("./routes/otpRoutes.cjs");
-  } catch (e) {
-    console.warn("otp route not found:", e && e.message ? e.message : e);
-  }
+  } catch {}
 
   try {
     protectedRoutes = await loadRoute("./routes/protectedRoutes.cjs");
-  } catch (e) {
-    console.warn("protected route not found:", e && e.message ? e.message : e);
-  }
+  } catch {}
 
-  // product routes (prefer .cjs)
   try {
-    try {
-      productRoutes = await loadRoute("./routes/productRoutes.cjs");
-      console.log("✅ Loaded productRoutes.cjs");
-    } catch (e1) {
-      productRoutes = await loadRoute("./routes/productRoutes.js");
-      console.log("✅ Loaded productRoutes.js (fallback)");
-    }
-  } catch (e) {
-    console.warn("product routes not found (productRoutes.js/cjs):", e && e.message ? e.message : e);
+    productRoutes = await loadRoute("./routes/productRoutes.cjs");
+    console.log("✅ Loaded productRoutes.cjs");
+  } catch {
+    productRoutes = await loadRoute("./routes/productRoutes.js");
+    console.log("✅ Loaded productRoutes.js (fallback)");
   }
 
-  // admin product routes
   try {
-    try {
-      adminProductRoutes = await loadRoute("./routes/adminProduct.js");
-    } catch (e1) {
-      adminProductRoutes = await loadRoute("./routes/adminProduct.cjs");
-    }
-  } catch (e) {
-    console.warn("adminProduct route not found (adminProduct.js/cjs):", e && e.message ? e.message : e);
+    adminProductRoutes = await loadRoute("./routes/adminProduct.js");
+  } catch {
+    adminProductRoutes = await loadRoute("./routes/adminProduct.cjs");
   }
 
-  // -------------------------
-  // Simple admin auth helper
-  // Accepts either:
-  //  - Bearer JWT signed with JWT_SECRET (if configured), or
-  //  - Bearer token equal to ADMIN_TOKEN (if configured)
-  // -------------------------
+  // --- admin auth helper ---
   function checkAdminAuth(req) {
-    const auth = req.headers && req.headers.authorization ? String(req.headers.authorization) : "";
+    const auth = req.headers.authorization || "";
     if (!auth) return false;
     const parts = auth.split(/\s+/);
     if (parts.length !== 2) return false;
     const [scheme, token] = parts;
     if (!/^Bearer$/i.test(scheme)) return false;
-
-    // Direct ADMIN_TOKEN match (simple dev fallback)
     if (ADMIN_TOKEN && token === ADMIN_TOKEN) return true;
-
-    // JWT verification
     if (JWT_SECRET) {
       try {
-        const payload = jwt.verify(token, JWT_SECRET);
-        // optionally add more checks here
-        return !!payload;
-      } catch (e) {
+        jwt.verify(token, JWT_SECRET);
+        return true;
+      } catch {
         return false;
       }
     }
-
     return false;
   }
 
-  // -------------------------
-  // Ensure /admin-api/products/upload exists (multer file upload)
-  // This prevents 404s when admin upload is called directly from frontend.
-  // -------------------------
-  // Accept any file field name and return array of uploaded file objects
-app.post("/admin-api/products/upload", upload.any(), (req, res) => {
-  try {
-    if (!checkAdminAuth(req)) {
-      return res.status(401).json({ ok: false, message: "Unauthorized" });
+  // --- admin uploads (local disk) ---
+  app.post("/admin-api/products/upload", upload.any(), (req, res) => {
+    try {
+      if (!checkAdminAuth(req)) {
+        return res.status(401).json({ ok: false, message: "Unauthorized" });
+      }
+
+      const files = req.files || [];
+      if (!files.length) {
+        return res.status(400).json({ ok: false, message: "No file uploaded" });
+      }
+
+      const host = process.env.SERVER_URL || `http://localhost:${PORT}`;
+      const out = files.map((f) => {
+        const url = `${host}/uploads/${f.filename}`;
+        return { filename: f.filename, url, size: f.size };
+      });
+
+      console.log(`[admin-upload] uploaded ${out.length} file(s):`, out.map(o => o.filename).join(", "));
+      return res.json(out);
+    } catch (err) {
+      console.error("[admin-upload] error:", err);
+      return res.status(500).json({ ok: false, message: "Upload failed" });
     }
+  });
 
-    const files = req.files || [];
-    if (!files.length) {
-      return res.status(400).json({ ok: false, message: "No file uploaded" });
-    }
-
-    const host = process.env.SERVER_URL || `http://localhost:${process.env.PORT || 4000}`;
-    const out = files.map((f) => {
-      const filename = f.filename;
-      const url = `${host}/uploads/${filename}`;
-      return { filename, originalname: f.originalname, url, size: f.size };
-    });
-
-    console.log(`[admin-upload] uploaded ${out.length} file(s):`, out.map(o => o.filename).join(", "));
-    return res.json(out); // return array for easier frontend merge
-  } catch (err) {
-    console.error("[admin-upload] error:", err && err.stack ? err.stack : err);
-    return res.status(500).json({ ok: false, message: "Upload failed" });
-  }
-});
-
-
-  // Also allow preflight for that path (should be covered by global options, but explicit is fine)
   app.options("/admin-api/products/upload", cors({ origin: FRONTEND_ORIGIN, credentials: true }));
 
-  // -------------------------
-  // Mount routes
-  // -------------------------
-  if (otpRoutes) {
-    app.use("/api/otp", otpRoutes);
-    console.log("✅ Mounted /api/otp routes");
-  } else {
-    console.warn("⚠️ /api/otp not mounted (route file missing)");
-  }
+  // --- QUICK REDIRECT: handle legacy /products requests that frontend may make ---
+  // This preserves the query string and forwards the request to /api/products.
+  // Place this BEFORE route mounting so it takes effect for the client requests.
+  app.get("/products", (req, res) => {
+    try {
+      const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
+      // 307 keeps method semantics (GET) — explicit
+      return res.redirect(307, `/api/products${qs}`);
+    } catch (e) {
+      console.warn("[redirect /products] error:", e);
+      return res.status(500).send("Redirect failed");
+    }
+  });
 
-  if (orderRoutes) {
-    app.use("/api/orders", orderRoutes);
-    console.log("✅ Mounted /api/orders routes");
-  }
+  // --- mount all routes ---
+  if (otpRoutes) app.use("/api/otp", otpRoutes);
+  if (orderRoutes) app.use("/api/orders", orderRoutes);
+  if (authRoutes) app.use("/api/auth", authRoutes);
+  if (protectedRoutes) app.use("/api/protected", protectedRoutes);
+  if (productRoutes) app.use("/api", productRoutes);
+  if (adminProductRoutes) app.use("/admin-api", adminProductRoutes);
 
-  if (authRoutes) {
-    app.use("/api/auth", authRoutes);
-    console.log("✅ Mounted /api/auth routes");
-  }
+  // ✅ NEW: Mount S3 upload router
+  console.log("[UploadRouter] Mounting...");
+  const uploadRouter = require("./routes/upload.cjs");
+  app.use("/api", uploadRouter);
 
-  if (protectedRoutes) {
-    app.use("/api/protected", protectedRoutes);
-    console.log("✅ Mounted /api/protected routes");
-  }
+  // --- test ping ---
+  app.get("/api/ping", (req, res) => res.json({ ok: true, msg: "api ping" }));
 
-  if (productRoutes) {
-    app.use("/api", productRoutes);
-    console.log("✅ Mounted /api (product) routes");
-  } else {
-    console.warn("⚠️ Product routes not mounted");
-  }
-
-  if (adminProductRoutes) {
-    app.use("/admin-api", adminProductRoutes);
-    console.log("✅ Mounted /admin-api (admin product) routes");
-  } else {
-    console.warn("⚠️ Admin product routes not mounted");
-  }
-
-  // Health check
+  // --- health check ---
   app.get("/_health", (req, res) => res.json({ ok: true, uptime: process.uptime() }));
 
-  // --- List registered routes for debugging ---
+  // --- list routes ---
   function listRoutes(appToList) {
     const routes = [];
     if (!appToList || !appToList._router) return;
@@ -335,7 +273,7 @@ app.post("/admin-api/products/upload", upload.any(), (req, res) => {
 
   listRoutes(app);
 
-  // Start server
+  // --- start server ---
   app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
   });
