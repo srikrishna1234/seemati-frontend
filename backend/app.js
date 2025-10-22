@@ -50,12 +50,13 @@ const corsOptions = {
     // Exact match required for credentialed requests.
     // IMPORTANT: do not throw an Error here; instead return false to signal not allowed.
     if (whitelist.includes(origin)) {
-      return callback(null, true);
-    } else {
-      // Deny unknown origins (no credentials headers will be set).
-      // This avoids throwing an exception which may propagate and cause a 502.
-      return callback(null, false);
-    }
+  res.header("Access-Control-Allow-Origin", origin);
+  return callback(null, true);
+} else {
+  console.warn("CORS blocked request from origin:", origin);
+  return callback(null, false);
+}
+
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
   allowedHeaders: ["Content-Type", "Authorization", "Accept", "X-Requested-With"],
