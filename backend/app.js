@@ -3,6 +3,7 @@ require("dotenv").config(); // load backend/.env first
 
 const express = require("express");
 const path = require("path");
+const cors = require("cors");
 
 const connectDB = require("./src/db"); // your DB connector
 const cartRoutes = require("./src/routes/cartRoutes");
@@ -14,51 +15,54 @@ const uploadRouter = require("./src/routes/upload");
 const app = express();
 
 /* -------------------------------------------------
-   🔧 CORS: explicit handling for credentialed requests
-   -------------------------------------------------
-   - Browsers forbid sending credentials (cookies/Authorization)
-     when the server responds with Access-Control-Allow-Origin: *
-   - This middleware echoes back the request origin when it's in
-     the allowed list (FRONTEND_ORIGIN or comma-separated ALLOWED_ORIGINS)
-   - It also responds to OPTIONS preflight requests immediately.
+   CORS: use cors package with explicit allowed headers
+   - Reads FRONTEND_ORIGIN and ALLOWED_ORIGINS from env
+   - Adds sensible localhost defaults for dev
+   - Echoes origin when credentials allowed (required)
 -------------------------------------------------- */
-app.use((req, res, next) => {
-  try {
-    const origin = req.headers.origin || "";
-    const allowed = [];
+const buildWhitelist = () => {
+  const allowed = new Set();
 
-    if (process.env.FRONTEND_ORIGIN) allowed.push(process.env.FRONTEND_ORIGIN.trim());
-    if (process.env.ALLOWED_ORIGINS) {
-      const extras = process.env.ALLOWED_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean);
-      allowed.push(...extras);
-    }
-
-    // Allow localhost dev origins by default (useful for local dev)
-    allowed.push("http://localhost:3000", "http://127.0.0.1:3000");
-
-    if (allowed.includes(origin)) {
-      // Echo the specific origin (required when credentials are included)
-      res.setHeader("Access-Control-Allow-Origin", origin);
-      res.setHeader("Access-Control-Allow-Credentials", "true");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
-      res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
-    } else {
-      // Not allowed origin: be strict (no credentials)
-      // Setting Access-Control-Allow-Origin to "null" is one way to indicate it's disallowed.
-      // Alternatively, omit the header entirely. Here we set a minimal header for safe non-credentialed GETs.
-      res.setHeader("Access-Control-Allow-Origin", "null");
-      res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
-    }
-
-    // Preflight
-    if (req.method === "OPTIONS") {
-      return res.status(200).end();
-    }
-  } catch (e) {
-    // fallback: continue without CORS headers (will likely be blocked by browser)
+  if (process.env.FRONTEND_ORIGIN) allowed.add(process.env.FRONTEND_ORIGIN.trim());
+  if (process.env.ALLOWED_ORIGINS) {
+    process.env.ALLOWED_ORIGINS
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .forEach((s) => allowed.add(s));
   }
-  next();
-});
+
+  // Development defaults (useful for local dev)
+  allowed.add("http://localhost:3000");
+  allowed.add("http://127.0.0.1:3000");
+
+  return Array.from(allowed);
+};
+
+const whitelist = buildWhitelist();
+
+const corsOptions = {
+  origin: function (origin, callback) {
+    // If no origin (curl, mobile apps, server-to-server) allow it.
+    if (!origin) return callback(null, true);
+
+    // Exact match required for credentialed requests
+    if (whitelist.includes(origin)) {
+      return callback(null, true);
+    } else {
+      // Deny unknown origins with an error (will be handled later)
+      return callback(new Error(`CORS: Origin ${origin} not allowed`));
+    }
+  },
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+  allowedHeaders: ["Content-Type", "Authorization", "Accept", "X-Requested-With"],
+  exposedHeaders: ["Content-Length", "ETag"],
+  credentials: true, // set true only if you use cookies/credentials
+  optionsSuccessStatus: 204,
+};
+
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions)); // preflight for all routes
 
 /* -------------------------------------------------
    JSON/body parsing
@@ -79,8 +83,6 @@ app.use("/uploads", express.static(uploadsPath));
 
 /* -------------------------------------------------
    BACKEND / SERVER URL resolution
-   - Prefer SERVER_URL (Render env) then BACKEND_URL fallback,
-     otherwise local host URL.
 -------------------------------------------------- */
 const PORT = process.env.PORT || 4000;
 const SERVER_URL = (process.env.SERVER_URL || process.env.BACKEND_URL || `http://localhost:${PORT}`).replace(/\/+$/, "");
@@ -118,15 +120,12 @@ function toAbsoluteImageUrl(img) {
 /* -------------------------------------------------
    Routes that must be reachable quickly:
    - Root and /api/ping must be placed BEFORE any router mounted at /api
-     so health checks and uptime monitors always work.
 -------------------------------------------------- */
 app.get("/", (req, res) => {
   res.json({ message: "Backend is running 🎉", server: SERVER_URL });
 });
 
-// ping used by uptime monitors and frontend health checks
 app.get("/api/ping", (req, res) => res.json({ ok: true, msg: "api ping" }));
-// some monitors issue HEAD requests
 app.head("/api/ping", (req, res) => res.status(200).end());
 
 /* -------------------------------------------------
@@ -143,8 +142,6 @@ app.use("/api", uploadRouter);
 
 /* -------------------------------------------------
    Public product listing endpoints (normalized)
-   - GET /products       -> public products (normalized image URLs)
-   - GET /admin-api/products -> admin-compatible list (normalized)
 -------------------------------------------------- */
 app.get("/products", async (req, res, next) => {
   try {
@@ -250,10 +247,14 @@ app.use((req, res, next) => {
 
 /* -------------------------------------------------
    Error handler
+   - Special-case CORS errors so you can see origin info in logs
 -------------------------------------------------- */
 app.use((err, req, res, next) => {
   console.error("Unhandled error:", err?.message || err);
-  if (err && String(err.message || "").includes("CORS")) {
+  if (err && String(err.message || "").toLowerCase().includes("cors")) {
+    // Include origin info for debugging
+    const origin = req.headers.origin || "no-origin";
+    console.warn(`CORS blocked request from origin: ${origin} — ${err.message}`);
     return res.status(403).json({ error: "CORS blocked request", message: err.message });
   }
   res.status(err.status || 500).json({ error: err.message || "Internal Server Error" });
