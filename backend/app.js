@@ -15,28 +15,30 @@ const uploadRouter = require("./src/routes/upload");
 const app = express();
 
 /* -------------------------------------------------
-   🔧 UNIVERSAL CORS FIX (for local dev and builds)
-   -------------------------------------------------
-   - Echoes any local origin automatically.
-   - Allows credentials (cookies, auth tokens).
--------------------------------------------------- */
+   🔧 CORS: flexible handling for local dev + prod
+   ------------------------------------------------- */
 app.use(
   cors({
     origin: function (origin, callback) {
       // allow same-origin requests (e.g., curl, server-to-server)
       if (!origin) return callback(null, true);
+
       // allow common local dev hosts
       if (origin.startsWith("http://localhost") || origin.startsWith("http://127.0.0.1")) {
         return callback(null, true);
       }
-      // allow your deployed frontend origin(s) by reading env var if provided
-      const allowed = (process.env.ALLOWED_ORIGINS || "")
-        .split(",")
-        .map(s => s.trim())
-        .filter(Boolean);
-      if (allowed.includes(origin)) return callback(null, true);
 
-      console.log("❌ Blocked by CORS:", origin);
+      // Allow a single FRONTEND_ORIGIN env (common) or a comma list via ALLOWED_ORIGINS
+      const allowedList = [];
+      if (process.env.FRONTEND_ORIGIN) allowedList.push(process.env.FRONTEND_ORIGIN.trim());
+      if (process.env.ALLOWED_ORIGINS) {
+        const extras = process.env.ALLOWED_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean);
+        allowedList.push(...extras);
+      }
+
+      if (allowedList.includes(origin)) return callback(null, true);
+
+      console.warn("❌ Blocked by CORS:", origin);
       return callback(new Error("Not allowed by CORS"));
     },
     credentials: true,
@@ -44,16 +46,14 @@ app.use(
 );
 app.options("*", cors());
 
-// JSON & URL encoding
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+/* -------------------------------------------------
+   JSON/body parsing
+-------------------------------------------------- */
+app.use(express.json({ limit: "8mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 /* -------------------------------------------------
-   📁 Static files (images, uploads)
-   -------------------------------------------------
-   Keep these in place for local fallback/static assets.
-   Your uploaded product images will go to S3, but these
-   routes are helpful for placeholder images and legacy usage.
+   Static files (images, uploads)
 -------------------------------------------------- */
 const imagesPath = path.join(__dirname, "public", "images");
 console.log("Serving images from =", imagesPath);
@@ -64,32 +64,33 @@ console.log("Serving uploads from =", uploadsPath);
 app.use("/uploads", express.static(uploadsPath));
 
 /* -------------------------------------------------
-   📦 Routes (admin / cart / upload)
+   Routes
 -------------------------------------------------- */
-// existing app routes
+// cart routes mounted at /cart
 app.use("/cart", cartRoutes);
-app.use(adminProductRouter); // mounts routes such as /admin/products and /products/upload
 
-// NEW: mount upload routes under /api (provides /api/upload-image and /api/image-url)
+// Admin product routes: mount explicitly under /admin-api
+app.use("/admin-api", adminProductRouter);
+
+// Upload router mounted under /api (provides /api/upload-image etc.)
 app.use("/api", uploadRouter);
 
 /* -------------------------------------------------
-   🔁 BACKEND_URL and image normalization helper
-   -------------------------------------------------
-   - Use BACKEND_URL env var in production (e.g. https://seemati-backend.onrender.com)
-   - Defaults to http://localhost:<PORT> for local dev
+   BACKEND / SERVER URL resolution
+   - Prefer SERVER_URL (Render env) then BACKEND_URL fallback,
+     otherwise local host URL.
 -------------------------------------------------- */
 const PORT = process.env.PORT || 4000;
-const BACKEND_URL = (process.env.BACKEND_URL || `http://localhost:${PORT}`).replace(/\/+$/, "");
+const SERVER_URL = (process.env.SERVER_URL || process.env.BACKEND_URL || `http://localhost:${PORT}`).replace(/\/+$/, "");
 
 /**
  * toAbsoluteImageUrl(img)
  * - Accepts: string ("/uploads/x.jpg" or "uploads/x.jpg" or "http://..."),
  *            object with .url or .filename
- * - Returns absolute URL string (BACKEND_URL + path) or placeholder image
+ * - Returns absolute URL string (SERVER_URL + path) or placeholder image
  */
 function toAbsoluteImageUrl(img) {
-  if (!img) return `${BACKEND_URL}/images/placeholder.png`;
+  if (!img) return `${SERVER_URL}/images/placeholder.png`;
 
   if (typeof img === "object") {
     if (img.url) return toAbsoluteImageUrl(img.url);
@@ -97,29 +98,31 @@ function toAbsoluteImageUrl(img) {
   }
 
   const s = String(img).trim();
-  if (!s) return `${BACKEND_URL}/images/placeholder.png`;
+  if (!s) return `${SERVER_URL}/images/placeholder.png`;
   if (/^https?:\/\//i.test(s)) return s;
 
   // If string starts with slash, treat as absolute path on this server
-  if (s.startsWith("/")) return `${BACKEND_URL}${s}`;
+  if (s.startsWith("/")) return `${SERVER_URL}${s}`;
 
   // If it contains uploads or images, attach safely
   if (s.includes("uploads") || s.includes("images")) {
-    return `${BACKEND_URL}/${s.replace(/^\/+/, "")}`;
+    return `${SERVER_URL}/${s.replace(/^\/+/, "")}`;
   }
 
   // Fallback: treat as uploads filename
-  return `${BACKEND_URL}/uploads/${s.replace(/^\/+/, "")}`;
+  return `${SERVER_URL}/uploads/${s.replace(/^\/+/, "")}`;
 }
 
 /* -------------------------------------------------
-   ✅ Public GET /products  (returns normalized products)
+   Public product listing endpoints (normalized)
+   - GET /products       -> public products (normalized image URLs)
+   - GET /admin-api/products -> admin-compatible list (normalized)
 -------------------------------------------------- */
 app.get("/products", async (req, res, next) => {
   try {
     let Product = null;
     try {
-      Product = require("./models/Product");
+      Product = require("./src/models/Product");
       Product = Product && (Product.default || Product);
     } catch (e) {
       Product = null;
@@ -135,9 +138,7 @@ app.get("/products", async (req, res, next) => {
         const copy = { ...p };
 
         const imgs = Array.isArray(copy.images) ? copy.images : [];
-        const normalizedImages = imgs.length
-          ? imgs.map((it) => toAbsoluteImageUrl(it))
-          : [toAbsoluteImageUrl(null)];
+        const normalizedImages = imgs.length ? imgs.map((it) => toAbsoluteImageUrl(it)) : [toAbsoluteImageUrl(null)];
 
         copy.images = normalizedImages;
         copy.image = copy.image ? toAbsoluteImageUrl(copy.image) : normalizedImages[0];
@@ -154,7 +155,7 @@ app.get("/products", async (req, res, next) => {
         title: "Sample Leggings",
         name: "Leggings",
         price: 299,
-        images: [`${BACKEND_URL}/images/leggings.png`],
+        images: [`${SERVER_URL}/images/leggings.png`],
         description: "Comfortable sample leggings",
         createdAt: new Date(),
       },
@@ -165,14 +166,11 @@ app.get("/products", async (req, res, next) => {
   }
 });
 
-/* -------------------------------------------------
-   ✅ Compatibility for /admin-api/products (frontend older path)
--------------------------------------------------- */
 app.get("/admin-api/products", async (req, res, next) => {
   try {
     let Product = null;
     try {
-      Product = require("./models/Product");
+      Product = require("./src/models/Product");
       Product = Product && (Product.default || Product);
     } catch (e) {
       Product = null;
@@ -180,10 +178,10 @@ app.get("/admin-api/products", async (req, res, next) => {
 
     if (Product && Product.find) {
       const list = await Product.find().lean();
-      const normalized = list.map(p => {
+      const normalized = list.map((p) => {
         const copy = { ...p };
         const imgs = Array.isArray(copy.images) ? copy.images : [];
-        copy.images = imgs.length ? imgs.map(it => toAbsoluteImageUrl(it)) : [toAbsoluteImageUrl(null)];
+        copy.images = imgs.length ? imgs.map((it) => toAbsoluteImageUrl(it)) : [toAbsoluteImageUrl(null)];
         copy.image = copy.image ? toAbsoluteImageUrl(copy.image) : copy.images[0];
         return copy;
       });
@@ -196,7 +194,7 @@ app.get("/admin-api/products", async (req, res, next) => {
         title: "Sample Leggings",
         name: "Leggings",
         price: 299,
-        images: [`${BACKEND_URL}/images/leggings.png`],
+        images: [`${SERVER_URL}/images/leggings.png`],
         description: "Comfortable sample leggings",
         createdAt: new Date(),
       },
@@ -207,16 +205,18 @@ app.get("/admin-api/products", async (req, res, next) => {
 });
 
 /* -------------------------------------------------
-   🌐 Root health-check
+   Root & ping for health checks
 -------------------------------------------------- */
 app.get("/", (req, res) => {
-  res.json({ message: "Backend is running 🎉" });
+  res.json({ message: "Backend is running 🎉", server: SERVER_URL });
 });
 
+// ping used by uptime monitors and frontend health checks
+app.get("/api/ping", (req, res) => res.json({ ok: true, msg: "api ping" }));
+
 /* -------------------------------------------------
-   🧩 404 handler for API routes
+   API 404 handler for specific API-ish paths
 -------------------------------------------------- */
-app.get('/api/ping', (req, res) => res.json({ ok: true, msg: 'api ping' }));
 app.use((req, res, next) => {
   if (
     req.path.startsWith("/api") ||
@@ -231,7 +231,7 @@ app.use((req, res, next) => {
 });
 
 /* -------------------------------------------------
-   🚨 Error handler
+   Error handler
 -------------------------------------------------- */
 app.use((err, req, res, next) => {
   console.error("Unhandled error:", err?.message || err);
@@ -242,13 +242,41 @@ app.use((err, req, res, next) => {
 });
 
 /* -------------------------------------------------
-   🚀 Start server after DB connects
+   Helper: list registered routes (prints to logs)
+-------------------------------------------------- */
+function listRoutes(appToList) {
+  try {
+    const routes = [];
+    if (!appToList || !appToList._router) return;
+    appToList._router.stack.forEach((middleware) => {
+      if (middleware.route) {
+        routes.push(middleware.route);
+      } else if (middleware.name === "router" && middleware.handle && middleware.handle.stack) {
+        middleware.handle.stack.forEach((handler) => {
+          if (handler.route) routes.push(handler.route);
+        });
+      }
+    });
+    console.log("REGISTERED ROUTES:");
+    routes.forEach((r) => {
+      const methods = Object.keys(r.methods).join(",").toUpperCase();
+      console.log(methods, r.path);
+    });
+  } catch (e) {
+    console.warn("Could not list routes:", e && e.message);
+  }
+}
+
+/* -------------------------------------------------
+   Start server after DB connects
 -------------------------------------------------- */
 connectDB()
   .then(() => {
     console.log("✅ MongoDB connected (confirmed in app.js)");
-    app.listen(PORT, () => {
-      console.log(`✅ Server running on ${BACKEND_URL}`);
+    const server = app.listen(process.env.PORT || 4000, () => {
+      console.log(`✅ Server running on ${SERVER_URL}`);
+      // list registered routes once server is ready
+      listRoutes(app);
     });
   })
   .catch((err) => {
