@@ -37,30 +37,34 @@ function buildWhitelist() {
 }
 
 const whitelist = buildWhitelist();
+console.log("CORS whitelist:", whitelist);
 
 /* -------------------------------------------------
    CORS: use cors package only and configure it to:
    - echo exact origin for allowed origins
    - allow Authorization and Content-Type headers
-   - allow credentials when necessary
+   - NOT allow credentials (cookies) for now — we're using bearer tokens
 -------------------------------------------------- */
 const corsOptions = {
   origin: function (origin, callback) {
     // allow server-to-server or curl (no origin)
     if (!origin) return callback(null, true);
 
-    // exact match required for credentialed requests
+    // exact match required for credentialed requests and for security
     if (whitelist.includes(origin)) {
       return callback(null, true);
     }
 
-    // not allowed
-    return callback(null, false);
+    // not allowed: create an explicit error so the error handler logs it clearly
+    return callback(new Error(`Origin ${origin} is not allowed by CORS`), false);
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
-  allowedHeaders: ["Content-Type", "Authorization", "Accept", "X-Requested-With"],
+  // include 'Origin' so preflight from some clients is satisfied
+  allowedHeaders: ["Content-Type", "Authorization", "Accept", "Origin", "X-Requested-With"],
   exposedHeaders: ["Content-Length", "ETag"],
-  credentials: true,
+  // IMPORTANT: we are NOT using cookies / credentials with browser requests right now.
+  // Using credentials: true requires a specific origin (not '*') and the client must set withCredentials:true.
+  credentials: false,
   optionsSuccessStatus: 204,
 };
 
