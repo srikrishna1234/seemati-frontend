@@ -7,7 +7,7 @@ const cors = require("cors");
 
 const connectDB = require("./src/db"); // your DB connector
 const cartRoutes = require("./src/routes/cartRoutes");
-const adminProductRouter = require("./src/routes/adminProduct");
+const adminProductRouter = require("./src/routes/adminProduct.cjs");
 
 // NEW: upload router for S3 uploads
 const uploadRouter = require("./src/routes/upload");
@@ -147,9 +147,19 @@ app.head("/api/ping", (req, res) => res.status(200).end());
 /* -------------------------------------------------
    Routes (cart / admin / upload)
 -------------------------------------------------- */
+/* -------------------------------------------------
+   Routes (cart / admin / upload)
+-------------------------------------------------- */
 app.use("/cart", cartRoutes);
 app.use("/admin-api", adminProductRouter);
+
+// Mount debug route (lists uploads directory) for quick checking
+const debugListUploads = require("./src/routes/debugListUploads.cjs");
+app.use("/api", debugListUploads);
+
+// existing upload router
 app.use("/api", uploadRouter);
+
 
 /* -------------------------------------------------
    Public product listing endpoints (normalized)
