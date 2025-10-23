@@ -1,56 +1,62 @@
 // src/api/axiosInstance.js
 import axios from "axios";
 
-// Use the backend base URL (REACT_APP_API_URL should be set in Vercel/Azure/etc.)
-// Fallback to local dev or the known deployed backend.
-const base =
-  process.env.REACT_APP_API_URL || "https://seemati-backend.onrender.com" || "http://localhost:4000";
+/**
+ * Base URL resolution — prefer a dedicated API base env var, then a generic one,
+ * then the deployed backend fallback, then localhost for dev.
+ */
+const baseURL =
+  process.env.REACT_APP_API_BASE_URL ||
+  process.env.REACT_APP_API_URL ||
+  "https://seemati-backend.onrender.com";
 
-// Create axios instance
+/**
+ * Create axios instance
+ */
 const instance = axios.create({
-  baseURL: base,
+  baseURL,
   timeout: 15000,
   headers: {
     "Content-Type": "application/json",
+    Accept: "application/json",
   },
-  // IMPORTANT: token-based Authorization does NOT require cookies/credentials.
-  // Setting withCredentials: true will make the browser send cookies and require
-  // the server to echo the exact origin (not "*"), which caused your CORS issue.
+  // We are not using cookies for token auth — keep this false.
   withCredentials: false,
 });
 
 /**
- * 🔐 Auth Interceptor
- * Automatically attaches Bearer token for admin requests.
- *
- * NOTE: Avoid placing real secrets into client-side environment variables in production.
- * If process.env.ADMIN_TOKEN is present it will be bundled into your frontend build —
- * only use that value for local development.
+ * Helper to set / clear Authorization header on the instance.
+ * Use setAuthToken(token) after login; use clearAuthToken() on logout.
+ */
+export function setAuthToken(token) {
+  if (token) {
+    instance.defaults.headers.common["Authorization"] = `Bearer ${token}`;
+  } else {
+    delete instance.defaults.headers.common["Authorization"];
+  }
+}
+
+export function clearAuthToken() {
+  delete instance.defaults.headers.common["Authorization"];
+}
+
+/**
+ * Request interceptor:
+ * - No automatic Authorization injection here (we removed automatic lookup).
+ * - It only ensures headers object exists and optionally logs requests in dev.
  */
 instance.interceptors.request.use(
   (req) => {
-    try {
-      const localToken = typeof window !== "undefined" ? localStorage.getItem("adminToken") : null;
-      const envToken =
-        (process.env.REACT_APP_ADMIN_TOKEN || process.env.ADMIN_TOKEN) || null;
-
-      const token = localToken || envToken;
-
-      if (token) {
-        req.headers = req.headers || {};
-        req.headers.Authorization = `Bearer ${token}`;
-      }
-
-      if (process.env.NODE_ENV !== "production") {
+    req.headers = req.headers || {};
+    if (process.env.NODE_ENV !== "production") {
+      try {
         console.debug(
           "[axios] req:",
-          req.method?.toUpperCase(),
-          req.baseURL + req.url,
+          (req.method || "").toUpperCase(),
+          (req.baseURL || "") + (req.url || ""),
           { headers: req.headers }
         );
-      }
-    } catch (e) {
-      console.error("[axios] request setup error:", e);
+      } catch (e) {}
     }
     return req;
   },
@@ -61,7 +67,7 @@ instance.interceptors.request.use(
 );
 
 /**
- * 🧠 Response Interceptor
+ * Response interceptors — keep helpful debug logging and normalized errors.
  */
 if (process.env.NODE_ENV !== "production") {
   instance.interceptors.response.use(
@@ -113,7 +119,8 @@ if (process.env.NODE_ENV !== "production") {
           `HTTP ${err.response.status}`;
         return Promise.reject(new Error(m));
       }
-      if (err.request) return Promise.reject(new Error("No response from server (network)"));
+      if (err.request)
+        return Promise.reject(new Error("No response from server (network)"));
       return Promise.reject(err);
     }
   );
