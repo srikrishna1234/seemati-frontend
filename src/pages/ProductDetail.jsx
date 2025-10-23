@@ -1,13 +1,13 @@
 // src/pages/ProductDetail.jsx
 import React, { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
+import axios from "../api/axiosInstance";
 import { getImageUrl, getImageUrls } from "../utils/imageUtils";
 import { addOrIncrementItem, loadCart, computeTotals, SHIPPING_THRESHOLD } from "../utils/cartHelpers";
 import { useCartDispatch } from "../context/CartContext";
 
-/* ---------- wishlist helpers ---------- */
+/* ---------- wishlist helpers (unchanged) ---------- */
 const WISHLIST_KEY = "wishlist_v1";
-
 function loadWishlist() {
   try {
     const raw = localStorage.getItem(WISHLIST_KEY) || "[]";
@@ -17,7 +17,6 @@ function loadWishlist() {
     return [];
   }
 }
-
 function saveWishlist(arr) {
   try {
     localStorage.setItem(WISHLIST_KEY, JSON.stringify(arr));
@@ -27,7 +26,10 @@ function saveWishlist(arr) {
   }
 }
 
-/* ---------- burst animation ---------- */
+/* burst animation and image-zoom hooks unchanged (omitted for brevity in comment) */
+/* copy the burstAt, checkAndTriggerBurst, useImageZoom helpers from your original file */
+/* For brevity here: reuse the same functions you already had above in your original file. */
+
 function burstAt(containerEl, options = {}) {
   if (!containerEl) containerEl = document.body;
   const { count = 20, spread = 160, lifetime = 900, colors = ["#f59e0b", "#ef4444", "#10b981", "#0b5cff", "#7c3aed"] } = options;
@@ -89,7 +91,6 @@ function burstAt(containerEl, options = {}) {
   requestAnimationFrame(frame);
 }
 
-/* single-run burst helper */
 function checkAndTriggerBurst(subtotal, containerEl) {
   try {
     const KEY = "seemati_free_burst_done_v1";
@@ -105,7 +106,6 @@ function checkAndTriggerBurst(subtotal, containerEl) {
   }
 }
 
-/* image zoom hook (reused) */
 function useImageZoom() {
   const imgRef = useRef(null);
   function onImgMouseMove(e) {
@@ -171,7 +171,7 @@ export default function ProductDetailPage({ products = [] }) {
   const [galleryUrls, setGalleryUrls] = useState([]); // array of resolved urls
   const [galleryIndex, setGalleryIndex] = useState(0);
 
-  // load wishlist status and make sure selection defaults when product loads
+  // load wishlist status and set defaults
   useEffect(() => {
     try {
       const arr = loadWishlist();
@@ -181,7 +181,6 @@ export default function ProductDetailPage({ products = [] }) {
       setSaved(false);
     }
 
-    // default selections
     if (product) {
       if (Array.isArray(product.colors) && product.colors.length > 0) {
         setSelectedColor((prev) => prev ?? product.colors[0]);
@@ -193,12 +192,11 @@ export default function ProductDetailPage({ products = [] }) {
       } else {
         setSelectedSize(null);
       }
-      // reset quantity
       setQuantity(1);
     }
   }, [product?.slug, product?.colors, product?.sizes, product?._id, product?.id]);
 
-  // fetch product if not present
+  // fetch product if not present — use axios instance (backend baseURL)
   useEffect(() => {
     let mounted = true;
     async function fetchProduct() {
@@ -209,37 +207,37 @@ export default function ProductDetailPage({ products = [] }) {
       setLoading(true);
       setError(null);
 
+      // candidate endpoints on backend — call backend base via axios instance
       const endpoints = [
-        `/api/products/${encodeURIComponent(slug)}`,
-        `/api/products/slug/${encodeURIComponent(slug)}`,
-        `/api/products?slug=${encodeURIComponent(slug)}`,
+        `/products?slug=${encodeURIComponent(slug)}`,
+        `/products/${encodeURIComponent(slug)}`,
       ];
 
       let lastError = null;
       for (const ep of endpoints) {
         try {
-          const res = await fetch(ep, { credentials: "include" });
+          const res = await axios.get(ep);
           if (!mounted) return;
-          const text = await res.text().catch(() => "");
-          if (!res.ok) {
-            if (res.status === 404) continue;
-            lastError = `Request to ${ep} failed: ${res.status} ${text}`;
-            continue;
-          }
-          let data = null;
-          try { data = text ? JSON.parse(text) : null; } catch (err) { lastError = `Invalid JSON from ${ep}`; continue; }
 
+          const data = res.data;
           let resolved = null;
+
           if (data) {
-            if (Array.isArray(data)) resolved = data.find(p => p.slug === slug || p._id === slug || p.id === slug) ?? data[0] ?? null;
-            else if (Array.isArray(data.products)) resolved = data.products.find(p => p.slug === slug || p._id === slug || p.id === slug) ?? data.products[0] ?? null;
-            else if (data.product && (data.product._id || data.product.slug || data.product.id)) resolved = data.product;
-            else if (data._id || data.slug || data.id) resolved = data;
-            else if (data.items && Array.isArray(data.items)) resolved = data.items.find(p => p.slug === slug || p._id === slug || p.id === slug) ?? data.items[0] ?? null;
+            if (Array.isArray(data)) {
+              resolved = data.find(p => p.slug === slug || p._id === slug || p.id === slug) ?? data[0] ?? null;
+            } else if (Array.isArray(data.products)) {
+              resolved = data.products.find(p => p.slug === slug || p._id === slug || p.id === slug) ?? data.products[0] ?? null;
+            } else if (data.product) {
+              resolved = data.product;
+            } else if (data._id || data.slug || data.id) {
+              resolved = data;
+            } else if (data.items && Array.isArray(data.items)) {
+              resolved = data.items.find(p => p.slug === slug || p._id === slug || p.id === slug) ?? data.items[0] ?? null;
+            }
           }
 
           if (resolved) { setProduct(resolved); setLoading(false); return; }
-          else { lastError = `No product in response from ${ep}`; continue; }
+          lastError = `No product found in response from ${ep}`;
         } catch (err) {
           lastError = err.message || String(err);
           console.warn("[ProductDetail] fetch error", err);
@@ -256,7 +254,6 @@ export default function ProductDetailPage({ products = [] }) {
   // Build gallery URLs whenever product.images (or product.image/thumbnail fallback) changes
   useEffect(() => {
     const imgs = Array.isArray(product?.images) ? [...product.images] : [];
-    // if old single-image fields used, include them as well
     if ((imgs.length === 0) && product?.image) imgs.push(product.image);
     if ((imgs.length === 0) && product?.thumbnail) imgs.push(product.thumbnail);
 
@@ -265,7 +262,7 @@ export default function ProductDetailPage({ products = [] }) {
     setGalleryIndex(0);
   }, [product?.images, product?.image, product?.thumbnail, product?.slug, product?._id]);
 
-  // Floating shipping helper state
+  // floating shipping helper state
   const [cartTotals, setCartTotals] = useState(() => {
     try { const raw = loadCart(); return computeTotals(Array.isArray(raw) ? { items: raw } : raw); } catch { return computeTotals({ items: [] }); }
   });
@@ -320,7 +317,6 @@ export default function ProductDetailPage({ products = [] }) {
     }
   }
 
-  // helper to clamp quantity according to stock (if stock known)
   function clampQty(q) {
     const n = Math.max(1, Math.floor(Number(q) || 1));
     if (product && typeof product.stock === "number") {
@@ -328,39 +324,20 @@ export default function ProductDetailPage({ products = [] }) {
     }
     return n;
   }
+  function incQty() { setQuantity((q) => clampQty(q + 1)); }
+  function decQty() { setQuantity((q) => clampQty(q - 1)); }
+  function onQtyChange(e) { setQuantity(clampQty(e.target.value)); }
 
-  // quantity update handlers
-  function incQty() {
-    setQuantity((q) => clampQty(q + 1));
-  }
-  function decQty() {
-    setQuantity((q) => clampQty(q - 1));
-  }
-  function onQtyChange(e) {
-    setQuantity(clampQty(e.target.value));
-  }
-
-  // handle Add to cart with selected variant/options
   async function handleAddToCart(e) {
     e?.preventDefault?.();
     if (!product) return;
-
-    // ensure required options are selected
-    if (Array.isArray(product.colors) && product.colors.length > 0 && !selectedColor) {
-      setError("Please select a color.");
-      return;
-    }
-    if (Array.isArray(product.sizes) && product.sizes.length > 0 && !selectedSize) {
-      setError("Please select a size.");
-      return;
-    }
+    if (Array.isArray(product.colors) && product.colors.length > 0 && !selectedColor) { setError("Please select a color."); return; }
+    if (Array.isArray(product.sizes) && product.sizes.length > 0 && !selectedSize) { setError("Please select a size."); return; }
 
     setAdding(true);
     setError(null);
 
     const idBase = product._id ?? product.id ?? product.slug ?? Math.random().toString(36).slice(2, 9);
-
-    // create a variant key so different size/color combos are treated as separate items
     const variantKeyParts = [idBase];
     if (selectedColor) variantKeyParts.push(`c:${String(selectedColor)}`);
     if (selectedSize) variantKeyParts.push(`s:${String(selectedSize)}`);
@@ -375,35 +352,14 @@ export default function ProductDetailPage({ products = [] }) {
       images: product.images ?? (product.image ? [{ url: product.image }] : []),
       image: product.imageUrl ?? (product.images && product.images[0] ? (product.images[0].url || product.images[0]) : null),
       quantity: clampQty(quantity),
-      meta: {
-        color: selectedColor ?? null,
-        size: selectedSize ?? null,
-      },
+      meta: { color: selectedColor ?? null, size: selectedSize ?? null },
     };
 
     try {
-      // authoritative update (adds or increments quantity for this _id)
       const saved = await addOrIncrementItem(itemPayload, itemPayload.quantity);
-
-      // sync context to saved cart
-      try {
-        if (typeof cartDispatch === "function") {
-          cartDispatch({ type: "INITIALIZE", payload: saved });
-        }
-      } catch (err) {
-        console.warn("[ProductDetail] context initialize failed:", err);
-      }
-
-      // notify listeners
+      try { if (typeof cartDispatch === "function") cartDispatch({ type: "INITIALIZE", payload: saved }); } catch (err) { console.warn("[ProductDetail] context initialize failed:", err); }
       try { window.dispatchEvent(new Event("cart-updated")); } catch (e) {}
-
-      // check burst single-run
-      try {
-        const comp = computeTotals(saved);
-        checkAndTriggerBurst(comp.subtotal || 0, productImageContainerRef.current || document.body);
-      } catch (e) {}
-
-      // optionally navigate to cart or show a toast — we'll remain on the page
+      try { const comp = computeTotals(saved); checkAndTriggerBurst(comp.subtotal || 0, productImageContainerRef.current || document.body); } catch (e) {}
     } catch (err) {
       console.error("Add to cart failed (product page):", err);
       setError("Unable to add to cart. See console for details.");
@@ -428,7 +384,6 @@ export default function ProductDetailPage({ products = [] }) {
     );
   }
 
-  // fallback single-src (preserves prior behavior) — use helper for normalization
   const fallbackSrc =
     product?.thumbnail ||
     (product?.images && product.images[0] && (product.images[0].url || product.images[0])) ||
@@ -442,7 +397,6 @@ export default function ProductDetailPage({ products = [] }) {
       <button onClick={() => navigate(-1)} style={{ marginBottom: 12 }}>← Back</button>
 
       <div style={{ display: "flex", gap: 40 }}>
-        {/* LEFT: Gallery */}
         <div style={{ flex: "0 0 520px" }}>
           <div
             ref={productImageContainerRef}
@@ -459,7 +413,6 @@ export default function ProductDetailPage({ products = [] }) {
               position: "relative"
             }}
           >
-            {/* Prev / Next for gallery (only show if multiple) */}
             {galleryUrls.length > 1 && (
               <button
                 onClick={() => setGalleryIndex((i) => (i - 1 + galleryUrls.length) % galleryUrls.length)}
@@ -517,7 +470,6 @@ export default function ProductDetailPage({ products = [] }) {
             )}
           </div>
 
-          {/* thumbnails */}
           {galleryUrls.length > 1 && (
             <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
               {galleryUrls.map((u, i) => (
@@ -542,11 +494,9 @@ export default function ProductDetailPage({ products = [] }) {
             </div>
           )}
 
-          {/* indicator */}
           {galleryUrls.length > 1 && <div style={{ marginTop: 8, color: "#6b7280", fontSize: 13 }}>{galleryIndex + 1} / {galleryUrls.length}</div>}
         </div>
 
-        {/* RIGHT: product info (existing layout) */}
         <div style={{ flex: "1 1 auto", maxWidth: 720 }}>
           <h1 style={{ marginTop: 0 }}>{product.title}</h1>
           {product.description && <p style={{ color: "#374151" }}>{product.description}</p>}
@@ -560,7 +510,6 @@ export default function ProductDetailPage({ products = [] }) {
             </div>
           </div>
 
-          {/* Options: Colors */}
           {Array.isArray(product.colors) && product.colors.length > 0 && (
             <div style={{ marginTop: 14 }}>
               <div style={{ marginBottom: 8, fontWeight: 700 }}>Color</div>
@@ -587,7 +536,6 @@ export default function ProductDetailPage({ products = [] }) {
             </div>
           )}
 
-          {/* Options: Sizes */}
           {Array.isArray(product.sizes) && product.sizes.length > 0 && (
             <div style={{ marginTop: 14 }}>
               <div style={{ marginBottom: 8, fontWeight: 700 }}>Size</div>
@@ -614,7 +562,6 @@ export default function ProductDetailPage({ products = [] }) {
             </div>
           )}
 
-          {/* Quantity */}
           <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 8 }}>
             <div style={{ fontWeight: 700 }}>Quantity</div>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -673,7 +620,6 @@ export default function ProductDetailPage({ products = [] }) {
         </div>
       </div>
 
-      {/* Floating free-shipping banner */}
       <div
         aria-hidden="false"
         style={{
@@ -701,17 +647,21 @@ export default function ProductDetailPage({ products = [] }) {
             <span style={{ fontWeight: 700 }}>📦</span>
             <div style={{ fontWeight: 700 }}>Add ₹{leftForFree.toFixed(2)} more to get free shipping.</div>
             <div style={{ color: "#065f46" }}>Subtotal ₹{(cartTotals.subtotal || 0).toFixed(2)}</div>
-            <button onClick={() => navigate("/cart")} style={{ marginLeft: 12, background: "#0b5cff", color: "#fff", padding: "8px 12px", borderRadius: 6, border: "none" }}>
-              View Cart
-            </button>
+            <div style={{ marginLeft: 12 }}>
+              <button onClick={() => navigate("/cart")} style={{ background: "#0b5cff", color: "#fff", padding: "8px 12px", borderRadius: 6, border: "none" }}>
+                View Cart
+              </button>
+            </div>
           </>
         ) : (
           <>
             <span style={{ fontWeight: 700 }}>🎉</span>
             <div style={{ fontWeight: 700 }}>You have free shipping! Subtotal ₹{(cartTotals.subtotal || 0).toFixed(2)}</div>
-            <button onClick={() => burstAt(productImageContainerRef.current || document.body, { count: 36 })} style={{ marginLeft: 12, background: "#10b981", color: "#fff", padding: "8px 12px", borderRadius: 6, border: "none" }}>
-              Celebrate
-            </button>
+            <div style={{ marginLeft: 12 }}>
+              <button onClick={() => burstAt(productImageContainerRef.current || document.body, { count: 36 })} style={{ background: "#10b981", color: "#fff", padding: "8px 12px", borderRadius: 6, border: "none" }}>
+                Celebrate
+              </button>
+            </div>
           </>
         )}
       </div>
