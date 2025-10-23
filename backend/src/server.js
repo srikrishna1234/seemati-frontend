@@ -37,7 +37,8 @@ try {
 // --- Constants ---
 const PORT = process.env.PORT || 4000;
 const MONGODB_URI = process.env.MONGODB_URI || "";
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "http://localhost:3000";
+// FRONTEND_ORIGIN may be set to your Vercel URL in production
+const FRONTEND_ORIGIN = (process.env.FRONTEND_ORIGIN || "").trim();
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || null;
 const JWT_SECRET = process.env.JWT_SECRET || null;
 
@@ -61,16 +62,61 @@ async function main() {
     next();
   });
 
-  // --- CORS ---
-  app.use(
-    cors({
-      origin: FRONTEND_ORIGIN,
-      credentials: true,
-      methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-      allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
-    })
-  );
-  app.options("*", cors({ origin: FRONTEND_ORIGIN, credentials: true }));
+  // --- Build allowed origins list ---
+  const allowedOrigins = new Set();
+
+  // If FRONTEND_ORIGIN is set (production), include it
+  if (FRONTEND_ORIGIN) allowedOrigins.add(FRONTEND_ORIGIN);
+
+  // Always allow common local dev hosts
+  allowedOrigins.add("http://localhost:3000");
+  allowedOrigins.add("http://127.0.0.1:3000");
+
+  // Optionally include any extra allowed origins from env
+  if (process.env.ALLOWED_ORIGINS) {
+    process.env.ALLOWED_ORIGINS
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .forEach((s) => allowedOrigins.add(s));
+  }
+
+  console.log("CORS allowed origins:", Array.from(allowedOrigins));
+
+  // --- CORS middleware: echo exact origin when allowed ---
+  const corsOptions = {
+    origin: function (origin, callback) {
+      // allow requests with no origin (cURL, server-to-server)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.has(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error(`CORS policy: origin ${origin} not allowed`), false);
+    },
+    credentials: true, // required if you rely on cookies/sessions between frontend and backend
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
+    optionsSuccessStatus: 204,
+  };
+
+  app.use(cors(corsOptions));
+  app.options("*", cors(corsOptions));
+
+  // Also explicitly set headers for allowed origins (helps some proxies)
+  app.use((req, res, next) => {
+    try {
+      const origin = req.headers.origin;
+      if (origin && allowedOrigins.has(origin)) {
+        res.setHeader("Access-Control-Allow-Origin", origin);
+        res.setHeader("Access-Control-Allow-Credentials", "true");
+        res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Origin, X-Requested-With");
+        res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS,HEAD");
+      }
+    } catch (err) {
+      // ignore header-setting failures
+    }
+    next();
+  });
 
   // --- session ---
   app.use(
@@ -79,8 +125,8 @@ async function main() {
       resave: false,
       saveUninitialized: false,
       cookie: {
-        sameSite: "none",
-        secure: false,
+        sameSite: "none", // keep as-is if you use cross-site cookies in production
+        secure: false, // set to true in production under HTTPS
         httpOnly: true,
         maxAge: 1000 * 60 * 60 * 24,
       },
@@ -160,14 +206,22 @@ async function main() {
     productRoutes = await loadRoute("./routes/productRoutes.cjs");
     console.log("✅ Loaded productRoutes.cjs");
   } catch {
-    productRoutes = await loadRoute("./routes/productRoutes.js");
-    console.log("✅ Loaded productRoutes.js (fallback)");
+    try {
+      productRoutes = await loadRoute("./routes/productRoutes.js");
+      console.log("✅ Loaded productRoutes.js (fallback)");
+    } catch (e) {
+      console.warn("Could not load productRoutes:", e);
+    }
   }
 
   try {
     adminProductRoutes = await loadRoute("./routes/adminProduct.js");
   } catch {
-    adminProductRoutes = await loadRoute("./routes/adminProduct.cjs");
+    try {
+      adminProductRoutes = await loadRoute("./routes/adminProduct.cjs");
+    } catch (e) {
+      console.warn("Could not load adminProductRoutes:", e);
+    }
   }
 
   // --- admin auth helper ---
@@ -216,7 +270,7 @@ async function main() {
     }
   });
 
-  app.options("/admin-api/products/upload", cors({ origin: FRONTEND_ORIGIN, credentials: true }));
+  app.options("/admin-api/products/upload", cors({ origin: Array.from(allowedOrigins), credentials: true }));
 
   // --- QUICK REDIRECT: handle legacy /products requests that frontend may make ---
   // This preserves the query string and forwards the request to /api/products.
@@ -240,10 +294,25 @@ async function main() {
   if (productRoutes) app.use("/api", productRoutes);
   if (adminProductRoutes) app.use("/admin-api", adminProductRoutes);
 
-  // ✅ NEW: Mount S3 upload router
-  console.log("[UploadRouter] Mounting...");
-  const uploadRouter = require("./routes/upload.cjs");
-  app.use("/api", uploadRouter);
+  // --- Debug route: list uploads dir on server (temporary) ---
+  try {
+    const debugUploads = await loadRoute("./routes/debugListUploads.js");
+    if (debugUploads) {
+      console.log("[DebugUploads] Mounting debug /api/debug/list-uploads");
+      app.use("/api", debugUploads);
+    }
+  } catch (e) {
+    console.warn("[DebugUploads] not mounted:", e && e.message ? e.message : e);
+  }
+
+  // ✅ NEW: Mount S3 upload router (if present)
+  try {
+    const uploadRouter = require("./routes/upload.cjs");
+    console.log("[UploadRouter] Mounting...");
+    app.use("/api", uploadRouter);
+  } catch (e) {
+    // ignore if not present
+  }
 
   // --- test ping ---
   app.get("/api/ping", (req, res) => res.json({ ok: true, msg: "api ping" }));
@@ -251,7 +320,7 @@ async function main() {
   // --- health check ---
   app.get("/_health", (req, res) => res.json({ ok: true, uptime: process.uptime() }));
 
-  // --- list routes ---
+  // --- list routes --- (unchanged)
   function listRoutes(appToList) {
     const routes = [];
     if (!appToList || !appToList._router) return;
