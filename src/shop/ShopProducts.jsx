@@ -19,31 +19,44 @@ export default function ShopProducts() {
           limit,
           fields: "title,price,mrp,compareAtPrice,slug,thumbnail,images,description",
         },
-        withCredentials: true,
       });
 
-      // server returns { ok: true, products: [...] } — handle both shapes just in case
+      // server returns array or { products: [...] } — handle both shapes
       const data = res.data;
       const list = Array.isArray(data) ? data : data.products ?? data.items ?? [];
-      // Normalize images to have .images[].url as absolute
-      // (ShopProductCard will also resolve but keep normalized here)
-      const apiBase = process.env.REACT_APP_API_URL || "http://localhost:4000";
+
+      // Prefer REACT_APP_API_BASE_URL (matches axiosInstance) then REACT_APP_API_URL then production fallback
+      const apiBase =
+        process.env.REACT_APP_API_BASE_URL ||
+        process.env.REACT_APP_API_URL ||
+        "https://seemati-backend.onrender.com";
+
       const normalized = list.map((p) => {
         const images =
           Array.isArray(p.images) &&
           p.images
             .map((i) => {
               if (!i) return null;
+              // strings (simple paths)
               if (typeof i === "string") {
-                if (/^https?:\/\//.test(i)) {
-                  return i.includes("localhost") ? i.replace(/^https?:\/\/[^/]+/, apiBase) : i;
+                if (/^https?:\/\//i.test(i)) {
+                  // If the URL points to localhost (e.g. returned from dev backend), replace host with apiBase host
+                  if (/https?:\/\/(localhost|127\.0\.0\.1)/i.test(i)) {
+                    return i.replace(/^https?:\/\/[^/]+/i, apiBase);
+                  }
+                  return i;
                 }
+                // relative path: /uploads/xxx or uploads/xxx
                 return i.startsWith("/") ? `${apiBase}${i}` : `${apiBase}/uploads/${i}`;
               }
+              // object form
               if (i.url) {
-                const u = i.url;
-                if (/^https?:\/\//.test(u)) {
-                  return u.includes("localhost") ? u.replace(/^https?:\/\/[^/]+/, apiBase) : u;
+                const u = String(i.url);
+                if (/^https?:\/\//i.test(u)) {
+                  if (/https?:\/\/(localhost|127\.0\.0\.1)/i.test(u)) {
+                    return u.replace(/^https?:\/\/[^/]+/i, apiBase);
+                  }
+                  return u;
                 }
                 return u.startsWith("/") ? `${apiBase}${u}` : `${apiBase}/${u}`;
               }
@@ -58,7 +71,6 @@ export default function ShopProducts() {
 
       setProducts(normalized);
     } catch (err) {
-      // axiosInstance already normalizes messages — show friendly message
       console.error("loadProducts error", err);
       setError(err.message || "Failed to load products");
       setProducts([]);
@@ -69,7 +81,6 @@ export default function ShopProducts() {
 
   useEffect(() => {
     loadProducts();
-    // no dependencies -> load once on mount
   }, []);
 
   if (loading) {
