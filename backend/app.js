@@ -70,6 +70,24 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions)); // let cors handle preflight for all routes
+// immediately after app.use(cors(corsOptions));
+app.use((req, res, next) => {
+  try {
+    const origin = req.headers.origin;
+    if (origin && whitelist.includes(origin)) {
+      // explicitly set the exact origin to avoid wildcard '*'
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      // Also make sure allowed headers and methods are present
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Origin, X-Requested-With");
+      res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS,HEAD");
+      // We are not using credentials (cookies)
+      res.setHeader("Access-Control-Allow-Credentials", "false");
+    }
+  } catch (err) {
+    // ignore and continue
+  }
+  return next();
+});
 
 /* -------------------------------------------------
    JSON/body parsing
