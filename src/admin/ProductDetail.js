@@ -2,7 +2,10 @@
 import React, { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 
-const BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:4000";
+const BASE_URL =
+  process.env.REACT_APP_API_BASE_URL ||
+  process.env.REACT_APP_API_URL ||
+  "https://seemati-backend.onrender.com";
 const PLACEHOLDER = "/images/placeholder.png";
 
 function toImageUrl(img) {
