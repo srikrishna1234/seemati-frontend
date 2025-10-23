@@ -10,7 +10,7 @@ const cartRoutes = require("./src/routes/cartRoutes");
 const adminProductRouter = require("./src/routes/adminProduct.cjs");
 
 // NEW: upload router for S3 uploads
-const uploadRouter = require("./src/routes/upload");
+const uploadRouter = require('./src/routes/upload.cjs');
 
 const app = express();
 
