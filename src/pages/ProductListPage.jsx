@@ -5,19 +5,23 @@ import axios from "../api/axiosInstance";
 
 /**
  * Small helper to normalize/resolve image objects/URLs to absolute URLs
- * using REACT_APP_API_URL when needed.
+ * using REACT_APP_API_BASE_URL (preferred), then REACT_APP_API_URL, then
+ * a hardcoded deployed backend fallback.
  */
 function resolveImageObject(i) {
-  const apiBase = process.env.REACT_APP_API_URL || "http://localhost:4000";
+  const apiBase =
+    process.env.REACT_APP_API_BASE_URL ||
+    process.env.REACT_APP_API_URL ||
+    "https://seemati-backend.onrender.com";
 
   if (!i) return null;
 
   // If it's a string, interpret as URL or filename
   if (typeof i === "string") {
-    if (/^https?:\/\//.test(i)) {
-      // absolute URL: if it contains localhost, swap host
-      if (i.includes("localhost")) {
-        return i.replace(/^https?:\/\/[^/]+/, apiBase);
+    // absolute URL: rewrite localhost host to apiBase
+    if (/^https?:\/\//i.test(i)) {
+      if (/https?:\/\/(localhost|127\.0\.0\.1)/i.test(i)) {
+        return i.replace(/^https?:\/\/[^/]+/i, apiBase);
       }
       return i;
     }
@@ -28,12 +32,14 @@ function resolveImageObject(i) {
 
   // object shape { url } or { filename }
   if (i.url) {
-    const u = i.url;
-    if (/^https?:\/\//.test(u)) {
-      return u.includes("localhost") ? u.replace(/^https?:\/\/[^/]+/, apiBase) : u;
+    const u = String(i.url);
+    if (/^https?:\/\//i.test(u)) {
+      if (/https?:\/\/(localhost|127\.0\.0\.1)/i.test(u)) {
+        return u.replace(/^https?:\/\/[^/]+/i, apiBase);
+      }
+      return u;
     }
-    if (u.startsWith("/")) return `${apiBase}${u}`;
-    return `${apiBase}/${u}`;
+    return u.startsWith("/") ? `${apiBase}${u}` : `${apiBase}/${u}`;
   }
   if (i.filename) {
     return `${apiBase}/uploads/${i.filename}`;
@@ -88,7 +94,8 @@ export default function ProductListPage({ limit = 8 }) {
           let thumbnail = null;
           const th = p.thumbnail ?? p.image ?? null;
           if (th) {
-            thumbnail = typeof th === "string" ? resolveImageObject(th) : resolveImageObject(th);
+            thumbnail =
+              typeof th === "string" ? resolveImageObject(th) : resolveImageObject(th);
           }
           return { ...p, images, thumbnail };
         });
