@@ -1,110 +1,120 @@
-﻿// backend/src/routes/adminProduct.cjs
-// Defensive admin-product routes (CommonJS).
-// - returns 503 if DB or model not ready
-// - logs full stack traces server-side (so Render logs show cause)
-// - attempts to require/import Product model (CommonJS fallback)
-// - preserves admin auth checks (ADMIN_TOKEN or JWT)
+﻿/*
+  backend/src/routes/adminProduct.cjs
+  Admin-facing product routes (CommonJS)
+  - Provides CRUD for products: list, create, update, delete
+  - Uses productController if present
+  - Optional admin authentication middleware if present (exports.adminAuth)
+  - Handles file upload via a simple multer setup if upload route not centralised
+*/
+'use strict';
 
 const express = require('express');
 const router = express.Router();
-const { createRequire } = require('module');
-const requireLocal = createRequire(__filename);
-const jwt = require('jsonwebtoken');
-let mongoose;
-try { mongoose = require('mongoose'); } catch (e) { mongoose = null; }
+const path = require('path');
 
-// Helper: load Product model (CommonJS require preferred)
-function loadProductModel() {
-  try {
-    const p = requireLocal('../models/Product.js');
-    if (p && (p.default || p.Product || p)) {
-      return p.default || p.Product || p;
-    }
-  } catch (e) {
-    // fallback: try require with .cjs extension
-    try {
-      const p2 = requireLocal('../models/Product.cjs');
-      if (p2 && (p2.default || p2.Product || p2)) return p2.default || p2.Product || p2;
-    } catch (e2) {
-      // nothing
-    }
-  }
-  return null;
+// Load controller if available
+let productController = null;
+try {
+  productController = require('../controllers/productController');
+} catch (e) {
+  // keep null; routes will return 500 if controller missing
+  console.warn('[adminProduct] productController not found:', e && e.message ? e.message : e);
 }
 
-const Product = loadProductModel();
-
-// Admin auth helper (mirrors your other server helpers)
-function checkAdminAuth(req) {
-  const ADMIN_TOKEN = process.env.ADMIN_TOKEN || null;
-  const JWT_SECRET = process.env.JWT_SECRET || null;
-  const auth = req.headers.authorization || '';
-  if (!auth) return false;
-  const parts = auth.split(/\s+/);
-  if (parts.length !== 2) return false;
-  const [scheme, token] = parts;
-  if (!/^Bearer$/i.test(scheme)) return false;
-  if (ADMIN_TOKEN && token === ADMIN_TOKEN) return true;
-  if (JWT_SECRET) {
-    try {
-      jwt.verify(token, JWT_SECRET);
-      return true;
-    } catch (e) {
-      return false;
-    }
-  }
-  return false;
+// Optional admin auth middleware (if project provides it)
+let adminAuth = null;
+try {
+  adminAuth = require('../middleware/adminAuth'); // if exists, use it
+} catch (e) {
+  // no admin auth available — routes remain unprotected
 }
 
-function isDbReady() {
-  try {
-    if (!mongoose) return false;
-    const st = mongoose.connection && mongoose.connection.readyState;
-    return st === 1;
-  } catch (e) {
-    return false;
-  }
+// Simple multer setup for file uploads (only used if upload route needed here)
+let upload;
+try {
+  const multer = require('multer');
+  const os = require('os');
+  const uploadDir = path.join(os.tmpdir(), 'seemati-uploads');
+  const fs = require('fs');
+  if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+  const storage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, uploadDir),
+    filename: (req, file, cb) => {
+      const safe = Date.now() + '-' + file.originalname.replace(/\s+/g, '-');
+      cb(null, safe);
+    }
+  });
+  upload = multer({ storage });
+} catch (e) {
+  upload = null;
 }
 
-// GET /admin-api/products
-router.get('/products', async (req, res) => {
+// Helpers
+function ensureController(res) {
+  return res.status(500).json({ error: 'productController not available on server' });
+}
+
+// Routes
+
+// GET /admin/products - list (supports query params)
+router.get('/', adminAuth ? adminAuth : (req, res, next) => next(), async (req, res) => {
+  if (!productController || !productController.listAdmin) return ensureController(res);
   try {
-    // Defensive checks
-    if (!Product) {
-      console.error('[adminProduct] Product model not loaded. require attempted from ../models/Product.js or ../models/Product.cjs');
-      return res.status(503).json({ ok: false, message: 'Service unavailable: product model not loaded (see server logs)' });
-    }
-    if (!isDbReady()) {
-      console.error('[adminProduct] MongoDB not connected (readyState). MONGODB_URI might be missing or connection failing.');
-      return res.status(503).json({ ok: false, message: 'Service unavailable: database not ready (check MONGODB_URI in environment)' });
-    }
-
-    // Check admin auth
-    if (!checkAdminAuth(req)) {
-      return res.status(401).json({ ok: false, message: 'Unauthorized' });
-    }
-
-    // Pagination + simple query
-    const page = Math.max(1, parseInt(req.query.page || '1', 10));
-    const limit = Math.max(1, Math.min(200, parseInt(req.query.limit || '50', 10)));
-    const skip = (page - 1) * limit;
-    const q = {};
-    if (req.query.q) {
-      q.$or = [
-        { title: { $regex: req.query.q, $options: 'i' } },
-        { slug: { $regex: req.query.q, $options: 'i' } },
-      ];
-    }
-
-    const [items, total] = await Promise.all([
-      Product.find(q).sort({ createdAt: -1 }).skip(skip).limit(limit).lean().exec(),
-      Product.countDocuments(q),
-    ]);
-
-    return res.json({ ok: true, page, limit, total, items });
+    const data = await productController.listAdmin(req.query);
+    res.json(data);
   } catch (err) {
-    console.error('[adminProduct] unexpected error in GET /admin-api/products:', err && (err.stack || err));
-    return res.status(500).json({ ok: false, message: 'Server error' });
+    console.error('[adminProduct] list error', err && err.stack ? err.stack : err);
+    res.status(500).json({ error: 'failed to list products' });
+  }
+});
+
+// POST /admin/products - create (multipart/form-data if files)
+router.post('/', adminAuth ? adminAuth : (req, res, next) => next(), upload ? upload.any() : (req, res, next) => next(), async (req, res) => {
+  if (!productController || !productController.create) return ensureController(res);
+  try {
+    // controller decides how to read files (req.files) and body
+    const created = await productController.create(req.body, req.files);
+    res.status(201).json(created);
+  } catch (err) {
+    console.error('[adminProduct] create error', err && err.stack ? err.stack : err);
+    res.status(500).json({ error: 'failed to create product' });
+  }
+});
+
+// GET /admin/products/:id - get single
+router.get('/:id', adminAuth ? adminAuth : (req, res, next) => next(), async (req, res) => {
+  if (!productController || !productController.getById) return ensureController(res);
+  try {
+    const doc = await productController.getById(req.params.id);
+    if (!doc) return res.status(404).json({ error: 'product not found' });
+    res.json(doc);
+  } catch (err) {
+    console.error('[adminProduct] getById error', err && err.stack ? err.stack : err);
+    res.status(500).json({ error: 'failed to get product' });
+  }
+});
+
+// PUT /admin/products/:id - update
+router.put('/:id', adminAuth ? adminAuth : (req, res, next) => next(), upload ? upload.any() : (req, res, next) => next(), async (req, res) => {
+  if (!productController || !productController.update) return ensureController(res);
+  try {
+    const updated = await productController.update(req.params.id, req.body, req.files);
+    res.json(updated);
+  } catch (err) {
+    console.error('[adminProduct] update error', err && err.stack ? err.stack : err);
+    res.status(500).json({ error: 'failed to update product' });
+  }
+});
+
+// DELETE /admin/products/:id - delete
+router.delete('/:id', adminAuth ? adminAuth : (req, res, next) => next(), async (req, res) => {
+  if (!productController || !productController.remove) return ensureController(res);
+  try {
+    await productController.remove(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[adminProduct] delete error', err && err.stack ? err.stack : err);
+    res.status(500).json({ error: 'failed to delete product' });
   }
 });
 

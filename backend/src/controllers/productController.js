@@ -18,7 +18,9 @@ let Product = null;
       const mod = requireLocal(c);
       Product = mod && (mod.default || mod.Product) ? (mod.default || mod.Product) : mod;
       if (Product) break;
-    } catch (e) {}
+    } catch (e) {
+      // ignore and try next
+    }
   }
 })();
 
@@ -29,6 +31,15 @@ async function listProducts(req, res) {
     const limit = Math.max(1, Math.min(100, parseInt(req.query.limit || '20', 10)));
     const skip = (page - 1) * limit;
     const filter = {};
+    // optional q search param
+    if (req.query.q) {
+      const q = String(req.query.q).trim();
+      filter.$or = [
+        { title: { $regex: q, $options: 'i' } },
+        { description: { $regex: q, $options: 'i' } },
+        { sku: { $regex: q, $options: 'i' } },
+      ];
+    }
     const total = await Product.countDocuments(filter).exec();
     const docs = await Product.find(filter).skip(skip).limit(limit).lean().exec();
     return res.json({ ok: true, page, limit, total, data: docs });

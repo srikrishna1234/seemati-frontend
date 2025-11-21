@@ -8,7 +8,14 @@ const fs = require('fs');
 
 const uploadDir = path.join(__dirname, '..', '..', 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-const storage = multer.diskStorage({ destination: (req, file, cb) => cb(null, uploadDir), filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname.replace(/\s+/g,'-')}`) });
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => {
+    const safe = file.originalname.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9._-]/g, '');
+    cb(null, `${Date.now()}-${safe}`);
+  }
+});
 const upload = multer({ storage });
 
 router.post('/products/upload', upload.any(), (req, res) => {
@@ -16,10 +23,10 @@ router.post('/products/upload', upload.any(), (req, res) => {
     const files = req.files || [];
     const host = process.env.SERVER_URL || `http://localhost:${process.env.PORT || 4000}`;
     const out = files.map(f => ({ filename: f.filename, url: `${host}/uploads/${f.filename}`, size: f.size }));
-    res.json(out);
-  } catch (e) {
-    console.error('[upload] error', e && (e.stack || e));
-    res.status(500).json({ ok: false, message: 'upload failed' });
+    return res.json(out);
+  } catch (err) {
+    console.error('[upload] error:', err && (err.stack || err));
+    return res.status(500).json({ ok: false, message: 'upload failed' });
   }
 });
 
