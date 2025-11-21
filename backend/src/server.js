@@ -1,5 +1,4 @@
 // backend/src/server.js
-// Safe CommonJS-style server entry (keeps things simple for merge resolution)
 'use strict';
 
 const express = require('express');
@@ -30,14 +29,11 @@ async function connectMongo() {
 
 async function main() {
   await connectMongo();
-
   const app = express();
 
-  // allowed origins
   const allowed = new Set();
   if (FRONTEND_ORIGIN) allowed.add(canonicalizeOrigin(FRONTEND_ORIGIN));
   allowed.add(canonicalizeOrigin('http://localhost:3000'));
-  allowed.add(canonicalizeOrigin('http://127.0.0.1:3000'));
   const extras = process.env.CORS_ALLOWED_ORIGINS || process.env.ALLOWED_ORIGINS || '';
   if (extras) extras.split(',').map(s => s.trim()).filter(Boolean).forEach(s => allowed.add(canonicalizeOrigin(s)));
 
@@ -55,7 +51,6 @@ async function main() {
   app.use(cors(corsOptions));
   app.use(express.json({ limit: '12mb' }));
   app.use(express.urlencoded({ extended: true, limit: '12mb' }));
-
   app.use(session({ secret: process.env.SESSION_SECRET || 'keyboard_cat_dev_secret', resave: false, saveUninitialized: false, cookie: { secure: false } }));
 
   const uploadDir = path.join(__dirname, '..', '..', 'uploads');
@@ -64,7 +59,6 @@ async function main() {
 
   const storage = multer.diskStorage({ destination: (req, file, cb) => cb(null, uploadDir), filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname.replace(/\s+/g,'-')}`) });
   const upload = multer({ storage });
-
   app.post('/admin-api/products/upload', upload.any(), (req, res) => {
     try {
       const files = req.files || [];
