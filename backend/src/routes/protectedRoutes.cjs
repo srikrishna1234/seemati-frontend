@@ -1,4 +1,4 @@
-// backend/src/routes/protectedRoutes.cjs
+﻿// backend/src/routes/protectedRoutes.cjs
 const express = require('express');
 const router = express.Router();
 const adminAuth = require('../middleware/adminAuth.cjs'); // use .cjs here

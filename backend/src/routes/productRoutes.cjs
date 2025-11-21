@@ -1,4 +1,4 @@
-// backend/src/routes/adminProduct.cjs
+﻿// backend/src/routes/adminProduct.cjs
 // Admin product CRUD routes (CommonJS)
 // Mount this file at /admin-api to expose:
 //  GET  /products
@@ -15,10 +15,10 @@ const router = express.Router();
 
 const adminAuth = require("../middleware/adminAuth.cjs"); // protect admin routes
 
-// Load Product model (backend/models/Product.js)
+// Load Product model (backend/models/Product.cjs)
 let Product = null;
 try {
-  const prodPath = path.join(__dirname, "..", "..", "models", "Product.js");
+  const prodPath = path.join(__dirname, "..", "..", "models", "Product.cjs");
   Product = require(prodPath);
   Product = Product && (Product.default || Product);
 } catch (e) {

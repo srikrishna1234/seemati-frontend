@@ -1,4 +1,4 @@
-// backend/scripts/fixSlugs.cjs
+﻿// backend/scripts/fixSlugs.cjs
 // Usage: from backend folder: node scripts/fixSlugs.cjs
 // Make sure MONGO_URI env var is set or edit the connection string below.
 
@@ -11,7 +11,7 @@ async function main() {
   console.log('Connected to MongoDB');
 
   // Load Product model (adjust path if different)
-  const prodPath = path.join(__dirname, '..', 'models', 'Product.js');
+  const prodPath = path.join(__dirname, '..', 'models', 'Product.cjs');
   let Product = require(prodPath);
   Product = Product && (Product.default || Product);
 

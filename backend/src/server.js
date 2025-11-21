@@ -1,4 +1,4 @@
-// backend/src/server.js
+﻿// backend/src/server.js
 // Full server entry (ESM).
 
 import express from "express";
@@ -22,11 +22,11 @@ const require = createRequire(import.meta.url);
 // --- Import Product (ESM/CommonJS fallback) ---
 let Product;
 try {
-  const mod = await import("../models/Product.js");
+  const mod = await import("../models/Product.cjs");
   Product = mod.default || mod.Product || mod;
 } catch (err) {
   try {
-    Product = require("../models/Product.js");
+    Product = require("../models/Product.cjs");
     Product = Product.default || Product;
   } catch (err2) {
     console.error("Failed to load Product model via import or require:", err, err2);
@@ -49,9 +49,9 @@ async function main() {
       useNewUrlParser: true,
       useUnifiedTopology: true,
     });
-    console.log("✅ MongoDB connected");
+    console.log("âœ… MongoDB connected");
   } catch (err) {
-    console.error("❌ MongoDB connection failed:", err);
+    console.error("âŒ MongoDB connection failed:", err);
   }
 
   const app = express();
@@ -166,7 +166,7 @@ async function main() {
   const upload = multer({ storage });
 
   if (!Product) {
-    console.warn("⚠️ Product model not loaded. Routes may fail.");
+    console.warn("âš ï¸ Product model not loaded. Routes may fail.");
   }
 
   // --- helper to dynamically import or require route modules ---
@@ -204,18 +204,18 @@ async function main() {
 
   try {
     productRoutes = await loadRoute("./routes/productRoutes.cjs");
-    console.log("✅ Loaded productRoutes.cjs");
+    console.log("âœ… Loaded productRoutes.cjs");
   } catch {
     try {
       productRoutes = await loadRoute("./routes/productRoutes.js");
-      console.log("✅ Loaded productRoutes.js (fallback)");
+      console.log("âœ… Loaded productRoutes.js (fallback)");
     } catch (e) {
       console.warn("Could not load productRoutes:", e);
     }
   }
 
   try {
-    adminProductRoutes = await loadRoute("./routes/adminProduct.js");
+    adminProductRoutes = await loadRoute("./routes/adminProduct.cjs");
   } catch {
     try {
       adminProductRoutes = await loadRoute("./routes/adminProduct.cjs");
@@ -278,7 +278,7 @@ async function main() {
   app.get("/products", (req, res) => {
     try {
       const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
-      // 307 keeps method semantics (GET) — explicit
+      // 307 keeps method semantics (GET) â€” explicit
       return res.redirect(307, `/api/products${qs}`);
     } catch (e) {
       console.warn("[redirect /products] error:", e);
@@ -305,7 +305,7 @@ async function main() {
     console.warn("[DebugUploads] not mounted:", e && e.message ? e.message : e);
   }
 
-  // ✅ NEW: Mount S3 upload router (if present)
+  // âœ… NEW: Mount S3 upload router (if present)
   try {
     const uploadRouter = require("./routes/upload.cjs");
     console.log("[UploadRouter] Mounting...");
@@ -344,7 +344,7 @@ async function main() {
 
   // --- start server ---
   app.listen(PORT, () => {
-    console.log(`🚀 Server running on http://localhost:${PORT}`);
+    console.log(`ðŸš€ Server running on http://localhost:${PORT}`);
   });
 }
 
