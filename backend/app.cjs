@@ -1,10 +1,5 @@
 // backend/app.cjs
-// Full replacement (CommonJS) — robust CORS normalization + debug
-// - reads CORS_ALLOWED_ORIGINS, ALLOWED_ORIGINS, FRONTEND_ORIGIN
-// - canonicalizes origins (URL origin or trimmed lower-case w/out trailing slash)
-// - prints debug logs and byte-dumps on mismatch
-// - echoes CORS headers into error responses while debugging (remove later)
-// - mounts your existing routes (best-effort) and provides /__debug/env
+// Full replacement (CommonJS) — mounts public product routes + health endpoints
 'use strict';
 
 const express = require('express');
@@ -240,7 +235,9 @@ async function tryRequire(p) {
   }
 
   // health & debug handlers
-  app.get('/health', (req, res) => res.json({ ok: true }));
+  // provide both /health and /_health (some clients expect underscore)
+  app.get('/health', (req, res) => res.json({ ok: true, uptime: process.uptime() }));
+  app.get('/_health', (req, res) => res.json({ ok: true, uptime: process.uptime() }));
   app.get('/api/ping', (req, res) => res.json({ ok: true, msg: 'api ping' }));
 
   app.get('/__debug/env', (req, res) => {
@@ -275,6 +272,22 @@ async function tryRequire(p) {
     }
   } catch (e) {
     console.warn('Failed to explicitly mount ./src/routes/adminProduct.cjs:', e && e.message ? e.message : e);
+  }
+
+  // --- NEW: try mounting public product routes (productRoutes.cjs / productRoutes.js) ---
+  try {
+    let prodModule = await tryRequire('./src/routes/productRoutes.cjs');
+    if (!prodModule) {
+      prodModule = await tryRequire('./src/routes/productRoutes.js');
+    }
+    if (prodModule) {
+      app.use('/products', prodModule);
+      console.log('Mounted ./src/routes/productRoutes.* at /products');
+    } else {
+      console.log('productRoutes not found (skipped mounting /products). Looked for ./src/routes/productRoutes.cjs and ./src/routes/productRoutes.js');
+    }
+  } catch (e) {
+    console.warn('Failed to mount productRoutes at /products:', e && e.message ? e.message : e);
   }
 
   // fallback /api 404
