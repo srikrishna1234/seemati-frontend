@@ -1,4 +1,4 @@
-// backend/src/routes/otpRoutes.cjs
+﻿// backend/src/routes/otpRoutes.cjs
 //console.log("[OTP ROUTES] otpRoutes.cjs module loading");
 
 const express = require("express");
@@ -167,7 +167,7 @@ router.post("/verify", async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid OTP" });
     }
 
-    // OTP verified → remove entry
+    // OTP verified â†’ remove entry
     await Otp.deleteOne({ _id: record._id }).catch(() => {});
 
     console.log(`[OTP Verified] ${normalized} verified successfully`);

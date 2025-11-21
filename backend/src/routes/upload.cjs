@@ -1,4 +1,4 @@
-// backend/src/routes/upload.cjs
+﻿// backend/src/routes/upload.cjs
 const express = require('express');
 const multer = require('multer');
 const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
@@ -15,7 +15,7 @@ const router = express.Router();
 // multer to store file in memory
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit — change as needed
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit â€” change as needed
 });
 
 // validate required env (log if missing but allow for local testing)

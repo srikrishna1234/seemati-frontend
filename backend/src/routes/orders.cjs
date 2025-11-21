@@ -1,4 +1,4 @@
-// backend/src/routes/orders.cjs
+﻿// backend/src/routes/orders.cjs
 const express = require("express");
 const router = express.Router();
 const mongoose = require("mongoose");
@@ -6,7 +6,7 @@ const mongoose = require("mongoose");
 const Order = require("../../models/Order.cjs");
 const { authMiddleware } = require("../lib/auth.cjs");
 
-// Create order (POST /api/orders) — requires auth
+// Create order (POST /api/orders) â€” requires auth
 router.post("/", authMiddleware, async (req, res) => {
   try {
     const { customer, items, totals, paymentMethod } = req.body || {};
@@ -37,7 +37,7 @@ router.post("/", authMiddleware, async (req, res) => {
   }
 });
 
-// Fetch current user's orders (GET /api/orders/mine) — requires auth
+// Fetch current user's orders (GET /api/orders/mine) â€” requires auth
 // IMPORTANT: declare this before the param route "/:id" so "mine" doesn't get treated as an id.
 router.get("/mine", authMiddleware, async (req, res) => {
   try {
@@ -61,7 +61,7 @@ router.get("/mine", authMiddleware, async (req, res) => {
   }
 });
 
-// Fetch a single order by id (GET /api/orders/:id) — requires auth and ownership/admin
+// Fetch a single order by id (GET /api/orders/:id) â€” requires auth and ownership/admin
 router.get("/:id", authMiddleware, async (req, res) => {
   const { id } = req.params;
   if (!id) return res.status(400).json({ message: "Missing id parameter" });

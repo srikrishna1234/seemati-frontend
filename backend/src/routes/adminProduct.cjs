@@ -1,4 +1,4 @@
-// backend/src/routes/adminProduct.cjs
+﻿// backend/src/routes/adminProduct.cjs
 // Safe admin product routes (CommonJS)
 // Mount at /admin-api in server (app.js)
 
@@ -33,7 +33,7 @@ const router = express.Router();
 // Resolve Product model
 let Product = null;
 try {
-  const prodPath = path.join(__dirname, "..", "..", "models", "Product.js");
+  const prodPath = path.join(__dirname, "..", "..", "models", "Product.cjs");
   Product = require(prodPath);
   Product = Product && (Product.default || Product);
 } catch (e) {
@@ -73,7 +73,7 @@ function checkAdminAuth(req, res, next) {
       try {
         const payload = jwt.verify(token, JWT_SECRET);
         req.admin = { via: "jwt", payload };
-        console.log("[adminProduct] token verified — payload:", payload);
+        console.log("[adminProduct] token verified â€” payload:", payload);
         return next();
       } catch (e) {
         console.warn("[adminProduct] jwt.verify failed:", e && e.message ? e.message : e);
@@ -152,7 +152,7 @@ if (S3_REGION && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_
   });
 } else {
   if (!S3_BUCKET || !S3_REGION) {
-    console.warn("[adminProduct] S3 not configured — uploads to S3 will fail until S3 env vars are set.");
+    console.warn("[adminProduct] S3 not configured â€” uploads to S3 will fail until S3 env vars are set.");
   } else {
     console.warn("[adminProduct] Missing AWS credentials env vars.");
   }
@@ -172,7 +172,7 @@ router.post("/products/upload", checkAdminAuth, uploader.single("file"), async (
 
     // If S3 not configured, reject (so you don't silently write to ephemeral FS)
     if (!s3Client || !S3_BUCKET || !S3_REGION) {
-      console.error("[adminProduct] S3 not configured — cannot upload");
+      console.error("[adminProduct] S3 not configured â€” cannot upload");
       return res.status(500).json({ ok: false, message: "Storage not configured (S3)" });
     }
 

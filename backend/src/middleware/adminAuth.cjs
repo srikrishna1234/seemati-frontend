@@ -1,4 +1,4 @@
-// backend/src/middleware/adminAuth.cjs
+﻿// backend/src/middleware/adminAuth.cjs
 // CommonJS admin/user auth middleware (works with your .cjs routes)
 const jwt = require("jsonwebtoken");
 

@@ -1,4 +1,4 @@
-// backend/src/routes/auth.cjs
+﻿// backend/src/routes/auth.cjs
 require("dotenv").config();
 const express = require("express");
 const router = express.Router();
