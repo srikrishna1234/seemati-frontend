@@ -1,0 +1,30 @@
+﻿'use strict';
+
+const mongoose = require('mongoose');
+
+const productSchema = new mongoose.Schema({
+  title: { type: String, required: true, trim: true },
+  slug: { type: String, required: true, trim: true, unique: true },
+  description: { type: String, default: '' },
+  price: { type: Number, required: true, default: 0 },
+  mrp: { type: Number, default: 0 },
+  compareAtPrice: { type: Number, default: 0 },
+  sku: { type: String, default: '' },
+  brand: { type: String, default: '' },
+  category: { type: String, default: '' },
+  tags: [String],
+  thumbnail: { type: String, default: '' },
+  images: [String],
+  stock: { type: Number, default: 0 },
+  published: { type: Boolean, default: false },
+  metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
+}, {
+  timestamps: true,
+  versionKey: false
+});
+
+try {
+  module.exports = mongoose.model('Product') || mongoose.model('Product', productSchema);
+} catch (err) {
+  module.exports = mongoose.model('Product', productSchema);
+}
