@@ -1,78 +1,82 @@
 ﻿/*
   backend/src/routes/adminProduct.cjs
-  Admin-facing product routes (CommonJS)
-  - Provides CRUD for products: list, create, update, delete
-  - Uses productController if present
-  - Optional admin authentication middleware if present (exports.adminAuth)
-  - Handles file upload via a simple multer setup if upload route not centralised
+  Defensive admin product routes (CommonJS)
+  - Uses productController if available.
+  - Uses adminAuth middleware if available.
+  - Handles file uploads via multer if present; otherwise falls back.
+  - Provides clear logs when components are missing so you can fix them later.
 */
+
 'use strict';
 
 const express = require('express');
 const router = express.Router();
 const path = require('path');
 
-// Load controller if available
+// Load optional pieces defensively
 let productController = null;
 try {
   productController = require('../controllers/productController');
-} catch (e) {
-  // keep null; routes will return 500 if controller missing
-  console.warn('[adminProduct] productController not found:', e && e.message ? e.message : e);
+} catch (err) {
+  console.warn('[adminProduct] productController not found; admin routes will respond 500. Error:', err && err.message ? err.message : err);
 }
 
-// Optional admin auth middleware (if project provides it)
 let adminAuth = null;
 try {
-  adminAuth = require('../middleware/adminAuth'); // if exists, use it
-} catch (e) {
-  // no admin auth available — routes remain unprotected
+  adminAuth = require('../middleware/adminAuth');
+} catch (err) {
+  // not present — routes remain unprotected
 }
 
-// Simple multer setup for file uploads (only used if upload route needed here)
-let upload;
+// Multer upload setup (optional)
+let upload = null;
 try {
   const multer = require('multer');
   const os = require('os');
-  const uploadDir = path.join(os.tmpdir(), 'seemati-uploads');
   const fs = require('fs');
+  const uploadDir = path.join(os.tmpdir(), 'seemati-admin-uploads');
   if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
   const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, uploadDir),
-    filename: (req, file, cb) => {
-      const safe = Date.now() + '-' + file.originalname.replace(/\s+/g, '-');
-      cb(null, safe);
-    }
+    filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname.replace(/\s+/g, '-')}`)
   });
   upload = multer({ storage });
-} catch (e) {
-  upload = null;
+} catch (err) {
+  // multer optional
 }
 
-// Helpers
-function ensureController(res) {
+// Helper: send consistent "controller missing" response
+function controllerMissing(res) {
   return res.status(500).json({ error: 'productController not available on server' });
 }
 
-// Routes
+// Wrap optional auth so code is readable
+const maybeAdmin = adminAuth ? adminAuth : (req, res, next) => next();
 
-// GET /admin/products - list (supports query params)
-router.get('/', adminAuth ? adminAuth : (req, res, next) => next(), async (req, res) => {
-  if (!productController || !productController.listAdmin) return ensureController(res);
+/*
+  Routes:
+  - GET    /admin/products         -> list (admin)
+  - POST   /admin/products         -> create (admin, may accept files)
+  - GET    /admin/products/:id     -> get single
+  - PUT    /admin/products/:id     -> update (may accept files)
+  - DELETE /admin/products/:id     -> delete
+*/
+
+router.get('/', maybeAdmin, async (req, res) => {
+  if (!productController || !productController.listAdmin) return controllerMissing(res);
   try {
-    const data = await productController.listAdmin(req.query);
-    res.json(data);
+    const list = await productController.listAdmin(req.query);
+    res.json(list);
   } catch (err) {
     console.error('[adminProduct] list error', err && err.stack ? err.stack : err);
     res.status(500).json({ error: 'failed to list products' });
   }
 });
 
-// POST /admin/products - create (multipart/form-data if files)
-router.post('/', adminAuth ? adminAuth : (req, res, next) => next(), upload ? upload.any() : (req, res, next) => next(), async (req, res) => {
-  if (!productController || !productController.create) return ensureController(res);
+router.post('/', maybeAdmin, upload ? upload.any() : (req, res, next) => next(), async (req, res) => {
+  if (!productController || !productController.create) return controllerMissing(res);
   try {
-    // controller decides how to read files (req.files) and body
+    // controller handles req.body and req.files as needed
     const created = await productController.create(req.body, req.files);
     res.status(201).json(created);
   } catch (err) {
@@ -81,9 +85,8 @@ router.post('/', adminAuth ? adminAuth : (req, res, next) => next(), upload ? up
   }
 });
 
-// GET /admin/products/:id - get single
-router.get('/:id', adminAuth ? adminAuth : (req, res, next) => next(), async (req, res) => {
-  if (!productController || !productController.getById) return ensureController(res);
+router.get('/:id', maybeAdmin, async (req, res) => {
+  if (!productController || !productController.getById) return controllerMissing(res);
   try {
     const doc = await productController.getById(req.params.id);
     if (!doc) return res.status(404).json({ error: 'product not found' });
@@ -94,9 +97,8 @@ router.get('/:id', adminAuth ? adminAuth : (req, res, next) => next(), async (re
   }
 });
 
-// PUT /admin/products/:id - update
-router.put('/:id', adminAuth ? adminAuth : (req, res, next) => next(), upload ? upload.any() : (req, res, next) => next(), async (req, res) => {
-  if (!productController || !productController.update) return ensureController(res);
+router.put('/:id', maybeAdmin, upload ? upload.any() : (req, res, next) => next(), async (req, res) => {
+  if (!productController || !productController.update) return controllerMissing(res);
   try {
     const updated = await productController.update(req.params.id, req.body, req.files);
     res.json(updated);
@@ -106,9 +108,8 @@ router.put('/:id', adminAuth ? adminAuth : (req, res, next) => next(), upload ? 
   }
 });
 
-// DELETE /admin/products/:id - delete
-router.delete('/:id', adminAuth ? adminAuth : (req, res, next) => next(), async (req, res) => {
-  if (!productController || !productController.remove) return ensureController(res);
+router.delete('/:id', maybeAdmin, async (req, res) => {
+  if (!productController || !productController.remove) return controllerMissing(res);
   try {
     await productController.remove(req.params.id);
     res.json({ ok: true });
