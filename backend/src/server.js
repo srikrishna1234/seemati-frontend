@@ -2,23 +2,18 @@
 
 /*
   backend/src/server.js
-  - Create and export the Express app instance (CommonJS).
-  - Mounts product/admin/upload routes (expects .cjs route modules).
-  - Keeps configuration minimal and compatible with existing layout.
+  - CommonJS Express app factory used by backend/app.cjs (bootstrap).
+  - Mounts /products, /admin/products, /upload if those route modules exist.
+  - Minimal middleware: CORS, JSON/urlencoded parsers, optional morgan.
 */
 
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
 
-// Attempt to require morgan if available (non-fatal)
-let morgan;
-try { morgan = require('morgan'); } catch (e) { morgan = null; }
-
-// route modules (attempt both .cjs and no-ext fallbacks)
-function tryRequire(p) {
-  try { return require(p); } catch (e) {
-    try { return require(p.replace(/\.cjs$/, '')); } catch (_) { return null; }
+function tryRequire(file) {
+  try { return require(file); } catch (e) {
+    try { return require(file.replace(/\.cjs$/, '')); } catch (_) { return null; }
   }
 }
 
@@ -26,33 +21,26 @@ const productRoutes = tryRequire('./routes/productRoutes.cjs') || tryRequire('./
 const adminProductRoutes = tryRequire('./routes/adminProduct.cjs') || tryRequire('./routes/adminProduct');
 const uploadRoutes = tryRequire('./routes/upload.cjs') || tryRequire('./routes/upload');
 
+let morgan;
+try { morgan = require('morgan'); } catch (e) { morgan = null; }
+
 const app = express();
 
-// Basic middleware
+// Middleware
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 if (morgan) {
-  app.use(morgan('dev'));
+  try { app.use(morgan('dev')); } catch (e) { /* ignore logger errors */ }
 }
 
-// Mount product routes at /products (public)
-if (productRoutes) {
-  app.use('/products', productRoutes);
-}
+// Mount routes
+if (productRoutes) app.use('/products', productRoutes);
+if (adminProductRoutes) app.use('/admin/products', adminProductRoutes);
+if (uploadRoutes) app.use('/upload', uploadRoutes);
 
-// Mount admin product routes at /admin/products
-if (adminProductRoutes) {
-  app.use('/admin/products', adminProductRoutes);
-}
-
-// Mount upload routes at /upload (if centralised)
-if (uploadRoutes) {
-  app.use('/upload', uploadRoutes);
-}
-
-// Static and health endpoints
+// Static and health
 app.use('/public', express.static(path.join(__dirname, '..', 'public')));
 app.get('/_health', (req, res) => res.json({ ok: true }));
 
