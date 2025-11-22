@@ -18,6 +18,7 @@ const mongoose = (() => {
   try { return require('mongoose'); } catch (e) { return null; }
 })();
 
+// Use the environment-provided port (Render / Heroku / other platforms set this)
 const PORT = process.env.PORT || 4000;
 const FRONTEND_ORIGIN = (process.env.FRONTEND_ORIGIN || '').trim();
 
@@ -37,7 +38,8 @@ async function connectMongo() {
     return;
   }
   try {
-    await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
+    // mongoose v7+ doesn't require legacy options; call connect with the URI only
+    await mongoose.connect(uri);
     console.log('✅ MongoDB connected (server.js)');
   } catch (e) {
     console.error('[server] Mongo connect failed:', e && (e.stack || e));
@@ -81,8 +83,8 @@ async function main() {
     cookie: { secure: false, httpOnly: true }
   }));
 
-  // static uploads
-  const uploadDir = path.join(__dirname, '..', '..', 'uploads');
+  // static uploads -> ensure uploads path resolves to backend/uploads
+  const uploadDir = path.join(__dirname, '..', 'uploads'); // __dirname is backend/src -> backend/uploads
   if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
   app.use('/uploads', express.static(uploadDir));
 
@@ -101,7 +103,7 @@ async function main() {
     try {
       const files = req.files || [];
       if (!files.length) return res.status(400).json({ ok: false, message: 'No files uploaded' });
-      const host = process.env.SERVER_URL || `http://localhost:${PORT}`;
+      const host = process.env.SERVER_URL || `http://0.0.0.0:${PORT}`;
       const out = files.map(f => ({ filename: f.filename, url: `${host}/uploads/${f.filename}`, size: f.size }));
       return res.json(out);
     } catch (err) {
@@ -133,6 +135,7 @@ async function main() {
 
   app.get('/api/ping', (req, res) => res.json({ ok: true, msg: 'api ping' }));
   app.get('/_health', (req, res) => res.json({ ok: true, uptime: process.uptime() }));
+  app.get('/health', (req, res) => res.json({ ok: true, uptime: process.uptime() }));
 
   app.use('/api', (req, res) => res.status(404).json({ error: 'API endpoint not found' }));
 
@@ -153,7 +156,11 @@ async function main() {
     return res.status(err && err.status ? err.status : 500).json({ error: err && err.message ? err.message : 'Server error' });
   });
 
-  app.listen(PORT, () => console.log(`[server] listening on http://localhost:${PORT}`));
+  // Listen on the environment port (safe for Render/Heroku) and show friendly log
+  app.listen(PORT, () => {
+    const publicURL = process.env.SERVER_URL || `http://0.0.0.0:${PORT}`;
+    console.log(`[server] listening on ${publicURL} (port ${PORT})`);
+  });
 }
 
 main().catch(e => {

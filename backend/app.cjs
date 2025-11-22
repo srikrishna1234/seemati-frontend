@@ -133,10 +133,7 @@ async function connectMongoIfConfigured() {
     return;
   }
   try {
-    await mongoose.connect(uri, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
+    await mongoose.connect(uri);
     console.log('✅ MongoDB connected (app.cjs)');
   } catch (err) {
     console.error('❌ MongoDB connection failed (app.cjs):', err && (err.stack || err));
@@ -203,7 +200,7 @@ async function connectMongoIfConfigured() {
 
   app.use(cookieParser());
 
-  // ensure uploads folder exists
+  // ensure uploads folder exists (backend/uploads)
   const uploadDir = path.join(__dirname, 'uploads');
   if (!fs.existsSync(uploadDir)) {
     try { fs.mkdirSync(uploadDir, { recursive: true }); } catch (e) { console.warn('Could not create uploads dir:', e); }
@@ -250,7 +247,7 @@ async function connectMongoIfConfigured() {
         if (!isAdminAuthorized(req)) return res.status(401).json({ ok: false, message: 'Unauthorized' });
         const files = req.files || [];
         if (!files.length) return res.status(400).json({ ok: false, message: 'No file uploaded' });
-        const host = process.env.SERVER_URL || `http://localhost:${PORT}`;
+        const host = process.env.SERVER_URL || `http://0.0.0.0:${PORT}`;
         const out = files.map(f => ({ filename: f.filename, url: `${host}/uploads/${f.filename}`, size: f.size }));
         return res.json(out);
       } catch (err) {
@@ -341,8 +338,10 @@ async function connectMongoIfConfigured() {
     res.status(err && err.status ? err.status : 500).json({ error: err && err.message ? err.message : 'Server error' });
   });
 
+  // Listen on the environment port (safe for Render/Heroku)
   app.listen(PORT, () => {
-    console.log(`Backend (CommonJS app.cjs) listening on http://localhost:${PORT}`);
+    const publicURL = process.env.SERVER_URL || `http://0.0.0.0:${PORT}`;
+    console.log(`Backend (CommonJS app.cjs) listening on ${publicURL} (port ${PORT})`);
   });
 
 })().catch(e => {
