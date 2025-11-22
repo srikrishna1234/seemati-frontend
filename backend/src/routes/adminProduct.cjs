@@ -1,122 +1,136 @@
-﻿/*
-  backend/src/routes/adminProduct.cjs
-  Defensive admin product routes (CommonJS)
-  - Uses productController if available.
-  - Uses adminAuth middleware if available.
-  - Handles file uploads via multer if present; otherwise falls back.
-  - Provides clear logs when components are missing so you can fix them later.
-*/
-
+﻿// backend/src/routes/adminProduct.cjs
 'use strict';
 
 const express = require('express');
 const router = express.Router();
-const path = require('path');
+const mongoose = (() => { try { return require('mongoose'); } catch (e) { return null; } })();
 
-// Load optional pieces defensively
-let productController = null;
-try {
-  productController = require('../controllers/productController');
-} catch (err) {
-  console.warn('[adminProduct] productController not found; admin routes will respond 500. Error:', err && err.message ? err.message : err);
+// Defensive require for Product model (tries common filenames)
+let Product;
+const tryPaths = [
+  '../models/productModel.cjs',
+  '../models/productModel.js',
+  '../models/Product.cjs',
+  '../models/Product.js',
+  '../models/products.js'
+];
+for (const p of tryPaths) {
+  try {
+    // eslint-disable-next-line global-require, import/no-dynamic-require
+    Product = require(p);
+    if (Product) break;
+  } catch (e) { /* ignore */ }
 }
 
-let adminAuth = null;
-try {
-  adminAuth = require('../middleware/adminAuth');
-} catch (err) {
-  // not present — routes remain unprotected
+// admin auth helper — uses ADMIN_TOKEN env set in app.cjs
+function isAdminAuthorized(req) {
+  const ADMIN_TOKEN = process.env.ADMIN_TOKEN || null;
+  const auth = req.headers.authorization || '';
+  const token = auth.replace(/^Bearer\s+/i, '').trim();
+  if (!ADMIN_TOKEN) return true; // allow if no token configured
+  if (!token) return false;
+  return token === ADMIN_TOKEN;
 }
 
-// Multer upload setup (optional)
-let upload = null;
-try {
-  const multer = require('multer');
-  const os = require('os');
-  const fs = require('fs');
-  const uploadDir = path.join(os.tmpdir(), 'seemati-admin-uploads');
-  if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-  const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, uploadDir),
-    filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname.replace(/\s+/g, '-')}`)
-  });
-  upload = multer({ storage });
-} catch (err) {
-  // multer optional
-}
+// wrapper to catch async errors
+const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-// Helper: send consistent "controller missing" response
-function controllerMissing(res) {
-  return res.status(500).json({ error: 'productController not available on server' });
-}
+// GET /admin-api/products  (list)
+router.get('/products', wrap(async (req, res) => {
+  if (!Product) return res.status(500).json({ error: 'Product model not found on server' });
 
-// Wrap optional auth so code is readable
-const maybeAdmin = adminAuth ? adminAuth : (req, res, next) => next();
+  const page = Math.max(1, parseInt(req.query.page || '1', 10));
+  const limit = Math.max(1, Math.min(200, parseInt(req.query.limit || '50', 10)));
+  const skip = (page - 1) * limit;
 
-/*
-  Routes:
-  - GET    /admin/products         -> list (admin)
-  - POST   /admin/products         -> create (admin, may accept files)
-  - GET    /admin/products/:id     -> get single
-  - PUT    /admin/products/:id     -> update (may accept files)
-  - DELETE /admin/products/:id     -> delete
-*/
+  const fields = req.query.fields ? req.query.fields.split(',').map(f => f.trim()).join(' ') : '';
 
-router.get('/', maybeAdmin, async (req, res) => {
-  if (!productController || !productController.listAdmin) return controllerMissing(res);
-  try {
-    const list = await productController.listAdmin(req.query);
-    res.json(list);
-  } catch (err) {
-    console.error('[adminProduct] list error', err && err.stack ? err.stack : err);
-    res.status(500).json({ error: 'failed to list products' });
+  const query = {}; // extendable: add filters
+  const docs = await Product.find(query).select(fields || '').skip(skip).limit(limit).lean().exec();
+  return res.json(docs);
+}));
+
+// GET /admin-api/products/:id  (single)
+router.get('/products/:id', wrap(async (req, res) => {
+  if (!Product) return res.status(500).json({ error: 'Product model not found on server' });
+  const id = req.params.id;
+
+  if (mongoose && mongoose.Types && mongoose.Types.ObjectId && !mongoose.Types.ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'invalid id' });
   }
-});
 
-router.post('/', maybeAdmin, upload ? upload.any() : (req, res, next) => next(), async (req, res) => {
-  if (!productController || !productController.create) return controllerMissing(res);
-  try {
-    // controller handles req.body and req.files as needed
-    const created = await productController.create(req.body, req.files);
-    res.status(201).json(created);
-  } catch (err) {
-    console.error('[adminProduct] create error', err && err.stack ? err.stack : err);
-    res.status(500).json({ error: 'failed to create product' });
-  }
-});
+  const doc = await Product.findById(id).lean().exec();
+  if (!doc) return res.status(404).json({ error: 'product not found' });
+  return res.json(doc);
+}));
 
-router.get('/:id', maybeAdmin, async (req, res) => {
-  if (!productController || !productController.getById) return controllerMissing(res);
-  try {
-    const doc = await productController.getById(req.params.id);
-    if (!doc) return res.status(404).json({ error: 'product not found' });
-    res.json(doc);
-  } catch (err) {
-    console.error('[adminProduct] getById error', err && err.stack ? err.stack : err);
-    res.status(500).json({ error: 'failed to get product' });
-  }
-});
+// POST /admin-api/products  (create)
+router.post('/products', wrap(async (req, res) => {
+  if (!isAdminAuthorized(req)) return res.status(401).json({ error: 'Unauthorized' });
+  if (!Product) return res.status(500).json({ error: 'Product model not found on server' });
 
-router.put('/:id', maybeAdmin, upload ? upload.any() : (req, res, next) => next(), async (req, res) => {
-  if (!productController || !productController.update) return controllerMissing(res);
-  try {
-    const updated = await productController.update(req.params.id, req.body, req.files);
-    res.json(updated);
-  } catch (err) {
-    console.error('[adminProduct] update error', err && err.stack ? err.stack : err);
-    res.status(500).json({ error: 'failed to update product' });
-  }
-});
+  const payload = req.body || {};
+  // Basic safety: require a title and price (adjust per your model)
+  if (!payload.title) return res.status(400).json({ error: 'title is required' });
+  if (typeof payload.price === 'undefined') return res.status(400).json({ error: 'price is required' });
 
-router.delete('/:id', maybeAdmin, async (req, res) => {
-  if (!productController || !productController.remove) return controllerMissing(res);
-  try {
-    await productController.remove(req.params.id);
-    res.json({ ok: true });
-  } catch (err) {
-    console.error('[adminProduct] delete error', err && err.stack ? err.stack : err);
-    res.status(500).json({ error: 'failed to delete product' });
+  const created = await Product.create(payload);
+  return res.status(201).json(created);
+}));
+
+// PUT /admin-api/products/:id  (replace/update whole doc)
+router.put('/products/:id', wrap(async (req, res) => {
+  if (!isAdminAuthorized(req)) return res.status(401).json({ error: 'Unauthorized' });
+  if (!Product) return res.status(500).json({ error: 'Product model not found on server' });
+
+  const id = req.params.id;
+  if (mongoose && mongoose.Types && mongoose.Types.ObjectId && !mongoose.Types.ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'invalid id' });
   }
+
+  const payload = req.body || {};
+  // If you require fields, validate here. We'll attempt to update/replace.
+  const updated = await Product.findByIdAndUpdate(id, payload, { new: true, runValidators: true }).lean().exec();
+  if (!updated) return res.status(404).json({ error: 'product not found' });
+  return res.json(updated);
+}));
+
+// PATCH /admin-api/products/:id  (partial update)
+router.patch('/products/:id', wrap(async (req, res) => {
+  if (!isAdminAuthorized(req)) return res.status(401).json({ error: 'Unauthorized' });
+  if (!Product) return res.status(500).json({ error: 'Product model not found on server' });
+
+  const id = req.params.id;
+  if (mongoose && mongoose.Types && mongoose.Types.ObjectId && !mongoose.Types.ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'invalid id' });
+  }
+
+  const payload = req.body || {};
+  // Allow partial update: direct document fields or Mongo-update operators (like $push) if your model accepts them.
+  // We'll prefer a direct update using findByIdAndUpdate with the payload as-is.
+  const updated = await Product.findByIdAndUpdate(id, payload, { new: true, runValidators: true }).lean().exec();
+  if (!updated) return res.status(404).json({ error: 'product not found' });
+  return res.json(updated);
+}));
+
+// DELETE /admin-api/products/:id
+router.delete('/products/:id', wrap(async (req, res) => {
+  if (!isAdminAuthorized(req)) return res.status(401).json({ error: 'Unauthorized' });
+  if (!Product) return res.status(500).json({ error: 'Product model not found on server' });
+
+  const id = req.params.id;
+  if (mongoose && mongoose.Types && mongoose.Types.ObjectId && !mongoose.Types.ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'invalid id' });
+  }
+
+  const removed = await Product.findByIdAndDelete(id).lean().exec();
+  if (!removed) return res.status(404).json({ error: 'product not found' });
+  return res.json({ ok: true, removedId: id });
+}));
+
+// fallback: helpful message
+router.all('*', (req, res) => {
+  res.status(404).json({ error: `adminProduct route: ${req.method} ${req.originalUrl} not found` });
 });
 
 module.exports = router;
