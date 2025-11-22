@@ -1,73 +1,84 @@
-﻿import axios from "axios";
+// src/api/axiosInstance.js
+import axios from "axios";
 
-/*
-  axiosInstance.js
-  - Uses environment variables when available (REACT_APP_API_URL, VITE_API_URL, NEXT_PUBLIC_API_URL)
-  - If running on localhost and no env var provided, defaults to http://localhost:4000/
-  - Default production baseURL is https://api.seemati.in/
-  - Sends JSON, includes credentials, and attaches Authorization bearer token from localStorage (common keys).
-  - Exports default axios instance.
-*/
+/**
+ * Base URL resolution — prefer a dedicated API base env var, then fallback.
+ * We intentionally keep base without forcing '/api' so frontend and backend can call
+ * either /products or /api/... depending on how routes are mounted.
+ */
+const rawBase =
+  process.env.REACT_APP_API_BASE_URL ||
+  process.env.REACT_APP_API_URL ||
+  process.env.REACT_APP_API_FALLBACK ||
+  process.env.REACT_APP_BACKEND_URL ||
+  "https://api.seemati.in";
 
-function defaultBaseUrl() {
-  const env =
-    process.env.REACT_APP_API_URL ||
-    process.env.VITE_API_URL ||
-    process.env.NEXT_PUBLIC_API_URL ||
-    "";
-
-  if (env && env.length) {
-    // ensure trailing slash
-    return env.replace(/\/+$/, "") + "/";
-  }
-
-  // If running in a browser on localhost, prefer local backend
-  try {
-    if (typeof window !== "undefined" && window.location && window.location.hostname) {
-      const host = window.location.hostname;
-      if (host === "localhost" || host === "127.0.0.1") {
-        return "http://localhost:4000/";
-      }
-    }
-  } catch (e) {
-    // ignore
-  }
-
-  // production default
-  return "https://api.seemati.in/";
+/** Normalize base (no trailing slash) */
+function normalizeBase(b) {
+  if (!b) return b;
+  return String(b).trim().replace(/\/+$/, "");
 }
 
-const baseURL = defaultBaseUrl();
+const baseURL = normalizeBase(rawBase);
 
-const axiosInstance = axios.create({
+const instance = axios.create({
   baseURL,
-  withCredentials: true,
-  headers: {
-    "Content-Type": "application/json",
-  },
+  timeout: 15000,
+  headers: { "Content-Type": "application/json", Accept: "application/json" },
+  withCredentials: false,
 });
 
-// Request interceptor: attach token if present
-axiosInstance.interceptors.request.use(
-  (config) => {
+/* Token helpers */
+export function setAuthToken(token) {
+  if (token) {
+    instance.defaults.headers.common["Authorization"] = `Bearer ${token}`;
+    try { localStorage.setItem("adminToken", token); } catch (e) {}
+  } else {
+    delete instance.defaults.headers.common["Authorization"];
+  }
+}
+export function clearAuthToken() {
+  delete instance.defaults.headers.common["Authorization"];
+  try { localStorage.removeItem("adminToken"); } catch (e) {}
+}
+
+/* Request interceptor: attach token if available. Do NOT rewrite '/api' */
+instance.interceptors.request.use(
+  (req) => {
     try {
-      const token = localStorage.getItem("authToken") || localStorage.getItem("token");
-      if (token) {
-        config.headers = config.headers || {};
-        config.headers.Authorization = `Bearer ${token}`;
+      const localToken = typeof localStorage !== "undefined" ? localStorage.getItem("adminToken") : null;
+      const availToken = localToken || process.env.REACT_APP_ADMIN_TOKEN || process.env.ADMIN_TOKEN;
+      if (availToken) { req.headers = req.headers || {}; req.headers.Authorization = `Bearer ${availToken}`; }
+
+      if (process.env.NODE_ENV !== "production") {
+        try { console.debug("[axios] req:", (req.method || "").toUpperCase(), (req.baseURL || "") + (req.url || ""), { headers: req.headers }); } catch (e) {}
       }
-    } catch (e) {
-      // ignore localStorage issues (SSR / restricted env)
-    }
-    return config;
+    } catch (e) { console.error("[axios] request setup error:", e); }
+    return req;
   },
-  (error) => Promise.reject(error)
+  (err) => { console.error("[axios] request error:", err); return Promise.reject(err); }
 );
 
-// Response passthrough (you can add error handling/logging here)
-axiosInstance.interceptors.response.use(
-  (res) => res,
-  (err) => Promise.reject(err)
-);
+/* Response interceptors */
+if (process.env.NODE_ENV !== "production") {
+  instance.interceptors.response.use(
+    (res) => { try { console.debug("[axios] res:", res.status, (res.config && (res.config.baseURL || "") + (res.config.url || "")) || ""); } catch (e) {} return res; },
+    (err) => {
+      console.error("[axios] response error:", err && err.toString(), err && err.response && { status: err.response.status, data: err.response.data }, err && err.request && { request: err.request });
+      if (err.response) {
+        const msg = err.response.data?.message || err.response.statusText || `HTTP ${err.response.status}`;
+        return Promise.reject(new Error(msg));
+      }
+      if (err.request) return Promise.reject(new Error("No response from server (network/CORS/timeout)"));
+      return Promise.reject(err);
+    }
+  );
+} else {
+  instance.interceptors.response.use((r) => r, (err) => {
+    if (err.response) { const m = err.response.data?.message || err.response.statusText || `HTTP ${err.response.status}`; return Promise.reject(new Error(m)); }
+    if (err.request) return Promise.reject(new Error("No response from server (network)"));
+    return Promise.reject(err);
+  });
+}
 
-export default axiosInstance;
+export default instance;

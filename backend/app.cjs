@@ -1,55 +1,28 @@
-﻿// backend/app.cjs
-// Full replacement (CommonJS)
-// - mounts product routes, admin routes, presign/upload helpers when present
-// - dev-friendly local upload endpoint when STORAGE_PROVIDER !== 's3' or NODE_ENV==='development'
-// - detailed CORS debug output to help diagnose origin mismatches
+// backend/app.cjs
+// Full replacement (CommonJS) — mounts public product routes + health endpoints
 'use strict';
 
-const path = require('path');
-const fs = require('fs');
 const express = require('express');
+const path = require('path');
 const cors = require('cors');
-const multer = require('multer');
-const cookieParser = require('cookie-parser');
+const fs = require('fs');
 const session = require('express-session');
+const cookieParser = require('cookie-parser');
+const multer = require('multer');
 const { createRequire } = require('module');
 const requireLocal = createRequire(__filename);
 const dotenv = require('dotenv');
+const mongoose = (() => {
+  try { return require('mongoose'); } catch (e) { return null; }
+})();
 
 dotenv.config(); // load backend/.env if present
 
 // --- basic config ---
 const PORT = process.env.PORT || 4000;
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || null;
-const NODE_ENV = (process.env.NODE_ENV || 'production').toLowerCase();
 
-// --- helpers: canonicalize & byte debug ---
-function canonicalizeOrigin(raw) {
-  if (!raw) return raw;
-  try {
-    const u = new URL(String(raw).trim());
-    return u.origin;
-  } catch (e) {
-    return String(raw).trim().replace(/\/+$/, '').toLowerCase();
-  }
-}
-
-function bytesOfString(s) {
-  if (s == null) return [];
-  const arr = [];
-  for (let i = 0; i < s.length; i++) arr.push(s.charCodeAt(i));
-  return arr;
-}
-function showByteDebug(label, s) {
-  try {
-    console.log(`[BYTE-DUMP] ${label}: "${s}"`);
-    console.log(`[BYTE-DUMP] ${label}-len: ${s ? s.length : 0}, bytes:`, bytesOfString(String(s)).slice(0, 200));
-  } catch (e) {
-    console.warn(`[BYTE-DUMP] failed for ${label}`, e && e.message ? e.message : e);
-  }
-}
-
-// --- S3 env inspection ---
+// --- helper: S3 env status (preserve original behavior) ---
 function s3EnvStatus() {
   const s3BucketRaw = process.env.S3_BUCKET ?? process.env.AWS_S3_BUCKET;
   const S3_BUCKET = typeof s3BucketRaw === 'string' && s3BucketRaw.trim() ? String(s3BucketRaw).trim() : null;
@@ -61,11 +34,39 @@ function s3EnvStatus() {
       !process.env.AWS_SECRET_ACCESS_KEY ? 'AWS_SECRET_ACCESS_KEY' : null,
       !process.env.AWS_REGION && !process.env.AWS_DEFAULT_REGION ? 'AWS_REGION' : null,
       !S3_BUCKET ? 'S3_BUCKET' : null,
-    ].filter(Boolean)
+    ].filter(Boolean),
   };
 }
 
-// --- build allowed origins from envs ---
+// --- origin canonicalization & byte debug helpers ---
+function canonicalizeOrigin(raw) {
+  if (!raw) return raw;
+  try {
+    const u = new URL(String(raw).trim());
+    return u.origin;
+  } catch (e) {
+    // fallback: trim, remove trailing slash, lowercase
+    return String(raw).trim().replace(/\/+$/, '').toLowerCase();
+  }
+}
+
+function bytesOfString(s) {
+  if (s == null) return [];
+  const arr = [];
+  for (let i = 0; i < s.length; i++) arr.push(s.charCodeAt(i));
+  return arr;
+}
+
+function showByteDebug(label, s) {
+  try {
+    console.log(`[BYTE-DUMP] ${label}: "${s}"`);
+    console.log(`[BYTE-DUMP] ${label}-len: ${s ? s.length : 0}, bytes:`, bytesOfString(String(s)).slice(0, 200));
+  } catch (e) {
+    console.warn(`[BYTE-DUMP] failed for ${label}`, e && e.message ? e.message : e);
+  }
+}
+
+// --- build allowed origins (reads multiple env var names) ---
 function buildAllowedOrigins() {
   const set = new Set();
   const raw = {
@@ -94,7 +95,7 @@ function buildAllowedOrigins() {
     set.add(canonicalizeOrigin(raw.FRONTEND_ORIGIN));
   }
 
-  // always include common local dev origins
+  // always include dev origins
   set.add(canonicalizeOrigin('http://localhost:3000'));
   set.add(canonicalizeOrigin('http://127.0.0.1:3000'));
   set.add(canonicalizeOrigin('http://localhost:4000'));
@@ -102,16 +103,16 @@ function buildAllowedOrigins() {
   return { raw, normalized: Array.from(set), set };
 }
 
-// --- admin token helper ---
+// --- admin token helper (preserve original) ---
 function isAdminAuthorized(req) {
   const auth = req.headers.authorization || '';
   const token = auth.replace(/^Bearer\s+/i, '').trim();
-  if (!ADMIN_TOKEN) return true; // allow when no admin token configured
+  if (!ADMIN_TOKEN) return true;
   if (!token) return false;
   return token === ADMIN_TOKEN;
 }
 
-// --- safe require helper using createRequire (CommonJS) ---
+// --- tryRequire helper (preserve original behavior) ---
 async function tryRequire(p) {
   try {
     return requireLocal(p);
@@ -120,14 +121,8 @@ async function tryRequire(p) {
   }
 }
 
-// --- attempt Mongo connect if configured (best-effort) ---
+// --- MongoDB connect helper (safe best-effort for CommonJS entry) ---
 async function connectMongoIfConfigured() {
-  let mongoose = null;
-  try {
-    mongoose = requireLocal('mongoose');
-  } catch (e) {
-    // not installed; skip
-  }
   const uri = process.env.MONGODB_URI || process.env.MONGO_URI || null;
   if (!mongoose) {
     console.warn('mongoose module not available (not installed). Skipping MongoDB connect.');
@@ -138,14 +133,17 @@ async function connectMongoIfConfigured() {
     return;
   }
   try {
-    await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
-    console.log('✔ MongoDB connected (app.cjs)');
+    await mongoose.connect(uri, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
+    console.log('✅ MongoDB connected (app.cjs)');
   } catch (err) {
-    console.error('✖ MongoDB connection failed (app.cjs):', err && (err.stack || err));
+    console.error('❌ MongoDB connection failed (app.cjs):', err && (err.stack || err));
   }
 }
 
-// --- main bootstrap ---
+// --- main server bootstrap ---
 (async function main() {
   console.log('Starting backend (CommonJS app.cjs)');
   console.log('ENV STORAGE_PROVIDER=', process.env.STORAGE_PROVIDER || '(none)');
@@ -158,30 +156,28 @@ async function connectMongoIfConfigured() {
   console.log('FRONTEND_ORIGIN (FRONTEND_ORIGIN/CLIENT_ORIGIN):', JSON.stringify(allowed.raw.FRONTEND_ORIGIN));
   console.log('CORS allowed normalized list:', allowed.normalized);
 
-  // try connecting to Mongo (non-fatal)
-  await connectMongoIfConfigured().catch((e) => console.warn('Mongo connect error (ignored):', e));
+  // Try connect to Mongo (best-effort)
+  await connectMongoIfConfigured().catch(e => console.warn('Mongo connect error (ignored):', e));
 
   const app = express();
 
-  // CORS options with debugging
+  // CORS options using normalized check with helpful debug logging
   const corsOptions = {
     origin: function (incomingOrigin, callback) {
       const incomingRaw = incomingOrigin || '(no-origin)';
       const incomingNorm = canonicalizeOrigin(incomingRaw);
       console.log(`[CORS DEBUG] incoming raw: ${incomingRaw} normalized: ${incomingNorm}`);
-
       if (!incomingOrigin) {
-        // server-to-server or curl (no Origin header)
+        // server-to-server or curl
         console.log('[CORS DEBUG] no Origin header — allowing');
         return callback(null, true);
       }
-
       if (allowed.set.has(incomingNorm)) {
         console.log(`[CORS DEBUG] origin allowed: ${incomingNorm}`);
         return callback(null, true);
       }
 
-      // Not allowed: print helpful byte-dump diagnostics
+      // Not allowed: debug byte-dump to detect invisible chars
       console.warn(`[CORS DEBUG] origin rejected: raw="${incomingRaw}" norm="${incomingNorm}"`);
       showByteDebug('incoming', incomingRaw);
       allowed.normalized.forEach((a, idx) => showByteDebug(`allowed_norm[${idx}]`, a));
@@ -207,14 +203,14 @@ async function connectMongoIfConfigured() {
 
   app.use(cookieParser());
 
-  // ensure uploads folder exists and serve it
+  // ensure uploads folder exists
   const uploadDir = path.join(__dirname, 'uploads');
   if (!fs.existsSync(uploadDir)) {
     try { fs.mkdirSync(uploadDir, { recursive: true }); } catch (e) { console.warn('Could not create uploads dir:', e); }
   }
   app.use('/uploads', express.static(uploadDir));
 
-  // multer disk storage (used for local uploads)
+  // multer storage (preserve original behavior)
   const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, uploadDir),
     filename: (req, file, cb) => {
@@ -225,13 +221,13 @@ async function connectMongoIfConfigured() {
   });
   const upload = multer({ storage });
 
-  // --- attempt to mount known helper routes if they exist ---
+  // try to mount several route modules (best-effort)
   const routesToTry = [
     { path: './src/routes/presign-get.cjs', mount: '/api/presign-get' },
     { path: './src/routes/presign.cjs', mount: '/api/presign' },
     { path: './src/routes/admin-presign.cjs', mount: '/admin-api' },
     { path: './src/routes/upload.cjs', mount: '/api' },
-    { path: './src/routes/upload.js', mount: '/api' }
+    { path: './src/routes/upload.js', mount: '/api' },
   ];
 
   for (const r of routesToTry) {
@@ -246,37 +242,27 @@ async function connectMongoIfConfigured() {
     }
   }
 
-  // --- local admin upload endpoint (dev-friendly) ---
-  // Mount only when STORAGE_PROVIDER !== 's3' OR NODE_ENV === 'development' to avoid interfering with S3 production flow.
+  // local admin upload endpoint if not using S3
   const storageProvider = (process.env.STORAGE_PROVIDER || '').toLowerCase();
-  if (storageProvider !== 's3' || NODE_ENV === 'development') {
-    // prefer to load a dedicated adminUpload route if present, otherwise use inline handler
-    const adminUploadModule = await tryRequire('./src/routes/adminUpload.cjs');
-    if (adminUploadModule) {
-      app.use('/admin-api/products/upload', adminUploadModule);
-      console.log('Mounted ./src/routes/adminUpload.cjs at /admin-api/products/upload (dev/local upload)');
-    } else {
-      // inline fallback handler
-      app.post('/admin-api/products/upload', upload.any(), (req, res) => {
-        try {
-          if (!isAdminAuthorized(req)) return res.status(401).json({ ok: false, message: 'Unauthorized' });
-          const files = req.files || [];
-          if (!files.length) return res.status(400).json({ ok: false, message: 'No file uploaded' });
-          const host = process.env.SERVER_URL || `http://localhost:${PORT}`;
-          const out = files.map((f) => ({ filename: f.filename, url: `${host}/uploads/${encodeURIComponent(f.filename)}`, size: f.size }));
-          return res.json(out);
-        } catch (err) {
-          console.error('[admin-upload] error:', err && (err.stack || err));
-          return res.status(500).json({ ok: false, message: 'Upload failed' });
-        }
-      });
-      console.log('Mounted inline dev admin upload handler at /admin-api/products/upload');
-    }
+  if (storageProvider !== 's3') {
+    app.post('/admin-api/products/upload', upload.any(), (req, res) => {
+      try {
+        if (!isAdminAuthorized(req)) return res.status(401).json({ ok: false, message: 'Unauthorized' });
+        const files = req.files || [];
+        if (!files.length) return res.status(400).json({ ok: false, message: 'No file uploaded' });
+        const host = process.env.SERVER_URL || `http://localhost:${PORT}`;
+        const out = files.map(f => ({ filename: f.filename, url: `${host}/uploads/${f.filename}`, size: f.size }));
+        return res.json(out);
+      } catch (err) {
+        console.error('[admin-upload] error:', err);
+        return res.status(500).json({ ok: false, message: 'Upload failed' });
+      }
+    });
   } else {
     console.log('STORAGE_PROVIDER=s3 configured — skipping local admin upload route.');
   }
 
-  // --- health & debug endpoints ---
+  // health & debug handlers
   app.get('/health', (req, res) => res.json({ ok: true, uptime: process.uptime() }));
   app.get('/_health', (req, res) => res.json({ ok: true, uptime: process.uptime() }));
   app.get('/api/ping', (req, res) => res.json({ ok: true, msg: 'api ping' }));
@@ -290,7 +276,7 @@ async function connectMongoIfConfigured() {
       now: new Date().toISOString(),
       STORAGE_PROVIDER: process.env.STORAGE_PROVIDER || null,
       S3_BUCKET_raw: process.env.S3_BUCKET ?? process.env.AWS_S3_BUCKET ?? null,
-      S3_BUCKET_normalized: s3info.S3_BUCKET || null,
+      S3_BUCKET_normalized: s3info.S3_BUCKET,
       hasAwsKeys: !!process.env.AWS_ACCESS_KEY_ID && !!process.env.AWS_SECRET_ACCESS_KEY,
       presignReady,
       ADMIN_TOKEN_set: !!process.env.ADMIN_TOKEN,
@@ -301,23 +287,26 @@ async function connectMongoIfConfigured() {
     });
   });
 
-  // --- explicit adminProduct mount if present ---
+  // attempt explicit mount of adminProduct (if exists)
   try {
-    const adminProductModule = await tryRequire('./src/routes/adminProduct.cjs');
+    const candidatePath = './src/routes/adminProduct.cjs';
+    const adminProductModule = await tryRequire(candidatePath);
     if (adminProductModule) {
       app.use('/admin-api', adminProductModule);
-      console.log('Mounted ./src/routes/adminProduct.cjs at /admin-api');
+      console.log(`Mounted ${candidatePath} at /admin-api`);
     } else {
-      console.log('adminProduct.cjs not found (skipped explicit mount)');
+      console.log(`adminProduct.cjs not found at ${candidatePath} (skipped explicit mount)`);
     }
   } catch (e) {
     console.warn('Failed to explicitly mount ./src/routes/adminProduct.cjs:', e && e.message ? e.message : e);
   }
 
-  // --- public product routes mount ---
+  // --- public product routes (productRoutes.cjs / productRoutes.js) ---
   try {
     let prodModule = await tryRequire('./src/routes/productRoutes.cjs');
-    if (!prodModule) prodModule = await tryRequire('./src/routes/productRoutes.js');
+    if (!prodModule) {
+      prodModule = await tryRequire('./src/routes/productRoutes.js');
+    }
     if (prodModule) {
       app.use('/products', prodModule);
       console.log('Mounted ./src/routes/productRoutes.* at /products');
@@ -328,42 +317,35 @@ async function connectMongoIfConfigured() {
     console.warn('Failed to mount productRoutes at /products:', e && e.message ? e.message : e);
   }
 
-  // simple fallback for /api
+  // fallback /api 404
   app.use('/api', (req, res) => res.status(404).json({ error: 'API endpoint not found' }));
 
-  // --- global error handler ---
+  // global error handler (with DEBUG CORS echo)
   app.use((err, req, res, next) => {
-    try {
-      console.error('Global error:', err && (err.stack || err));
-      if (res.headersSent) return next(err);
+    console.error('Global error:', err && (err.stack || err));
+    if (res.headersSent) return next(err);
 
-      if (err && err.message && String(err.message).toLowerCase().includes('origin')) {
-        // echo CORS headers so browsers surface the server error (useful for debugging)
-        try {
-          const originHeader = req.get('origin') || null;
-          if (originHeader) {
-            res.set('Access-Control-Allow-Origin', originHeader);
-            res.set('Access-Control-Allow-Credentials', 'true');
-            res.set('Vary', 'Origin');
-          }
-        } catch (e) { /* ignore */ }
-        return res.status(403).json({ error: 'CORS blocked request', message: err.message });
-      }
-
-      const statusCode = err && err.status ? err.status : 500;
-      const message = err && err.message ? err.message : 'Server error';
-      return res.status(statusCode).json({ error: message });
-    } catch (fatal) {
-      console.error('Fatal error inside global error handler:', fatal && (fatal.stack || fatal));
-      return res.status(500).json({ error: 'Server error' });
+    if (err && err.message && String(err.message).toLowerCase().includes('origin')) {
+      // DEBUG: echo CORS headers so browser shows server error (remove later)
+      try {
+        const originHeader = req.get('origin') || null;
+        if (originHeader) {
+          res.set('Access-Control-Allow-Origin', originHeader);
+          res.set('Access-Control-Allow-Credentials', 'true');
+          res.set('Vary', 'Origin');
+        }
+      } catch (e) { /* ignore */ }
+      return res.status(403).json({ error: 'CORS blocked request', message: err.message });
     }
+
+    res.status(err && err.status ? err.status : 500).json({ error: err && err.message ? err.message : 'Server error' });
   });
 
   app.listen(PORT, () => {
     console.log(`Backend (CommonJS app.cjs) listening on http://localhost:${PORT}`);
   });
 
-})().catch((e) => {
+})().catch(e => {
   console.error('Fatal startup error (app.cjs):', e && (e.stack || e));
   process.exit(1);
 });
