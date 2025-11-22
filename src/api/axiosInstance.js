@@ -3,16 +3,41 @@
 /*
   axiosInstance.js
   - Uses environment variables when available (REACT_APP_API_URL, VITE_API_URL, NEXT_PUBLIC_API_URL)
-  - Default baseURL is https://api.seemati.in to match backend mount (public API at /products)
+  - If running on localhost and no env var provided, defaults to http://localhost:4000/
+  - Default production baseURL is https://api.seemati.in/
   - Sends JSON, includes credentials, and attaches Authorization bearer token from localStorage (common keys).
   - Exports default axios instance.
 */
 
-const baseURL =
-  process.env.REACT_APP_API_URL ||
-  process.env.VITE_API_URL ||
-  process.env.NEXT_PUBLIC_API_URL ||
-  'https://api.seemati.in/';
+function defaultBaseUrl() {
+  const env =
+    process.env.REACT_APP_API_URL ||
+    process.env.VITE_API_URL ||
+    process.env.NEXT_PUBLIC_API_URL ||
+    "";
+
+  if (env && env.length) {
+    // ensure trailing slash
+    return env.replace(/\/+$/, "") + "/";
+  }
+
+  // If running in a browser on localhost, prefer local backend
+  try {
+    if (typeof window !== "undefined" && window.location && window.location.hostname) {
+      const host = window.location.hostname;
+      if (host === "localhost" || host === "127.0.0.1") {
+        return "http://localhost:4000/";
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  // production default
+  return "https://api.seemati.in/";
+}
+
+const baseURL = defaultBaseUrl();
 
 const axiosInstance = axios.create({
   baseURL,

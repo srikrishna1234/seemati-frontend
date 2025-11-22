@@ -22,11 +22,12 @@ export default function AdminProductList() {
   function candidateUrls(page, limit) {
     const qs = `?page=${page}&limit=${limit}`;
     const paths = [
-      "/admin-api/products",
-      "/api/products",
-      "/products", // last resort — your backend may not expose this
+      "/admin-api",           // try admin router root (returns {items: [...]})
+      "/admin-api/products",  // explicit admin products route
+      "/api/products",        // alternate upload/compat routes
+      "/products",            // public route (last resort)
     ];
-    // full URLs if API_BASE set, otherwise relative paths
+
     return paths.map((p) => (API_BASE ? `${API_BASE}${p}${qs}` : `${p}${qs}`));
   }
 
@@ -36,19 +37,15 @@ export default function AdminProductList() {
       try {
         const res = await fetch(u, { credentials: "include" });
         if (res.ok) {
-          // parse json and return object { data, usedUrl }
           const body = await res.json();
           return { body, usedUrl: u, status: res.status };
         } else {
-          // record non-OK to show later, but keep trying
           console.warn(`[AdminProductList] ${u} returned ${res.status}`);
         }
       } catch (err) {
-        // network error — e.g., backend down, CORS, etc.
         console.warn(`[AdminProductList] fetch ${u} error:`, err);
       }
     }
-    // none succeeded
     throw new Error("No usable endpoint responded OK");
   }
 
@@ -58,19 +55,22 @@ export default function AdminProductList() {
     try {
       const urls = candidateUrls(1, pageSize);
       const result = await tryFetch(urls);
-      // Normalize product list from different possible shapes
       const data = result.body;
+
+      // Normalize product list from different possible shapes
       let list = [];
+      // admin-api returns { items: [...] } in your backend
       if (Array.isArray(data)) list = data;
+      else if (Array.isArray(data.items)) list = data.items;
       else if (Array.isArray(data.products)) list = data.products;
-      else if (Array.isArray(data.products?.docs)) list = data.products.docs || [];
-      else list = data.products ?? [];
+      else if (Array.isArray(data.products?.docs)) list = data.products.docs;
+      else if (Array.isArray(data.products?.items)) list = data.products.items;
+      else list = data.products ?? data.items ?? [];
 
       setProducts(list);
       console.log(`[AdminProductList] loaded from ${result.usedUrl} (status ${result.status})`);
     } catch (err) {
       console.error("Failed to load products", err);
-      // Provide helpful error text including which URLs were attempted
       const attempted = candidateUrls(1, pageSize).join("  \n");
       setError(`Failed to load products. Tried endpoints:\n${attempted}\n\nConsole has details.`);
       setProducts([]);
@@ -95,7 +95,7 @@ export default function AdminProductList() {
         credentials: "include",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${ADMIN_TOKEN}`, // added auth header
+          "Authorization": `Bearer ${ADMIN_TOKEN}`,
         },
       });
       if (!res.ok) {
