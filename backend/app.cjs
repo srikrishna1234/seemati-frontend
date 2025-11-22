@@ -12,6 +12,9 @@ const multer = require('multer');
 const { createRequire } = require('module');
 const requireLocal = createRequire(__filename);
 const dotenv = require('dotenv');
+const mongoose = (() => {
+  try { return require('mongoose'); } catch (e) { return null; }
+})();
 
 dotenv.config(); // load backend/.env if present
 
@@ -118,6 +121,28 @@ async function tryRequire(p) {
   }
 }
 
+// --- MongoDB connect helper (safe best-effort for CommonJS entry) ---
+async function connectMongoIfConfigured() {
+  const uri = process.env.MONGODB_URI || process.env.MONGO_URI || null;
+  if (!mongoose) {
+    console.warn('mongoose module not available (not installed). Skipping MongoDB connect.');
+    return;
+  }
+  if (!uri) {
+    console.warn('MONGODB_URI not set — skipping mongo connect');
+    return;
+  }
+  try {
+    await mongoose.connect(uri, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
+    console.log('✅ MongoDB connected (app.cjs)');
+  } catch (err) {
+    console.error('❌ MongoDB connection failed (app.cjs):', err && (err.stack || err));
+  }
+}
+
 // --- main server bootstrap ---
 (async function main() {
   console.log('Starting backend (CommonJS app.cjs)');
@@ -130,6 +155,9 @@ async function tryRequire(p) {
   console.log('ALLOWED_ORIGINS raw (ALLOWED_ORIGINS):', JSON.stringify(allowed.raw.ALLOWED_ORIGINS));
   console.log('FRONTEND_ORIGIN (FRONTEND_ORIGIN/CLIENT_ORIGIN):', JSON.stringify(allowed.raw.FRONTEND_ORIGIN));
   console.log('CORS allowed normalized list:', allowed.normalized);
+
+  // Try connect to Mongo (best-effort)
+  await connectMongoIfConfigured().catch(e => console.warn('Mongo connect error (ignored):', e));
 
   const app = express();
 
@@ -235,7 +263,6 @@ async function tryRequire(p) {
   }
 
   // health & debug handlers
-  // provide both /health and /_health (some clients expect underscore)
   app.get('/health', (req, res) => res.json({ ok: true, uptime: process.uptime() }));
   app.get('/_health', (req, res) => res.json({ ok: true, uptime: process.uptime() }));
   app.get('/api/ping', (req, res) => res.json({ ok: true, msg: 'api ping' }));
@@ -274,7 +301,7 @@ async function tryRequire(p) {
     console.warn('Failed to explicitly mount ./src/routes/adminProduct.cjs:', e && e.message ? e.message : e);
   }
 
-  // --- NEW: try mounting public product routes (productRoutes.cjs / productRoutes.js) ---
+  // --- public product routes (productRoutes.cjs / productRoutes.js) ---
   try {
     let prodModule = await tryRequire('./src/routes/productRoutes.cjs');
     if (!prodModule) {
