@@ -1,201 +1,150 @@
 // backend/src/routes/adminProduct.cjs
-// Defensive admin product routes (CommonJS)
-// - safe model loading (multiple fallbacks)
-// - clear logging for troubleshooting
-// - admin auth by ADMIN_TOKEN or JWT (if present)
-// - returns helpful errors instead of crashing when model missing
+// A robust CommonJS Express router for admin-product endpoints.
+// It tries to load a productController using require() first, falling back to dynamic import() for ESM controllers.
+// If no controller is found, routes return helpful 501 responses so server startup doesn't give "require is not defined".
+
 'use strict';
 
 const express = require('express');
-const router = express.Router();
-const { createRequire } = require('module');
-const requireLocal = createRequire(__filename);
 const path = require('path');
-const fs = require('fs');
-const jwt = (() => {
-  try { return require('jsonwebtoken'); } catch (e) { return null; }
-})();
+const { createRequire } = require('module');
+const { pathToFileURL } = require('url');
+const requireLocal = createRequire(__filename);
 
-const LOG_PREFIX = '[adminProduct]';
+const router = express.Router();
 
-// --- Safe Product model loader with discovery & logging ---
-let Product = null;
-function loadProductModel() {
-  if (Product) return Product;
+// Helper: robust loader to support CommonJS and ESM controller files
+async function tryLoadController(relPath) {
+  try {
+    // resolve relative to this file
+    let resolved;
+    try {
+      resolved = requireLocal.resolve(relPath);
+    } catch (resolveErr) {
+      return null;
+    }
 
+    // try CommonJS require
+    try {
+      return requireLocal(resolved);
+    } catch (reqErr) {
+      // fallthrough to import
+    }
+
+    // dynamic import for ESM
+    try {
+      const fileUrl = pathToFileURL(resolved).href;
+      const imported = await import(fileUrl);
+      return imported && imported.default ? imported.default : imported;
+    } catch (impErr) {
+      return null;
+    }
+  } catch (err) {
+    return null;
+  }
+}
+
+// Attempt to load a controller from a few common paths
+async function loadProductController() {
   const candidates = [
-    path.join(__dirname, '..', '..', 'models', 'Product.cjs'),
-    path.join(__dirname, '..', '..', 'models', 'Product.js'),
-    path.join(__dirname, '..', '..', 'models', 'Product'),
-    // project root fallback
-    path.join(process.cwd(), 'backend', 'models', 'Product.cjs'),
+    './controllers/productController.cjs',
+    './controllers/productController.js',
+    '../controllers/productController.cjs',
+    '../controllers/productController.js',
+    '../../controllers/productController.cjs',
+    '../../controllers/productController.js'
   ];
 
-  for (const cand of candidates) {
+  for (const c of candidates) {
+    const mod = await tryLoadController(c);
+    if (mod) {
+      console.log(`[adminProduct] loaded controller: ${c}`);
+      return mod;
+    }
+  }
+  console.warn('[adminProduct] productController not found in expected paths');
+  return null;
+}
+
+// Mount routes async so we can await controller load
+(async () => {
+  const controller = await loadProductController();
+
+  // GET /admin-api/products => list (or 501 if controller missing)
+  router.get('/products', async (req, res) => {
     try {
-      if (!fs.existsSync(cand)) continue;
-      const mod = requireLocal(cand);
-      Product = mod && (mod.default || mod.Product) ? (mod.default || mod.Product) : mod;
-      if (Product) {
-        console.log(`${LOG_PREFIX} Loaded Product model from ${cand}`);
-        break;
+      if (!controller || typeof controller.listProducts !== 'function') {
+        return res.status(501).json({ ok: false, error: 'productController.listProducts not implemented' });
       }
+      const out = await controller.listProducts(req, res);
+      // controller may already handle response; if it returns data, send it
+      if (out !== undefined && !res.headersSent) res.json(out);
     } catch (err) {
-      console.warn(`${LOG_PREFIX} Tried ${cand} but failed to load:`, err && err.message ? err.message : err);
+      console.error('[adminProduct] GET /products error:', err && (err.stack || err));
+      if (!res.headersSent) res.status(500).json({ ok: false, error: 'server error' });
     }
-  }
+  });
 
-  if (!Product) {
-    console.warn(`${LOG_PREFIX} Product model not found. Admin routes will return 500 when model required.`);
-  }
-  return Product;
-}
-
-// --- Admin auth helper (supports ADMIN_TOKEN env or JWT if configured) ---
-function isAdminAuthorized(req) {
-  try {
-    const auth = (req.headers && req.headers.authorization) || '';
-    const token = String(auth).replace(/^Bearer\s+/i, '').trim();
-    const ADMIN_TOKEN = process.env.ADMIN_TOKEN || process.env.REACT_APP_ADMIN_TOKEN || null;
-    if (!ADMIN_TOKEN && !process.env.JWT_SECRET) {
-      // no admin protection configured — allow by default (development)
-      return true;
-    }
-
-    if (ADMIN_TOKEN && token && token === ADMIN_TOKEN) return true;
-
-    if (process.env.JWT_SECRET && token && jwt) {
-      try {
-        jwt.verify(token, process.env.JWT_SECRET);
-        return true;
-      } catch (err) {
-        return false;
+  // POST /admin-api/products => create product
+  router.post('/products', async (req, res) => {
+    try {
+      if (!controller || typeof controller.createProduct !== 'function') {
+        return res.status(501).json({ ok: false, error: 'productController.createProduct not implemented' });
       }
+      const out = await controller.createProduct(req, res);
+      if (out !== undefined && !res.headersSent) res.json(out);
+    } catch (err) {
+      console.error('[adminProduct] POST /products error:', err && (err.stack || err));
+      if (!res.headersSent) res.status(500).json({ ok: false, error: 'server error' });
     }
+  });
 
-    return false;
-  } catch (e) {
-    console.error(`${LOG_PREFIX} isAdminAuthorized error:`, e && e.message ? e.message : e);
-    return false;
-  }
-}
-
-// --- Small helper for consistent error responses ---
-function handleErr(res, err, status = 500) {
-  console.error(`${LOG_PREFIX} error:`, err && (err.stack || err));
-  return res.status(status).json({ ok: false, error: err && err.message ? err.message : 'server error' });
-}
-
-// --- Middleware: require admin auth for all routes in this router ---
-router.use((req, res, next) => {
-  if (!isAdminAuthorized(req)) {
-    console.warn(`${LOG_PREFIX} Unauthorized request to ${req.method} ${req.originalUrl}`);
-    return res.status(401).json({ ok: false, message: 'Unauthorized' });
-  }
-  next();
-});
-
-// --- GET /admin-api/products
-router.get('/products', async (req, res) => {
-  try {
-    const Prod = loadProductModel();
-    if (!Prod) return res.status(500).json({ ok: false, message: 'Product model not available' });
-
-    const page = Math.max(1, parseInt(req.query.page || '1', 10));
-    const limit = Math.max(1, Math.min(200, parseInt(req.query.limit || '50', 10)));
-    const skip = (page - 1) * limit;
-
-    const q = (req.query.q || '').trim();
-    const fieldsRaw = (req.query.fields || '').trim();
-    let projection = null;
-    if (fieldsRaw) {
-      projection = {};
-      fieldsRaw.split(',').map(s => s.trim()).filter(Boolean).forEach(f => projection[f] = 1);
+  // GET /admin-api/products/:id => get product
+  router.get('/products/:id', async (req, res) => {
+    try {
+      if (!controller || typeof controller.getProduct !== 'function') {
+        return res.status(501).json({ ok: false, error: 'productController.getProduct not implemented' });
+      }
+      const out = await controller.getProduct(req, res);
+      if (out !== undefined && !res.headersSent) res.json(out);
+    } catch (err) {
+      console.error('[adminProduct] GET /products/:id error:', err && (err.stack || err));
+      if (!res.headersSent) res.status(500).json({ ok: false, error: 'server error' });
     }
+  });
 
-    const filter = {};
-    if (q) {
-      filter.$or = [
-        { title: { $regex: q, $options: 'i' } },
-        { description: { $regex: q, $options: 'i' } },
-        { sku: { $regex: q, $options: 'i' } },
-      ];
+  // PUT /admin-api/products/:id => update product
+  router.put('/products/:id', async (req, res) => {
+    try {
+      if (!controller || typeof controller.updateProduct !== 'function') {
+        return res.status(501).json({ ok: false, error: 'productController.updateProduct not implemented' });
+      }
+      const out = await controller.updateProduct(req, res);
+      if (out !== undefined && !res.headersSent) res.json(out);
+    } catch (err) {
+      console.error('[adminProduct] PUT /products/:id error:', err && (err.stack || err));
+      if (!res.headersSent) res.status(500).json({ ok: false, error: 'server error' });
     }
+  });
 
-    const total = await Prod.countDocuments(filter).exec();
-    const data = await Prod.find(filter, projection).skip(skip).limit(limit).lean().exec();
-
-    return res.json({ ok: true, page, limit, total, data });
-  } catch (err) {
-    return handleErr(res, err);
-  }
-});
-
-// --- POST /admin-api/products  (create) ---
-router.post('/products', async (req, res) => {
-  try {
-    const Prod = loadProductModel();
-    if (!Prod) return res.status(500).json({ ok: false, message: 'Product model not available' });
-
-    const body = req.body || {};
-    if (!body.title || body.price == null) {
-      return res.status(400).json({ ok: false, message: 'Missing required fields: title and price' });
+  // DELETE /admin-api/products/:id => delete product
+  router.delete('/products/:id', async (req, res) => {
+    try {
+      if (!controller || typeof controller.deleteProduct !== 'function') {
+        return res.status(501).json({ ok: false, error: 'productController.deleteProduct not implemented' });
+      }
+      const out = await controller.deleteProduct(req, res);
+      if (out !== undefined && !res.headersSent) res.json(out);
+    } catch (err) {
+      console.error('[adminProduct] DELETE /products/:id error:', err && (err.stack || err));
+      if (!res.headersSent) res.status(500).json({ ok: false, error: 'server error' });
     }
+  });
 
-    const created = await Prod.create(body);
-    console.log(`${LOG_PREFIX} Product created id=${created._id}`);
-    return res.status(201).json({ ok: true, data: created });
-  } catch (err) {
-    return handleErr(res, err);
-  }
-});
+  // Add other admin endpoints here following the same pattern...
 
-// --- GET /admin-api/products/:id ---
-router.get('/products/:id', async (req, res) => {
-  try {
-    const Prod = loadProductModel();
-    if (!Prod) return res.status(500).json({ ok: false, message: 'Product model not available' });
-
-    const id = req.params.id;
-    const doc = await Prod.findById(id).lean().exec();
-    if (!doc) return res.status(404).json({ ok: false, message: 'Not found' });
-    return res.json({ ok: true, data: doc });
-  } catch (err) {
-    return handleErr(res, err);
-  }
-});
-
-// --- PUT /admin-api/products/:id ---
-router.put('/products/:id', async (req, res) => {
-  try {
-    const Prod = loadProductModel();
-    if (!Prod) return res.status(500).json({ ok: false, message: 'Product model not available' });
-
-    const id = req.params.id;
-    const update = req.body || {};
-    const updated = await Prod.findByIdAndUpdate(id, update, { new: true }).lean().exec();
-    if (!updated) return res.status(404).json({ ok: false, message: 'Not found' });
-    console.log(`${LOG_PREFIX} Product updated id=${id}`);
-    return res.json({ ok: true, data: updated });
-  } catch (err) {
-    return handleErr(res, err);
-  }
-});
-
-// --- DELETE /admin-api/products/:id ---
-router.delete('/products/:id', async (req, res) => {
-  try {
-    const Prod = loadProductModel();
-    if (!Prod) return res.status(500).json({ ok: false, message: 'Product model not available' });
-
-    const id = req.params.id;
-    const removed = await Prod.findByIdAndDelete(id).lean().exec();
-    if (!removed) return res.status(404).json({ ok: false, message: 'Not found' });
-    console.log(`${LOG_PREFIX} Product deleted id=${id}`);
-    return res.json({ ok: true, data: removed });
-  } catch (err) {
-    return handleErr(res, err);
-  }
+})().catch(e => {
+  console.error('[adminProduct] bootstrap error:', e && (e.stack || e));
 });
 
 module.exports = router;
