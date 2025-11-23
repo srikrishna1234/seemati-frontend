@@ -20,3 +20,9 @@ Thumbs.db
 # Build folders
 frontend/build/
 frontend/dist/
+
+# ignore backup files
+*.bak
+*.removed.*
+archives/
+
