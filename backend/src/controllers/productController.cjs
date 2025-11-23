@@ -1,155 +1,96 @@
 ﻿// backend/src/controllers/productController.cjs
-// Cross-compatible controller shim for adminProduct routes.
-// Works whether loaded under CommonJS (require) or via ESM import().
-
 'use strict';
 
-let ProductModel = null;
+/*
+  CommonJS product controller compatible with app.cjs bootstrap.
+  - Uses require/module.exports (no 'import' / 'export').
+  - Robust to missing model by returning helpful errors.
+*/
 
-async function tryLoadModel() {
-  if (ProductModel) return ProductModel;
+const path = require('path');
 
-  const candidates = [
-    '../../models/productModel.cjs',
-    '../../models/productModel.js',
-    '../models/productModel.cjs',
-    '../models/productModel.js',
-    './models/productModel.cjs',
-    './models/productModel.js'
-  ];
+let Product;
+try {
+  // Adjust path if your Product model is located elsewhere.
+  // From backend/src/controllers -> ../../models/Product
+  Product = require(path.join(__dirname, '..', '..', 'models', 'Product'));
+} catch (err) {
+  console.error('[productController] failed to require Product model:', err && err.message);
+  // Export a stub that reports error when called so route logs show cause clearly.
+  const e = new Error('Product model not found. Check path backend/models/Product.js');
+  module.exports = {
+    getAllProducts: async (req, res) => res.status(500).json({ error: e.message }),
+    getProductById: async (req, res) => res.status(500).json({ error: e.message }),
+    createProduct: async (req, res) => res.status(500).json({ error: e.message }),
+    updateProduct: async (req, res) => res.status(500).json({ error: e.message }),
+    deleteProduct: async (req, res) => res.status(500).json({ error: e.message }),
+  };
+  return;
+}
 
-  for (const p of candidates) {
-    try {
-      // CommonJS path: use createRequire if `require` exists
-      if (typeof require !== 'undefined') {
-        // use createRequire to reliably load files relative to this file
-        const { createRequire } = require('module');
-        const req = createRequire(__filename);
-        let mod = req(p);
-        if (mod && mod.default) mod = mod.default;
-        ProductModel = mod;
-        console.log(`[productController] loaded model (CJS): ${p}`);
-        return ProductModel;
-      }
-
-      // ESM path: use dynamic import (async). Build URL relative to this file.
-      // import.meta.url exists only in ESM; if not available, dynamic import will likely fail and be caught.
-      if (typeof import !== 'undefined' && typeof import.meta !== 'undefined') {
-        const url = new URL(p, import.meta.url).href;
-        const imported = await import(url);
-        let mod = (imported && imported.default) ? imported.default : imported;
-        ProductModel = mod;
-        console.log(`[productController] loaded model (ESM): ${p}`);
-        return ProductModel;
-      }
-    } catch (err) {
-      // continue to next candidate silently — model might not exist in this path
-    }
+async function getAllProducts(req, res) {
+  try {
+    const products = await Product.find().lean();
+    return res.json(products);
+  } catch (err) {
+    console.error('[productController] getAllProducts error:', err);
+    return res.status(500).json({ error: 'Failed to fetch products' });
   }
-
-  ProductModel = null;
-  console.warn('[productController] no Product model found; using stub data');
-  return null;
 }
 
-// Helper: parse pagination + fields
-function parseQuery(req) {
-  const page = Math.max(1, parseInt(req.query?.page || '1', 10));
-  const limit = Math.max(1, Math.min(100, parseInt(req.query?.limit || '12', 10)));
-  const fields = (req.query?.fields || '').split(',').map(f => f.trim()).filter(Boolean).join(' ');
-  return { page, limit, fields };
+async function getProductById(req, res) {
+  try {
+    const { id } = req.params;
+    const product = await Product.findById(id).lean();
+    if (!product) return res.status(404).json({ error: 'Product not found' });
+    return res.json(product);
+  } catch (err) {
+    console.error('[productController] getProductById error:', err);
+    return res.status(500).json({ error: 'Failed to fetch product' });
+  }
 }
 
-// Controller functions (async)
+async function createProduct(req, res) {
+  try {
+    const payload = req.body;
+    const p = new Product(payload);
+    await p.save();
+    return res.status(201).json(p);
+  } catch (err) {
+    console.error('[productController] createProduct error:', err);
+    return res.status(500).json({ error: 'Failed to create product' });
+  }
+}
+
+async function updateProduct(req, res) {
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+    const updated = await Product.findByIdAndUpdate(id, updates, { new: true, runValidators: true }).lean();
+    if (!updated) return res.status(404).json({ error: 'Product not found' });
+    return res.json(updated);
+  } catch (err) {
+    console.error('[productController] updateProduct error:', err);
+    return res.status(500).json({ error: 'Failed to update product' });
+  }
+}
+
+async function deleteProduct(req, res) {
+  try {
+    const { id } = req.params;
+    const deleted = await Product.findByIdAndDelete(id).lean();
+    if (!deleted) return res.status(404).json({ error: 'Product not found' });
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('[productController] deleteProduct error:', err);
+    return res.status(500).json({ error: 'Failed to delete product' });
+  }
+}
+
 module.exports = {
-  async listProducts(req, res) {
-    try {
-      const Model = await tryLoadModel();
-      const { page, limit, fields } = parseQuery(req);
-
-      if (!Model) {
-        const sample = [
-          { _id: 'stub-1', title: 'sample product', price: 100, mrp: 150, slug: 'sample-product', thumbnail: null, images: [], description: 'stub' }
-        ];
-        return { ok: true, page, limit, total: 1, totalPages: 1, products: sample };
-      }
-
-      const skip = (page - 1) * limit;
-      const query = {};
-      const docs = await Model.find(query)
-        .select(fields || '') // empty string selects all
-        .skip(skip)
-        .limit(limit)
-        .lean()
-        .exec();
-
-      const total = await Model.countDocuments(query);
-      return {
-        ok: true,
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-        products: docs
-      };
-    } catch (err) {
-      console.error('[productController] listProducts error:', err && (err.stack || err));
-      throw err;
-    }
-  },
-
-  async createProduct(req, res) {
-    try {
-      const Model = await tryLoadModel();
-      if (!Model) return { ok: false, error: 'createProduct not available (no model)' };
-      const payload = req.body || {};
-      const doc = await Model.create(payload);
-      return { ok: true, product: doc };
-    } catch (err) {
-      console.error('[productController] createProduct error:', err && (err.stack || err));
-      throw err;
-    }
-  },
-
-  async getProduct(req, res) {
-    try {
-      const Model = await tryLoadModel();
-      if (!Model) return { ok: false, error: 'getProduct not available (no model)' };
-      const id = req.params.id;
-      const doc = await Model.findById(id).lean().exec();
-      if (!doc) return { ok: false, error: 'not found' };
-      return { ok: true, product: doc };
-    } catch (err) {
-      console.error('[productController] getProduct error:', err && (err.stack || err));
-      throw err;
-    }
-  },
-
-  async updateProduct(req, res) {
-    try {
-      const Model = await tryLoadModel();
-      if (!Model) return { ok: false, error: 'updateProduct not available (no model)' };
-      const id = req.params.id;
-      const payload = req.body || {};
-      const doc = await Model.findByIdAndUpdate(id, payload, { new: true }).lean().exec();
-      if (!doc) return { ok: false, error: 'not found' };
-      return { ok: true, product: doc };
-    } catch (err) {
-      console.error('[productController] updateProduct error:', err && (err.stack || err));
-      throw err;
-    }
-  },
-
-  async deleteProduct(req, res) {
-    try {
-      const Model = await tryLoadModel();
-      if (!Model) return { ok: false, error: 'deleteProduct not available (no model)' };
-      const id = req.params.id;
-      await Model.findByIdAndDelete(id).exec();
-      return { ok: true };
-    } catch (err) {
-      console.error('[productController] deleteProduct error:', err && (err.stack || err));
-      throw err;
-    }
-  }
+  getAllProducts,
+  getProductById,
+  createProduct,
+  updateProduct,
+  deleteProduct,
 };
