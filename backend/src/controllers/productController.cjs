@@ -1,16 +1,14 @@
-﻿// backend/src/controllers/productController.js
-// Simple CommonJS controller shim for adminProduct routes.
-// Tries to load a Mongoose Product model if present and falls back to an in-memory stub.
-// Exports: listProducts, createProduct, getProduct, updateProduct, deleteProduct
+﻿// backend/src/controllers/productController.cjs
+// Cross-compatible controller shim for adminProduct routes.
+// Works whether loaded under CommonJS (require) or via ESM import().
 
 'use strict';
 
-const { createRequire } = require('module');
-const requireLocal = createRequire(__filename);
-
 let ProductModel = null;
-function tryLoadModel() {
+
+async function tryLoadModel() {
   if (ProductModel) return ProductModel;
+
   const candidates = [
     '../../models/productModel.cjs',
     '../../models/productModel.js',
@@ -19,17 +17,36 @@ function tryLoadModel() {
     './models/productModel.cjs',
     './models/productModel.js'
   ];
+
   for (const p of candidates) {
     try {
-      ProductModel = requireLocal(p);
-      // If the module exports a default, use that
-      if (ProductModel && ProductModel.default) ProductModel = ProductModel.default;
-      console.log(`[productController] loaded model: ${p}`);
-      return ProductModel;
-    } catch (e) {
-      // ignore and continue
+      // CommonJS path: use createRequire if `require` exists
+      if (typeof require !== 'undefined') {
+        // use createRequire to reliably load files relative to this file
+        const { createRequire } = require('module');
+        const req = createRequire(__filename);
+        let mod = req(p);
+        if (mod && mod.default) mod = mod.default;
+        ProductModel = mod;
+        console.log(`[productController] loaded model (CJS): ${p}`);
+        return ProductModel;
+      }
+
+      // ESM path: use dynamic import (async). Build URL relative to this file.
+      // import.meta.url exists only in ESM; if not available, dynamic import will likely fail and be caught.
+      if (typeof import !== 'undefined' && typeof import.meta !== 'undefined') {
+        const url = new URL(p, import.meta.url).href;
+        const imported = await import(url);
+        let mod = (imported && imported.default) ? imported.default : imported;
+        ProductModel = mod;
+        console.log(`[productController] loaded model (ESM): ${p}`);
+        return ProductModel;
+      }
+    } catch (err) {
+      // continue to next candidate silently — model might not exist in this path
     }
   }
+
   ProductModel = null;
   console.warn('[productController] no Product model found; using stub data');
   return null;
@@ -37,21 +54,20 @@ function tryLoadModel() {
 
 // Helper: parse pagination + fields
 function parseQuery(req) {
-  const page = Math.max(1, parseInt(req.query.page || '1', 10));
-  const limit = Math.max(1, Math.min(100, parseInt(req.query.limit || '12', 10)));
-  const fields = (req.query.fields || '').split(',').map(f => f.trim()).filter(Boolean).join(' ');
+  const page = Math.max(1, parseInt(req.query?.page || '1', 10));
+  const limit = Math.max(1, Math.min(100, parseInt(req.query?.limit || '12', 10)));
+  const fields = (req.query?.fields || '').split(',').map(f => f.trim()).filter(Boolean).join(' ');
   return { page, limit, fields };
 }
 
-// Controller functions
+// Controller functions (async)
 module.exports = {
   async listProducts(req, res) {
     try {
-      const Model = tryLoadModel();
+      const Model = await tryLoadModel();
       const { page, limit, fields } = parseQuery(req);
 
       if (!Model) {
-        // fallback: return stubbed list so admin UI doesn't break
         const sample = [
           { _id: 'stub-1', title: 'sample product', price: 100, mrp: 150, slug: 'sample-product', thumbnail: null, images: [], description: 'stub' }
         ];
@@ -59,7 +75,7 @@ module.exports = {
       }
 
       const skip = (page - 1) * limit;
-      const query = {}; // add filters if desired
+      const query = {};
       const docs = await Model.find(query)
         .select(fields || '') // empty string selects all
         .skip(skip)
@@ -84,10 +100,8 @@ module.exports = {
 
   async createProduct(req, res) {
     try {
-      const Model = tryLoadModel();
-      if (!Model) {
-        return { ok: false, error: 'createProduct not available (no model)' };
-      }
+      const Model = await tryLoadModel();
+      if (!Model) return { ok: false, error: 'createProduct not available (no model)' };
       const payload = req.body || {};
       const doc = await Model.create(payload);
       return { ok: true, product: doc };
@@ -99,7 +113,7 @@ module.exports = {
 
   async getProduct(req, res) {
     try {
-      const Model = tryLoadModel();
+      const Model = await tryLoadModel();
       if (!Model) return { ok: false, error: 'getProduct not available (no model)' };
       const id = req.params.id;
       const doc = await Model.findById(id).lean().exec();
@@ -113,7 +127,7 @@ module.exports = {
 
   async updateProduct(req, res) {
     try {
-      const Model = tryLoadModel();
+      const Model = await tryLoadModel();
       if (!Model) return { ok: false, error: 'updateProduct not available (no model)' };
       const id = req.params.id;
       const payload = req.body || {};
@@ -128,7 +142,7 @@ module.exports = {
 
   async deleteProduct(req, res) {
     try {
-      const Model = tryLoadModel();
+      const Model = await tryLoadModel();
       if (!Model) return { ok: false, error: 'deleteProduct not available (no model)' };
       const id = req.params.id;
       await Model.findByIdAndDelete(id).exec();
