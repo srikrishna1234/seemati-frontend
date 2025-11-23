@@ -1,150 +1,133 @@
 // backend/src/routes/adminProduct.cjs
-// A robust CommonJS Express router for admin-product endpoints.
-// It tries to load a productController using require() first, falling back to dynamic import() for ESM controllers.
-// If no controller is found, routes return helpful 501 responses so server startup doesn't give "require is not defined".
+// Cross-environment router: safe under CommonJS and ESM.
+// Avoids top-level require() so it won't throw when loaded in an ESM context.
 
 'use strict';
 
-const express = require('express');
-const path = require('path');
-const { createRequire } = require('module');
-const { pathToFileURL } = require('url');
-const requireLocal = createRequire(__filename);
+async function buildRouter() {
+  // load express safely (CJS require preferred, fallback to dynamic import)
+  let express;
+  if (typeof require !== 'undefined') {
+    express = require('express');
+  } else {
+    const m = await import('express');
+    express = m.default || m;
+  }
 
-const router = express.Router();
+  const router = express.Router();
 
-// Helper: robust loader to support CommonJS and ESM controller files
-async function tryLoadController(relPath) {
-  try {
-    // resolve relative to this file
-    let resolved;
-    try {
-      resolved = requireLocal.resolve(relPath);
-    } catch (resolveErr) {
-      return null;
+  // robust controller loader: try require (via createRequire) then dynamic import
+  async function tryLoadController(relPaths = []) {
+    if (typeof require !== 'undefined') {
+      try {
+        const { createRequire } = require('module');
+        const req = createRequire(__filename);
+        for (const p of relPaths) {
+          try {
+            const resolved = req.resolve(p);
+            let mod = req(resolved);
+            if (mod && mod.default) mod = mod.default;
+            console.log('[adminProduct] loaded controller (CJS):', p);
+            return mod;
+          } catch (e) {
+            // ignore, continue
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
     }
 
-    // try CommonJS require
-    try {
-      return requireLocal(resolved);
-    } catch (reqErr) {
-      // fallthrough to import
+    // fallback: dynamic import (ESM)
+    if (typeof import !== 'undefined' && typeof URL !== 'undefined') {
+      for (const p of relPaths) {
+        try {
+          const url = new URL(p, import.meta.url).href;
+          const imported = await import(url);
+          const mod = imported && imported.default ? imported.default : imported;
+          console.log('[adminProduct] loaded controller (ESM):', p);
+          return mod;
+        } catch (e) {
+          // ignore, continue
+        }
+      }
     }
 
-    // dynamic import for ESM
-    try {
-      const fileUrl = pathToFileURL(resolved).href;
-      const imported = await import(fileUrl);
-      return imported && imported.default ? imported.default : imported;
-    } catch (impErr) {
-      return null;
-    }
-  } catch (err) {
     return null;
   }
-}
 
-// Attempt to load a controller from a few common paths
-async function loadProductController() {
-  const candidates = [
+  const controller = await tryLoadController([
     './controllers/productController.cjs',
     './controllers/productController.js',
     '../controllers/productController.cjs',
     '../controllers/productController.js',
     '../../controllers/productController.cjs',
     '../../controllers/productController.js'
-  ];
+  ]);
 
-  for (const c of candidates) {
-    const mod = await tryLoadController(c);
-    if (mod) {
-      console.log(`[adminProduct] loaded controller: ${c}`);
-      return mod;
-    }
+  if (!controller) {
+    console.warn('[adminProduct] productController not found; routes will respond 501');
   }
-  console.warn('[adminProduct] productController not found in expected paths');
-  return null;
+
+  // helper to invoke controller methods safely
+  const invoke = (fnName) => async (req, res) => {
+    if (!controller || typeof controller[fnName] !== 'function') {
+      return res.status(501).json({ ok: false, error: `productController.${fnName} not implemented` });
+    }
+    try {
+      const out = await controller[fnName](req, res);
+      if (!res.headersSent && out !== undefined) res.json(out);
+    } catch (err) {
+      console.error(`[adminProduct] controller ${fnName} error:`, err && (err.stack || err));
+      if (!res.headersSent) res.status(500).json({ ok: false, error: 'server error' });
+    }
+  };
+
+  // Define admin routes
+  router.get('/products', invoke('listProducts'));
+  router.post('/products', invoke('createProduct'));
+  router.get('/products/:id', invoke('getProduct'));
+  router.put('/products/:id', invoke('updateProduct'));
+  router.delete('/products/:id', invoke('deleteProduct'));
+
+  return router;
 }
 
-// Mount routes async so we can await controller load
-(async () => {
-  const controller = await loadProductController();
+// Export for both CommonJS and ESM consumers without throwing at module-eval time.
+if (typeof module !== 'undefined' && module.exports) {
+  // For CommonJS consumers: build router and export a placeholder router immediately.
+  // This prevents requiring code from breaking on startup if buildRouter is async.
+  const express = (typeof require !== 'undefined') ? require('express') : null;
+  const placeholder = express ? express.Router() : {
+    stack: [],
+    use() {},
+  };
 
-  // GET /admin-api/products => list (or 501 if controller missing)
-  router.get('/products', async (req, res) => {
+  // quick 503 placeholder handler for unknown endpoints until real router ready
+  if (express) {
+    placeholder.use((req, res) => res.status(503).send('admin routes initializing'));
+  }
+
+  module.exports = placeholder;
+
+  // asynchronously build and attempt to hot-swap (best-effort)
+  buildRouter().then((realRouter) => {
     try {
-      if (!controller || typeof controller.listProducts !== 'function') {
-        return res.status(501).json({ ok: false, error: 'productController.listProducts not implemented' });
+      // Replace placeholder's stack if express Router was used
+      if (realRouter && placeholder && placeholder.stack && realRouter.stack) {
+        placeholder.stack = realRouter.stack;
+        // copy convenient properties
+        ['params','regExp','mergeParams'].forEach(k => { if (realRouter[k] !== undefined) placeholder[k] = realRouter[k]; });
+        console.log('[adminProduct] router hot-swapped successfully');
       }
-      const out = await controller.listProducts(req, res);
-      // controller may already handle response; if it returns data, send it
-      if (out !== undefined && !res.headersSent) res.json(out);
-    } catch (err) {
-      console.error('[adminProduct] GET /products error:', err && (err.stack || err));
-      if (!res.headersSent) res.status(500).json({ ok: false, error: 'server error' });
+    } catch (e) {
+      console.error('[adminProduct] failed to hot-swap router:', e && (e.stack || e));
     }
+  }).catch(e => {
+    console.error('[adminProduct] failed to build router:', e && (e.stack || e));
   });
 
-  // POST /admin-api/products => create product
-  router.post('/products', async (req, res) => {
-    try {
-      if (!controller || typeof controller.createProduct !== 'function') {
-        return res.status(501).json({ ok: false, error: 'productController.createProduct not implemented' });
-      }
-      const out = await controller.createProduct(req, res);
-      if (out !== undefined && !res.headersSent) res.json(out);
-    } catch (err) {
-      console.error('[adminProduct] POST /products error:', err && (err.stack || err));
-      if (!res.headersSent) res.status(500).json({ ok: false, error: 'server error' });
-    }
-  });
-
-  // GET /admin-api/products/:id => get product
-  router.get('/products/:id', async (req, res) => {
-    try {
-      if (!controller || typeof controller.getProduct !== 'function') {
-        return res.status(501).json({ ok: false, error: 'productController.getProduct not implemented' });
-      }
-      const out = await controller.getProduct(req, res);
-      if (out !== undefined && !res.headersSent) res.json(out);
-    } catch (err) {
-      console.error('[adminProduct] GET /products/:id error:', err && (err.stack || err));
-      if (!res.headersSent) res.status(500).json({ ok: false, error: 'server error' });
-    }
-  });
-
-  // PUT /admin-api/products/:id => update product
-  router.put('/products/:id', async (req, res) => {
-    try {
-      if (!controller || typeof controller.updateProduct !== 'function') {
-        return res.status(501).json({ ok: false, error: 'productController.updateProduct not implemented' });
-      }
-      const out = await controller.updateProduct(req, res);
-      if (out !== undefined && !res.headersSent) res.json(out);
-    } catch (err) {
-      console.error('[adminProduct] PUT /products/:id error:', err && (err.stack || err));
-      if (!res.headersSent) res.status(500).json({ ok: false, error: 'server error' });
-    }
-  });
-
-  // DELETE /admin-api/products/:id => delete product
-  router.delete('/products/:id', async (req, res) => {
-    try {
-      if (!controller || typeof controller.deleteProduct !== 'function') {
-        return res.status(501).json({ ok: false, error: 'productController.deleteProduct not implemented' });
-      }
-      const out = await controller.deleteProduct(req, res);
-      if (out !== undefined && !res.headersSent) res.json(out);
-    } catch (err) {
-      console.error('[adminProduct] DELETE /products/:id error:', err && (err.stack || err));
-      if (!res.headersSent) res.status(500).json({ ok: false, error: 'server error' });
-    }
-  });
-
-  // Add other admin endpoints here following the same pattern...
-
-})().catch(e => {
-  console.error('[adminProduct] bootstrap error:', e && (e.stack || e));
-});
-
-module.exports = router;
+} else {
+  // ESM environment — export the actual router (top-level await supported)
+  export default await buildRouter();
+}
