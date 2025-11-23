@@ -21,6 +21,7 @@ dotenv.config(); // load backend/.env if present
 // --- basic config ---
 const PORT = process.env.PORT || 4000;
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || null;
+const ALLOW_VERCEL_PREVIEWS = String(process.env.ALLOW_VERCEL_PREVIEWS || '').toLowerCase() === 'true';
 
 // --- helper: S3 env status (preserve original behavior) ---
 function s3EnvStatus() {
@@ -152,6 +153,7 @@ async function connectMongoIfConfigured() {
   console.log('ALLOWED_ORIGINS raw (ALLOWED_ORIGINS):', JSON.stringify(allowed.raw.ALLOWED_ORIGINS));
   console.log('FRONTEND_ORIGIN (FRONTEND_ORIGIN/CLIENT_ORIGIN):', JSON.stringify(allowed.raw.FRONTEND_ORIGIN));
   console.log('CORS allowed normalized list:', allowed.normalized);
+  console.log('ALLOW_VERCEL_PREVIEWS=', ALLOW_VERCEL_PREVIEWS);
 
   // Try connect to Mongo (best-effort)
   await connectMongoIfConfigured().catch(e => console.warn('Mongo connect error (ignored):', e));
@@ -164,14 +166,28 @@ async function connectMongoIfConfigured() {
       const incomingRaw = incomingOrigin || '(no-origin)';
       const incomingNorm = canonicalizeOrigin(incomingRaw);
       console.log(`[CORS DEBUG] incoming raw: ${incomingRaw} normalized: ${incomingNorm}`);
+
+      // Allow requests with no origin (curl, server-to-server)
       if (!incomingOrigin) {
-        // server-to-server or curl
         console.log('[CORS DEBUG] no Origin header — allowing');
         return callback(null, true);
       }
+
+      // exact match against allowlist
       if (allowed.set.has(incomingNorm)) {
         console.log(`[CORS DEBUG] origin allowed: ${incomingNorm}`);
         return callback(null, true);
+      }
+
+      // Flexible rule: allow vercel preview hostnames when enabled by env flag
+      if (ALLOW_VERCEL_PREVIEWS) {
+        try {
+          const hostname = new URL(incomingNorm).hostname || '';
+          if (hostname.endsWith('.vercel.app')) {
+            console.log(`[CORS DEBUG] allowing vercel preview origin (ALLOW_VERCEL_PREVIEWS=true): ${incomingNorm}`);
+            return callback(null, true);
+          }
+        } catch (e) { /* ignore parse error */ }
       }
 
       // Not allowed: debug byte-dump to detect invisible chars
@@ -280,7 +296,8 @@ async function connectMongoIfConfigured() {
       FRONTEND_ORIGIN: process.env.FRONTEND_ORIGIN || process.env.CLIENT_ORIGIN || null,
       CORS_ALLOWED_ORIGINS_raw: process.env.CORS_ALLOWED_ORIGINS || null,
       ALLOWED_ORIGINS_raw: process.env.ALLOWED_ORIGINS || null,
-      allowed_normalized: allowed.normalized
+      allowed_normalized: allowed.normalized,
+      ALLOW_VERCEL_PREVIEWS
     });
   });
 
