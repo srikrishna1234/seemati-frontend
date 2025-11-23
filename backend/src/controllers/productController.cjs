@@ -4,26 +4,32 @@
 /*
   CommonJS product controller compatible with app.cjs bootstrap.
   - Uses require/module.exports (no 'import' / 'export').
-  - Robust to missing model by returning helpful errors.
+  - Loads the real model at backend/src/models/Product.cjs
+  - Adds aliases so both admin routes and API can use it.
 */
 
 const path = require('path');
 
 let Product;
 try {
-  // Adjust path if your Product model is located elsewhere.
-  // From backend/src/controllers -> ../../models/Product
-  Product = require(path.join(__dirname, '..', '..', 'models', 'Product'));
+  // From backend/src/controllers -> backend/src/models/Product.cjs
+  Product = require(path.join(__dirname, '..', 'models', 'Product.cjs'));
+  console.log('[productController] Loaded model from backend/src/models/Product.cjs');
 } catch (err) {
-  console.error('[productController] failed to require Product model:', err && err.message);
-  // Export a stub that reports error when called so route logs show cause clearly.
-  const e = new Error('Product model not found. Check path backend/models/Product.js');
+  console.error('[productController] FAILED to load Product model:', err && err.message);
+  const e = new Error('Product model not found in backend/src/models/Product.cjs');
+
+  // Export a stub that reports error when called so routes show clear message
   module.exports = {
     getAllProducts: async (req, res) => res.status(500).json({ error: e.message }),
     getProductById: async (req, res) => res.status(500).json({ error: e.message }),
     createProduct: async (req, res) => res.status(500).json({ error: e.message }),
     updateProduct: async (req, res) => res.status(500).json({ error: e.message }),
     deleteProduct: async (req, res) => res.status(500).json({ error: e.message }),
+
+    // aliases used by some routers
+    listProducts: async (req, res) => res.status(500).json({ error: e.message }),
+    getProduct: async (req, res) => res.status(500).json({ error: e.message }),
   };
   return;
 }
@@ -66,7 +72,11 @@ async function updateProduct(req, res) {
   try {
     const { id } = req.params;
     const updates = req.body;
-    const updated = await Product.findByIdAndUpdate(id, updates, { new: true, runValidators: true }).lean();
+    const updated = await Product.findByIdAndUpdate(
+      id,
+      updates,
+      { new: true, runValidators: true }
+    ).lean();
     if (!updated) return res.status(404).json({ error: 'Product not found' });
     return res.json(updated);
   } catch (err) {
@@ -87,10 +97,16 @@ async function deleteProduct(req, res) {
   }
 }
 
+// Export with both canonical names and aliases (for adminProduct router compatibility)
 module.exports = {
+  // canonical names
   getAllProducts,
   getProductById,
   createProduct,
   updateProduct,
   deleteProduct,
+
+  // aliases some routes expect
+  listProducts: getAllProducts,
+  getProduct: getProductById,
 };
