@@ -11,6 +11,9 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const dotenv = require('dotenv');
+const { createRequire } = require('module');
+const { pathToFileURL } = require('url');
+const requireLocal = createRequire(__filename);
 
 dotenv.config();
 
@@ -43,6 +46,36 @@ async function connectMongo() {
     console.log('✅ MongoDB connected (server.js)');
   } catch (e) {
     console.error('[server] Mongo connect failed:', e && (e.stack || e));
+  }
+}
+
+// Robust tryRequire that handles CommonJS require() and ESM import()
+async function tryRequire(relPath) {
+  try {
+    let resolved;
+    try {
+      resolved = requireLocal.resolve(relPath);
+    } catch (resolveErr) {
+      return null;
+    }
+
+    // try require first (CommonJS)
+    try {
+      return requireLocal(resolved);
+    } catch (reqErr) {
+      // fall through to dynamic import
+    }
+
+    // try dynamic import for ESM
+    try {
+      const fileUrl = pathToFileURL(resolved).href;
+      const imported = await import(fileUrl);
+      return imported && imported.default ? imported.default : imported;
+    } catch (impErr) {
+      return null;
+    }
+  } catch (err) {
+    return null;
   }
 }
 
@@ -113,12 +146,8 @@ async function main() {
   });
 
   // optional: try mount ./src/routes/* if present (best effort)
-  const tryRequire = (p) => {
-    try { return require(p); } catch (e) { return null; }
-  };
-
   try {
-    const productRoutes = tryRequire('./routes/productRoutes.cjs') || tryRequire('./routes/productRoutes.js') || tryRequire('./routes/productRoutes');
+    const productRoutes = await tryRequire('./routes/productRoutes.cjs') || await tryRequire('./routes/productRoutes.js') || await tryRequire('./routes/productRoutes');
     if (productRoutes) {
       app.use('/products', productRoutes);
       console.log('[server] mounted productRoutes at /products');
@@ -126,7 +155,7 @@ async function main() {
   } catch (e) { /* ignore */ }
 
   try {
-    const adminRoutes = tryRequire('./routes/adminProduct.cjs') || tryRequire('./routes/adminProduct.js');
+    const adminRoutes = await tryRequire('./routes/adminProduct.cjs') || await tryRequire('./routes/adminProduct.js');
     if (adminRoutes) {
       app.use('/admin-api', adminRoutes);
       console.log('[server] mounted adminProduct at /admin-api');

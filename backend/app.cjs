@@ -11,6 +11,7 @@ const cookieParser = require('cookie-parser');
 const multer = require('multer');
 const { createRequire } = require('module');
 const requireLocal = createRequire(__filename);
+const { pathToFileURL } = require('url');
 const dotenv = require('dotenv');
 const mongoose = (() => {
   try { return require('mongoose'); } catch (e) { return null; }
@@ -113,11 +114,34 @@ function isAdminAuthorized(req) {
   return token === ADMIN_TOKEN;
 }
 
-// --- tryRequire helper (preserve original behavior) ---
-async function tryRequire(p) {
+// --- Robust tryRequire: handle CommonJS require() and ESM dynamic import() ---
+async function tryRequire(relPath) {
   try {
-    return requireLocal(p);
-  } catch (e) {
+    // Resolve via requireLocal so relative paths resolve from this file's folder
+    let resolved;
+    try {
+      resolved = requireLocal.resolve(relPath);
+    } catch (resolveErr) {
+      // if resolve fails, return null (module not present)
+      return null;
+    }
+
+    // First attempt: require (fast, covers CommonJS)
+    try {
+      return requireLocal(resolved);
+    } catch (reqErr) {
+      // require failed (maybe ESM) - fall through to dynamic import
+    }
+
+    // Try dynamic import() for ESM modules
+    try {
+      const fileUrl = pathToFileURL(resolved).href;
+      const imported = await import(fileUrl);
+      return imported && imported.default ? imported.default : imported;
+    } catch (importErr) {
+      return null;
+    }
+  } catch (err) {
     return null;
   }
 }
