@@ -1,5 +1,7 @@
 // backend/app.cjs
-// Full replacement (CommonJS) — mounts public product routes + health endpoints
+// Hotfix replacement: always allow vercel preview hosts (*.vercel.app).
+// Includes robust tryRequire loader (CommonJS require + ESM dynamic import) and
+// defensive route mounting with improved logging to diagnose adminProduct issues.
 'use strict';
 
 const express = require('express');
@@ -19,12 +21,11 @@ const mongoose = (() => {
 
 dotenv.config(); // load backend/.env if present
 
-// --- basic config ---
+// --- config ---
 const PORT = process.env.PORT || 4000;
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || null;
-const ALLOW_VERCEL_PREVIEWS = String(process.env.ALLOW_VERCEL_PREVIEWS || '').toLowerCase() === 'true';
 
-// --- helper: S3 env status (preserve original behavior) ---
+// --- helpers ---
 function s3EnvStatus() {
   const s3BucketRaw = process.env.S3_BUCKET ?? process.env.AWS_S3_BUCKET;
   const S3_BUCKET = typeof s3BucketRaw === 'string' && s3BucketRaw.trim() ? String(s3BucketRaw).trim() : null;
@@ -40,14 +41,12 @@ function s3EnvStatus() {
   };
 }
 
-// --- origin canonicalization & byte debug helpers ---
 function canonicalizeOrigin(raw) {
   if (!raw) return raw;
   try {
     const u = new URL(String(raw).trim());
     return u.origin;
   } catch (e) {
-    // fallback: trim, remove trailing slash, lowercase
     return String(raw).trim().replace(/\/+$/, '').toLowerCase();
   }
 }
@@ -68,7 +67,6 @@ function showByteDebug(label, s) {
   }
 }
 
-// --- build allowed origins (reads multiple env var names) ---
 function buildAllowedOrigins() {
   const set = new Set();
   const raw = {
@@ -97,7 +95,7 @@ function buildAllowedOrigins() {
     set.add(canonicalizeOrigin(raw.FRONTEND_ORIGIN));
   }
 
-  // always include dev origins
+  // dev origins
   set.add(canonicalizeOrigin('http://localhost:3000'));
   set.add(canonicalizeOrigin('http://127.0.0.1:3000'));
   set.add(canonicalizeOrigin('http://localhost:4000'));
@@ -105,7 +103,6 @@ function buildAllowedOrigins() {
   return { raw, normalized: Array.from(set), set };
 }
 
-// --- admin token helper (preserve original) ---
 function isAdminAuthorized(req) {
   const auth = req.headers.authorization || '';
   const token = auth.replace(/^Bearer\s+/i, '').trim();
@@ -114,31 +111,31 @@ function isAdminAuthorized(req) {
   return token === ADMIN_TOKEN;
 }
 
-// --- Robust tryRequire: handle CommonJS require() and ESM dynamic import() ---
+// Robust tryRequire: attempt CommonJS require, then dynamic import for ESM.
+// Returns module.exports (CommonJS) or default export / namespace (ESM).
 async function tryRequire(relPath) {
   try {
-    // Resolve via requireLocal so relative paths resolve from this file's folder
     let resolved;
     try {
       resolved = requireLocal.resolve(relPath);
     } catch (resolveErr) {
-      // if resolve fails, return null (module not present)
       return null;
     }
 
-    // First attempt: require (fast, covers CommonJS)
+    // CommonJS attempt
     try {
       return requireLocal(resolved);
     } catch (reqErr) {
-      // require failed (maybe ESM) - fall through to dynamic import
+      // continue to import
     }
 
-    // Try dynamic import() for ESM modules
+    // dynamic import for ESM
     try {
       const fileUrl = pathToFileURL(resolved).href;
       const imported = await import(fileUrl);
       return imported && imported.default ? imported.default : imported;
-    } catch (importErr) {
+    } catch (impErr) {
+      // return null on failure
       return null;
     }
   } catch (err) {
@@ -146,7 +143,6 @@ async function tryRequire(relPath) {
   }
 }
 
-// --- MongoDB connect helper (safe best-effort for CommonJS entry) ---
 async function connectMongoIfConfigured() {
   const uri = process.env.MONGODB_URI || process.env.MONGO_URI || null;
   if (!mongoose) {
@@ -165,7 +161,7 @@ async function connectMongoIfConfigured() {
   }
 }
 
-// --- main server bootstrap ---
+// --- main ---
 (async function main() {
   console.log('Starting backend (CommonJS app.cjs)');
   console.log('ENV STORAGE_PROVIDER=', process.env.STORAGE_PROVIDER || '(none)');
@@ -177,44 +173,40 @@ async function connectMongoIfConfigured() {
   console.log('ALLOWED_ORIGINS raw (ALLOWED_ORIGINS):', JSON.stringify(allowed.raw.ALLOWED_ORIGINS));
   console.log('FRONTEND_ORIGIN (FRONTEND_ORIGIN/CLIENT_ORIGIN):', JSON.stringify(allowed.raw.FRONTEND_ORIGIN));
   console.log('CORS allowed normalized list:', allowed.normalized);
-  console.log('ALLOW_VERCEL_PREVIEWS=', ALLOW_VERCEL_PREVIEWS);
 
-  // Try connect to Mongo (best-effort)
   await connectMongoIfConfigured().catch(e => console.warn('Mongo connect error (ignored):', e));
 
   const app = express();
 
-  // CORS options using normalized check with helpful debug logging
+  // CORS: strict allowlist + automatic vercel.app acceptance (hotfix)
   const corsOptions = {
     origin: function (incomingOrigin, callback) {
       const incomingRaw = incomingOrigin || '(no-origin)';
       const incomingNorm = canonicalizeOrigin(incomingRaw);
       console.log(`[CORS DEBUG] incoming raw: ${incomingRaw} normalized: ${incomingNorm}`);
 
-      // Allow requests with no origin (curl, server-to-server)
+      // allow no origin (server-to-server / curl)
       if (!incomingOrigin) {
         console.log('[CORS DEBUG] no Origin header — allowing');
         return callback(null, true);
       }
 
-      // exact match against allowlist
+      // exact allowlist
       if (allowed.set.has(incomingNorm)) {
         console.log(`[CORS DEBUG] origin allowed: ${incomingNorm}`);
         return callback(null, true);
       }
 
-      // Flexible rule: allow vercel preview hostnames when enabled by env flag
-      if (ALLOW_VERCEL_PREVIEWS) {
-        try {
-          const hostname = new URL(incomingNorm).hostname || '';
-          if (hostname.endsWith('.vercel.app')) {
-            console.log(`[CORS DEBUG] allowing vercel preview origin (ALLOW_VERCEL_PREVIEWS=true): ${incomingNorm}`);
-            return callback(null, true);
-          }
-        } catch (e) { /* ignore parse error */ }
-      }
+      // HOTFIX: automatically allow vercel preview hostnames
+      try {
+        const hostname = new URL(incomingNorm).hostname || '';
+        if (hostname.endsWith('.vercel.app')) {
+          console.log(`[CORS DEBUG] allowing vercel preview origin (auto): ${incomingNorm}`);
+          return callback(null, true);
+        }
+      } catch (e) { /* ignore parse error */ }
 
-      // Not allowed: debug byte-dump to detect invisible chars
+      // rejected - show byte dumps to debug invisible chars
       console.warn(`[CORS DEBUG] origin rejected: raw="${incomingRaw}" norm="${incomingNorm}"`);
       showByteDebug('incoming', incomingRaw);
       allowed.normalized.forEach((a, idx) => showByteDebug(`allowed_norm[${idx}]`, a));
@@ -240,14 +232,14 @@ async function connectMongoIfConfigured() {
 
   app.use(cookieParser());
 
-  // ensure uploads folder exists (backend/uploads)
+  // uploads dir at backend/uploads
   const uploadDir = path.join(__dirname, 'uploads');
   if (!fs.existsSync(uploadDir)) {
     try { fs.mkdirSync(uploadDir, { recursive: true }); } catch (e) { console.warn('Could not create uploads dir:', e); }
   }
   app.use('/uploads', express.static(uploadDir));
 
-  // multer storage (preserve original behavior)
+  // multer
   const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, uploadDir),
     filename: (req, file, cb) => {
@@ -258,7 +250,7 @@ async function connectMongoIfConfigured() {
   });
   const upload = multer({ storage });
 
-  // try to mount several route modules (best-effort)
+  // try mount common route files (best-effort)
   const routesToTry = [
     { path: './src/routes/presign-get.cjs', mount: '/api/presign-get' },
     { path: './src/routes/presign.cjs', mount: '/api/presign' },
@@ -275,11 +267,11 @@ async function connectMongoIfConfigured() {
         console.log(`Mounted ${r.path} at ${r.mount}`);
       }
     } catch (e) {
-      console.warn(`Failed to mount ${r.path}:`, e && e.message ? e.message : e);
+      console.warn(`Failed to mount ${r.path}:`, e && (e.stack || e));
     }
   }
 
-  // local admin upload endpoint if not using S3
+  // local admin upload endpoint if not using S3 (keeps existing behavior)
   const storageProvider = (process.env.STORAGE_PROVIDER || '').toLowerCase();
   if (storageProvider !== 's3') {
     app.post('/admin-api/products/upload', upload.any(), (req, res) => {
@@ -291,7 +283,7 @@ async function connectMongoIfConfigured() {
         const out = files.map(f => ({ filename: f.filename, url: `${host}/uploads/${f.filename}`, size: f.size }));
         return res.json(out);
       } catch (err) {
-        console.error('[admin-upload] error:', err);
+        console.error('[admin-upload] error:', err && (err.stack || err));
         return res.status(500).json({ ok: false, message: 'Upload failed' });
       }
     });
@@ -299,7 +291,7 @@ async function connectMongoIfConfigured() {
     console.log('STORAGE_PROVIDER=s3 configured — skipping local admin upload route.');
   }
 
-  // health & debug handlers
+  // health & debug
   app.get('/health', (req, res) => res.json({ ok: true, uptime: process.uptime() }));
   app.get('/_health', (req, res) => res.json({ ok: true, uptime: process.uptime() }));
   app.get('/api/ping', (req, res) => res.json({ ok: true, msg: 'api ping' }));
@@ -321,50 +313,62 @@ async function connectMongoIfConfigured() {
       CORS_ALLOWED_ORIGINS_raw: process.env.CORS_ALLOWED_ORIGINS || null,
       ALLOWED_ORIGINS_raw: process.env.ALLOWED_ORIGINS || null,
       allowed_normalized: allowed.normalized,
-      ALLOW_VERCEL_PREVIEWS
+      auto_allow_vercel_preview: true
     });
   });
 
-  // attempt explicit mount of adminProduct (if exists)
+  // Explicit attempt to mount adminProduct (improved logging)
   try {
-    const candidatePath = './src/routes/adminProduct.cjs';
-    const adminProductModule = await tryRequire(candidatePath);
-    if (adminProductModule) {
-      app.use('/admin-api', adminProductModule);
-      console.log(`Mounted ${candidatePath} at /admin-api`);
-    } else {
-      console.log(`adminProduct.cjs not found at ${candidatePath} (skipped explicit mount)`);
+    const candidatePaths = [
+      './src/routes/adminProduct.cjs',
+      './src/routes/adminProduct.js',
+      './src/routes/adminProduct.mjs',
+      './src/routes/adminProduct/index.cjs',
+      './src/routes/adminProduct/index.js'
+    ];
+    let mounted = false;
+    for (const p of candidatePaths) {
+      try {
+        const mod = await tryRequire(p);
+        if (mod) {
+          // If module is a function (express router factory) or router-like, mount directly
+          app.use('/admin-api', mod);
+          console.log(`Mounted ${p} at /admin-api`);
+          mounted = true;
+          break;
+        }
+      } catch (e) {
+        console.warn(`Attempt to mount ${p} failed:`, e && (e.stack || e));
+      }
     }
+    if (!mounted) console.log('adminProduct module not found (explicit mounts skipped).');
   } catch (e) {
-    console.warn('Failed to explicitly mount ./src/routes/adminProduct.cjs:', e && e.message ? e.message : e);
+    console.warn('Failed during explicit adminProduct mount attempts:', e && (e.stack || e));
   }
 
-  // --- public product routes (productRoutes.cjs / productRoutes.js) ---
+  // public product routes
   try {
     let prodModule = await tryRequire('./src/routes/productRoutes.cjs');
-    if (!prodModule) {
-      prodModule = await tryRequire('./src/routes/productRoutes.js');
-    }
+    if (!prodModule) prodModule = await tryRequire('./src/routes/productRoutes.js');
     if (prodModule) {
       app.use('/products', prodModule);
       console.log('Mounted ./src/routes/productRoutes.* at /products');
     } else {
-      console.log('productRoutes not found (skipped mounting /products). Looked for ./src/routes/productRoutes.cjs and ./src/routes/productRoutes.js');
+      console.log('productRoutes not found (skipped mounting /products).');
     }
   } catch (e) {
-    console.warn('Failed to mount productRoutes at /products:', e && e.message ? e.message : e);
+    console.warn('Failed to mount productRoutes at /products:', e && (e.stack || e));
   }
 
   // fallback /api 404
   app.use('/api', (req, res) => res.status(404).json({ error: 'API endpoint not found' }));
 
-  // global error handler (with DEBUG CORS echo)
+  // global error handler
   app.use((err, req, res, next) => {
     console.error('Global error:', err && (err.stack || err));
     if (res.headersSent) return next(err);
 
     if (err && err.message && String(err.message).toLowerCase().includes('origin')) {
-      // DEBUG: echo CORS headers so browser shows server error (remove later)
       try {
         const originHeader = req.get('origin') || null;
         if (originHeader) {
@@ -379,7 +383,7 @@ async function connectMongoIfConfigured() {
     res.status(err && err.status ? err.status : 500).json({ error: err && err.message ? err.message : 'Server error' });
   });
 
-  // Listen on the environment port (safe for Render/Heroku)
+  // listen
   app.listen(PORT, () => {
     const publicURL = process.env.SERVER_URL || `http://0.0.0.0:${PORT}`;
     console.log(`Backend (CommonJS app.cjs) listening on ${publicURL} (port ${PORT})`);
