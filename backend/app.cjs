@@ -99,6 +99,7 @@ try {
   console.info('Mounted router: /api/otp -> ./src/routes/otpRoutes.cjs');
 
   app.use('/api/products', productRoutes);
+  app.use('/products', productRoutes);
   console.info('Mounted router: /api/products -> ./src/routes/productRoutes.cjs');
 } catch (err) {
   console.error('Error mounting routers:', err && err.message ? err.message : err);
