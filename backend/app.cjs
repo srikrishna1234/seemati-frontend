@@ -23,11 +23,9 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // CORS setup
-// ENV: CORS_ORIGINS = comma separated exact origins (kept for explicit additions)
 const rawOrigins = process.env.CORS_ORIGINS || '';
 const envOrigins = rawOrigins.split(',').map(s => s.trim()).filter(Boolean);
 
-// default local dev origins
 const defaultOrigins = [
   'http://localhost:3000',
   'http://127.0.0.1:3000'
@@ -36,15 +34,25 @@ const defaultOrigins = [
 const allowedOrigins = Array.from(new Set([...envOrigins, ...defaultOrigins]));
 const allowCredentials = String(process.env.CORS_ALLOW_CREDENTIALS || 'false').toLowerCase() === 'true';
 
-// helper: allow patterns (vercel previews, netlify, etc.)
+// pattern regex (matches subdomains like xxx.vercel.app and xxx.netlify.app)
+const vercelRegex = /\.vercel\.app$/i;
+const netlifyRegex = /\.netlify\.app$/i;
+
+function normalizeOrigin(origin) {
+  if (!origin) return origin;
+  let o = origin.trim();
+  // remove trailing slash if present
+  if (o.endsWith('/')) o = o.slice(0, -1);
+  return o.toLowerCase();
+}
+
 function isAllowedByPattern(origin) {
   if (!origin) return false;
   try {
-    // Allow any subdomain under vercel.app
-    if (origin.endsWith('.vercel.app')) return true;
-    // Allow netlify subdomains (optional)
-    if (origin.endsWith('.netlify.app')) return true;
-    // Add other dynamic host patterns here if needed
+    const o = normalizeOrigin(origin);
+    if (vercelRegex.test(o)) return true;
+    if (netlifyRegex.test(o)) return true;
+    // add other dynamic host patterns here if needed
   } catch (e) {
     return false;
   }
@@ -59,8 +67,10 @@ const corsOptions = {
       return callback(null, true);
     }
 
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      console.info(`[CORS] Origin allowed: ${origin}`);
+    const normalized = normalizeOrigin(origin);
+
+    if (allowedOrigins.indexOf(normalized) !== -1) {
+      console.info(`[CORS] Origin allowed (explicit): ${origin}`);
       return callback(null, true);
     }
 
