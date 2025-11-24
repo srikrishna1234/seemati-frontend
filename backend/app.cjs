@@ -2,6 +2,7 @@
 // Hotfix replacement: always allow vercel preview hosts (*.vercel.app).
 // Includes robust tryRequire loader (CommonJS require + ESM dynamic import) and
 // defensive route mounting with improved logging to diagnose adminProduct issues.
+// Added: enhanced /uploads handler - serves local files, caches, and falls back to S3 redirect.
 'use strict';
 
 const express = require('express');
@@ -27,7 +28,7 @@ const ADMIN_TOKEN = process.env.ADMIN_TOKEN || null;
 
 // --- helpers ---
 function s3EnvStatus() {
-  const s3BucketRaw = process.env.S3_BUCKET ?? process.env.AWS_S3_BUCKET;
+  const s3BucketRaw = process.env.S3_BUCKET ?? process.env.AWS_S3_BUCKET ?? null;
   const S3_BUCKET = typeof s3BucketRaw === 'string' && s3BucketRaw.trim() ? String(s3BucketRaw).trim() : null;
   return {
     S3_BUCKET,
@@ -237,7 +238,6 @@ async function connectMongoIfConfigured() {
   if (!fs.existsSync(uploadDir)) {
     try { fs.mkdirSync(uploadDir, { recursive: true }); } catch (e) { console.warn('Could not create uploads dir:', e); }
   }
-  app.use('/uploads', express.static(uploadDir));
 
   // multer
   const storage = multer.diskStorage({
@@ -249,6 +249,67 @@ async function connectMongoIfConfigured() {
     }
   });
   const upload = multer({ storage });
+
+  // Enhanced /uploads handler:
+  // - If local file exists in backend/uploads -> sendFile with cache headers
+  // - Otherwise, if S3 bucket configured -> redirect to likely S3 candidate URL (products/ prefix and without)
+  // - Otherwise return 404
+  app.get('/uploads/*', (req, res, next) => {
+    try {
+      const rel = req.params[0] || '';
+      const decoded = decodeURIComponent(rel);
+      const localPath = path.join(uploadDir, decoded);
+
+      console.log(`[UPLOADS] request for /uploads/${rel} -> decoded="${decoded}", localPath="${localPath}"`);
+
+      if (fs.existsSync(localPath) && fs.statSync(localPath).isFile()) {
+        // cache for a short time (you may increase in prod if immutable)
+        res.setHeader('Cache-Control', 'public, max-age=86400'); // 1 day
+        return res.sendFile(localPath);
+      }
+
+      // try alternate encoded filename (sometimes '/' encoded as %2F etc)
+      const altLocal = path.join(uploadDir, rel);
+      if (fs.existsSync(altLocal) && fs.statSync(altLocal).isFile()) {
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        return res.sendFile(altLocal);
+      }
+
+      // Not found locally -> attempt S3 fallback redirect if configured
+      const s3Bucket = s3st.S3_BUCKET || process.env.S3_BUCKET || process.env.AWS_S3_BUCKET || null;
+      const awsRegion = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || null;
+
+      if (s3Bucket) {
+        // Build candidate S3 URLs. We'll redirect to the most likely patterns.
+        const candidates = [];
+
+        // raw path (as requested)
+        candidates.push(`https://${s3Bucket}.s3.amazonaws.com/${encodeURIComponent(rel)}`);
+
+        // with region
+        if (awsRegion) {
+          candidates.push(`https://${s3Bucket}.s3.${awsRegion}.amazonaws.com/${encodeURIComponent(rel)}`);
+        }
+
+        // with products/ prefix (many uploads are stored under products/)
+        candidates.push(`https://${s3Bucket}.s3.amazonaws.com/products/${encodeURIComponent(rel)}`);
+        if (awsRegion) {
+          candidates.push(`https://${s3Bucket}.s3.${awsRegion}.amazonaws.com/products/${encodeURIComponent(rel)}`);
+        }
+
+        // log and redirect to first candidate (this will typically be a 302)
+        console.log('[UPLOADS] local file not found - redirecting to S3 candidate:', candidates[0]);
+        return res.redirect(302, candidates[0]);
+      }
+
+      // No file & no S3 -> 404 with helpful message
+      console.warn(`[UPLOADS] file not found locally and no S3 configured: /uploads/${rel}`);
+      return res.status(404).send(`Cannot GET /uploads/${rel}`);
+    } catch (err) {
+      console.error('[UPLOADS] handler error:', err && (err.stack || err));
+      return next(err);
+    }
+  });
 
   // try mount common route files (best-effort)
   const routesToTry = [
