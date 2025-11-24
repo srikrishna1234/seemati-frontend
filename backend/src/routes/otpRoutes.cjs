@@ -2,21 +2,15 @@
 'use strict';
 
 /**
- * OTP routes
- * - POST /api/otp/send   -> sends OTP (uses MSG91 if configured, else you can implement local store)
- * - POST /api/otp/verify -> verifies OTP, issues JWT and optionally sets HttpOnly cookie
+ * OTP routes (MSG91 v5 compatible)
  *
- * Environment variables used (all optional except JWT_SECRET for tokens):
- * - JWT_SECRET (recommended) - secret to sign tokens
- * - JWT_EXPIRES_IN (optional, default '7d')
- * - AUTH_COOKIE_NAME (optional, default 'seemati_auth')
- * - CORS_ALLOW_CREDENTIALS (if 'true', route will set HttpOnly cookie)
- * - MSG91_AUTH_KEY (optional) - if present, route will call MSG91 verify/send APIs
- * - MSG91_SENDER (optional) - sender id for send
+ * Uses env:
+ * - MSG91_AUTH_KEY
+ * - MSG91_TEMPLATE_ID
+ * - MSG91_COUNTRY_CODE (e.g. "91")
+ * - MSG91_SENDER (optional)
  *
- * Notes:
- * - If you have a Redis OTP store helper at backend/utils/redis.cjs, this code will attempt to require it.
- * - If you use a different Redis helper path, adapt the require path or the verifyOtpInStore implementation.
+ * Also supports Redis local store fallback (optional).
  */
 
 const express = require('express');
@@ -29,154 +23,110 @@ const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 const COOKIE_NAME = process.env.AUTH_COOKIE_NAME || 'seemati_auth';
 const COOKIE_MAX_AGE = 1000 * 60 * 60 * 24 * 7; // 7 days
 
-// Optional Redis helper (if you have one). Adjust path if different in your project.
+// Optional Redis helper (if present)
 let redisClient = null;
 try {
-  // attempt to require a redis helper file if present
-  // path guessed: backend/utils/redis.cjs or backend/src/utils/redis.cjs
-  try {
-    redisClient = require('../../utils/redis.cjs'); // prefer backend/utils
-  } catch (e1) {
-    try {
-      redisClient = require('../utils/redis.cjs'); // fallback
-    } catch (e2) {
-      redisClient = null;
-    }
-  }
-  // if the module exports an object (client) or helper with get/set, keep it
-} catch (err) {
-  redisClient = null;
-}
+  try { redisClient = require('../../utils/redis.cjs'); } catch (e1) { try { redisClient = require('../utils/redis.cjs'); } catch (e2) { redisClient = null; } }
+} catch (err) { redisClient = null; }
 
-// MSG91 config (verify/send)
+// MSG91 config
 const MSG91_AUTH_KEY = process.env.MSG91_AUTH_KEY || '';
+const MSG91_TEMPLATE_ID = process.env.MSG91_TEMPLATE_ID || '';
+const MSG91_COUNTRY_CODE = (process.env.MSG91_COUNTRY_CODE || '91').replace(/\D/g,''); // digits only
 const MSG91_SENDER = process.env.MSG91_SENDER || '';
-// Note: provider-specific endpoints / params may vary by MSG91 plan - adjust if needed
 const MSG91_SEND_URL = 'https://api.msg91.com/api/v5/otp';
 const MSG91_VERIFY_URL = 'https://api.msg91.com/api/v5/otp/verify';
 
-// Helper: sign JWT
+// Helpers
 function signToken(user) {
   const payload = { sub: user.id || user._id || user.phone, phone: user.phone, roles: user.roles || [] };
   return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
 }
 
-// Helper: try verifying OTP from Redis-based store (if available)
+function normalizePhoneToInternational(phone) {
+  if (!phone) return phone;
+  let p = String(phone).trim();
+  // If already starts with + or country digits, leave as is (but remove +)
+  if (p.startsWith('+')) p = p.slice(1);
+  // If p already starts with country code (MSG91_COUNTRY_CODE), assume it's good
+  if (MSG91_COUNTRY_CODE && p.startsWith(MSG91_COUNTRY_CODE)) return p;
+  // else prepend country code
+  return `${MSG91_COUNTRY_CODE}${p}`;
+}
+
+// Try local redis store verify (if configured)
 async function verifyOtpInStore(phone, otp) {
   try {
-    if (!redisClient) {
-      // no redis configured
-      return false;
-    }
-
-    // Two possible redis helpers: direct redis client or wrapper exposing get
-    // Try common variations:
+    if (!redisClient) return false;
+    const key = `otp:${phone}`;
     if (typeof redisClient.get === 'function') {
-      // wrapper: get(key)
-      const key = `otp:${phone}`;
       const stored = await redisClient.get(key);
-      if (!stored) return false;
-      // stored may be JSON; compare string
       return String(stored).trim() === String(otp).trim();
     } else if (typeof redisClient.getAsync === 'function') {
-      const key = `otp:${phone}`;
       const stored = await redisClient.getAsync(key);
       return String(stored).trim() === String(otp).trim();
     } else if (redisClient.client && typeof redisClient.client.get === 'function') {
-      // wrapper with client
-      const key = `otp:${phone}`;
-      const get = (k) => new Promise((resolve, reject) => {
-        redisClient.client.get(k, (err, val) => (err ? reject(err) : resolve(val)));
-      });
+      const get = (k) => new Promise((resolve, reject) => redisClient.client.get(k, (err, val) => (err ? reject(err) : resolve(val))));
       const stored = await get(key);
       return String(stored).trim() === String(otp).trim();
-    } else {
-      // Unknown redis helper shape
-      return false;
     }
   } catch (err) {
     console.error('[OTP] verifyOtpInStore error:', err && err.message ? err.message : err);
-    return false;
   }
+  return false;
 }
 
-// Helper: verify via MSG91 verify endpoint (if MSG91_AUTH_KEY provided)
-async function verifyViaMsg91(phone, otp) {
-  if (!MSG91_AUTH_KEY) return { ok: false, reason: 'no-msg91-key' };
-  try {
-    // MSG91 expects mobile in international format; adapt as needed.
-    // Using OTP template verification API v5. (Check MSG91 docs for exact params.)
-    const payload = {
-      otp,
-      mobile: phone
-    };
-
-    const headers = {
-      'Content-Type': 'application/json',
-      'authkey': MSG91_AUTH_KEY
-    };
-
-    // For some MSG91 plans you may need to send route/template info in different endpoints.
-    const url = `${MSG91_VERIFY_URL}/?mobile=${encodeURIComponent(phone)}&otp=${encodeURIComponent(otp)}`;
-
-    // Using GET style verify (some MSG91 endpoints use GET), but we'll try POST and fallback to GET.
-    try {
-      const resp = await axios.post(MSG91_VERIFY_URL, payload, { headers });
-      return { ok: true, providerResponse: resp.data };
-    } catch (err) {
-      // fallback: try GET with query params (older MSG91 style)
-      try {
-        const resp2 = await axios.get(url, { headers });
-        return { ok: true, providerResponse: resp2.data };
-      } catch (err2) {
-        console.error('[OTP] MSG91 verify failed (post+get):', err2 && err2.message ? err2.message : err2);
-        return { ok: false, reason: err2 && err2.message ? err2.message : 'msg91_verify_failed' };
-      }
-    }
-  } catch (err) {
-    console.error('[OTP] verifyViaMsg91 error:', err && err.message ? err.message : err);
-    return { ok: false, reason: err && err.message ? err.message : 'msg91_error' };
-  }
-}
-
-// Helper: send OTP via MSG91 (if configured)
+// MSG91: send using template_id + mobile (v5)
 async function sendViaMsg91(phone) {
   if (!MSG91_AUTH_KEY) return { ok: false, reason: 'no-msg91-key' };
   try {
-    // MSG91 OTP send endpoint (v5) - check your MSG91 account docs for exact payload/params
-    const headers = {
-      'Content-Type': 'application/json',
-      'authkey': MSG91_AUTH_KEY
+    const mobile = normalizePhoneToInternational(phone); // eg "919012345678"
+    const payload = {
+      mobile,
+      template_id: MSG91_TEMPLATE_ID || undefined,
+      // optionally you can pass variables or flow depending on your MSG91 setup
     };
 
-    // Many accounts use POST to /api/v5/otp with template or flow. Here we'll attempt a POST with mobile.
-    // You should adapt this to your MSG91 template/flow (template id or auth params).
-    const payload = { mobile: phone, sender: MSG91_SENDER || undefined };
+    const headers = {
+      'authkey': MSG91_AUTH_KEY,
+      'Content-Type': 'application/json'
+    };
 
-    try {
-      const resp = await axios.post(MSG91_SEND_URL, payload, { headers });
-      return { ok: true, providerResponse: resp.data };
-    } catch (err) {
-      console.warn('[OTP] sendViaMsg91 POST failed, trying GET fallback:', err && err.message ? err.message : err);
-      // fallback designs vary; we return failure here but log
-      return { ok: false, reason: err && err.message ? err.message : 'msg91_send_failed' };
-    }
+    // POST to MSG91 v5 OTP endpoint
+    const resp = await axios.post(MSG91_SEND_URL, payload, { headers, timeout: 10000 });
+    console.info('[OTP] MSG91 send response:', resp && resp.data ? resp.data : resp.status);
+    return { ok: true, providerResponse: resp.data };
   } catch (err) {
-    console.error('[OTP] sendViaMsg91 error:', err && err.message ? err.message : err);
-    return { ok: false, reason: err && err.message ? err.message : 'msg91_error' };
+    console.error('[OTP] sendViaMsg91 error:', err && (err.response && err.response.data ? err.response.data : err.message));
+    const reason = err && err.response && err.response.data ? err.response.data : (err && err.message ? err.message : 'msg91_send_failed');
+    return { ok: false, reason };
   }
 }
 
-// Helper: find or create user - replace this with your Mongoose logic
-async function saveOrFindUserByPhone(phone) {
-  // Adapt to your user model: find by phone and create if not found
-  // Example placeholder (replace with real DB calls)
+// MSG91 verify using v5 verify endpoint POST { mobile, otp }
+async function verifyViaMsg91(phone, otp) {
+  if (!MSG91_AUTH_KEY) return { ok: false, reason: 'no-msg91-key' };
   try {
-    // If you have a User model:
-    // const User = require('../../models/User.cjs');
-    // let user = await User.findOne({ phone });
-    // if (!user) user = await User.create({ phone });
-    // return user;
+    const mobile = normalizePhoneToInternational(phone);
+    const payload = { mobile, otp };
+    const headers = {
+      'authkey': MSG91_AUTH_KEY,
+      'Content-Type': 'application/json'
+    };
+    const resp = await axios.post(MSG91_VERIFY_URL, payload, { headers, timeout: 10000 });
+    console.info('[OTP] MSG91 verify response:', resp && resp.data ? resp.data : resp.status);
+    // MSG91 v5 success responses vary; treat HTTP 200 as ok and check response body if needed
+    return { ok: true, providerResponse: resp.data };
+  } catch (err) {
+    console.error('[OTP] verifyViaMsg91 error:', err && (err.response && err.response.data ? err.response.data : err.message));
+    const reason = err && err.response && err.response.data ? err.response.data : (err && err.message ? err.message : 'msg91_verify_failed');
+    return { ok: false, reason };
+  }
+}
+
+// Placeholder user find/create - replace with Mongoose logic
+async function saveOrFindUserByPhone(phone) {
+  try {
     return { id: `phone_${phone}`, phone, roles: ['customer'] };
   } catch (err) {
     console.error('[OTP] saveOrFindUserByPhone error:', err && err.message ? err.message : err);
@@ -184,7 +134,7 @@ async function saveOrFindUserByPhone(phone) {
   }
 }
 
-// ===== Routes =====
+// Routes
 
 // POST /api/otp/send
 router.post('/send', async (req, res) => {
@@ -192,21 +142,41 @@ router.post('/send', async (req, res) => {
     const { phone } = req.body;
     if (!phone) return res.status(400).json({ ok: false, error: 'phone required' });
 
-    // If you have an implementation to send OTP (Redis + local generator), call here.
-    // Prefer MSG91 if configured:
-    if (MSG91_AUTH_KEY) {
+    // prefer MSG91 if configured
+    if (MSG91_AUTH_KEY && MSG91_TEMPLATE_ID) {
       const result = await sendViaMsg91(phone);
       if (result.ok) {
         return res.json({ ok: true, message: 'OTP sent via MSG91', providerResponse: result.providerResponse });
       } else {
-        // still return OK to avoid leaking which numbers are valid; but include provider reason for debug.
-        console.warn('[OTP] MSG91 send warning:', result.reason);
+        console.warn('[OTP] MSG91 send failed:', result.reason);
+        // still return ok (neutral) but include provider reason for debug
         return res.json({ ok: true, message: 'OTP send attempted (MSG91 failure)', providerReason: result.reason });
       }
     }
 
-    // Fallback: no MSG91 configured - you may implement local OTP generation and storage here.
-    // For now we return a neutral response
+    // If MSG91 not configured properly: fallback to Redis local generator if available
+    if (redisClient) {
+      try {
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        const key = `otp:${phone}`;
+        // store with expiry 5 minutes
+        if (typeof redisClient.set === 'function') {
+          await redisClient.set(key, otp, 'EX', 300);
+        } else if (typeof redisClient.setAsync === 'function') {
+          await redisClient.setAsync(key, otp, 'EX', 300);
+        } else if (redisClient.client && typeof redisClient.client.set === 'function') {
+          redisClient.client.set(key, otp, 'EX', 300, (err) => { if (err) console.error('[OTP] redis set error', err); });
+        }
+        // log OTP for dev (not for production)
+        console.info(`[OTP][local] OTP for ${phone}: ${otp}`);
+        return res.json({ ok: true, message: 'OTP sent (local)', debug: process.env.NODE_ENV !== 'production' ? { otp } : undefined });
+      } catch (err) {
+        console.error('[OTP] local send error:', err && err.message ? err.message : err);
+        return res.status(500).json({ ok: false, error: 'local_send_failed' });
+      }
+    }
+
+    // No provider & no redis: neutral response
     return res.json({ ok: true, message: 'OTP send (no provider configured) - implement local sender' });
   } catch (err) {
     console.error('[OTP][send] error:', err && err.message ? err.message : err);
@@ -220,48 +190,41 @@ router.post('/verify', async (req, res) => {
     const { phone, otp } = req.body;
     if (!phone || !otp) return res.status(400).json({ ok: false, error: 'phone and otp required' });
 
-    // 1) Try Redis/local store verification first (fast, preferred if you store OTPs)
+    // try local store first
     let verified = false;
+    let providerResponse = null;
     if (redisClient) {
       try {
         verified = await verifyOtpInStore(phone, otp);
-        if (verified) {
-          console.info('[OTP] Verified via local store.');
-        }
-      } catch (err) {
-        console.error('[OTP] local verify exception:', err && err.message ? err.message : err);
-        verified = false;
-      }
+        if (verified) console.info('[OTP] Verified via local store');
+      } catch (err) { console.error('[OTP] local verify error:', err && err.message ? err.message : err); }
     }
 
-    // 2) If not verified locally, try provider verify (MSG91)
-    let providerResponse = null;
+    // try MSG91 verify if not verified locally
     if (!verified && MSG91_AUTH_KEY) {
       const v = await verifyViaMsg91(phone, otp);
       if (v && v.ok) {
         verified = true;
         providerResponse = v.providerResponse;
-        console.info('[OTP] Verified via MSG91 provider.');
+        console.info('[OTP] Verified via MSG91 provider');
       } else {
-        console.warn('[OTP] MSG91 verify returned not-ok:', v && v.reason ? v.reason : v);
+        console.warn('[OTP] MSG91 verify failed:', v && v.reason ? v.reason : v);
       }
     }
 
     if (!verified) {
-      // optionally return provider info when available to assist debugging (don't leak too much in prod)
       return res.status(401).json({ ok: false, error: 'invalid_or_expired_otp', providerResponse });
     }
 
-    // 3) find or create user
+    // find/create user
     const user = await saveOrFindUserByPhone(phone);
 
-    // 4) sign token
+    // sign token
     const token = signToken(user);
 
-    // 5) set cookie if desired
+    // set cookie if requested
     const sendAsCookie = String(process.env.CORS_ALLOW_CREDENTIALS || 'false').toLowerCase() === 'true';
     if (sendAsCookie) {
-      // Use secure:true in production, sameSite none for cross-site (needed if frontend origin differs)
       res.cookie(COOKIE_NAME, token, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
@@ -270,7 +233,6 @@ router.post('/verify', async (req, res) => {
       });
     }
 
-    // 6) return token and user meta
     return res.json({
       ok: true,
       message: 'verified',
