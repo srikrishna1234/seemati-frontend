@@ -1,237 +1,143 @@
 // src/admin/AdminProductList.js
 import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { getImageUrl, getImageUrls } from "../utils/imageUtils";
+import axios from "../api/axiosInstance";
+
+/**
+ * AdminProductList.js
+ * - Full replacement that handles mixed image formats your API returns:
+ *   - absolute S3 URLs (https://...)
+ *   - absolute localhost URLs (http://localhost:4000/uploads/...)
+ *   - relative paths (/uploads/..., uploads/...)
+ *   - image objects { url: '...', alt: '...' }
+ *
+ * Save this file as src/admin/AdminProductList.js (full replacement).
+ */
+
+function ensureNoDoubleSlash(a, b) {
+  return `${a.replace(/\/$/, "")}/${b.replace(/^\//, "")}`;
+}
+
+function inferBaseForRelativePaths() {
+  const envApi = process.env.REACT_APP_API_URL;
+  if (envApi) return envApi.replace(/\/$/, "");
+  if (typeof window !== "undefined") {
+    try {
+      const origin = new URL(window.location.origin);
+      if (origin.hostname === "localhost" || origin.hostname === "127.0.0.1") {
+        origin.port = "4000";
+      }
+      return origin.toString().replace(/\/$/, "");
+    } catch (e) {}
+  }
+  return "http://localhost:4000";
+}
+
+function normalizeImageEntry(entry) {
+  if (!entry) return null;
+  if (typeof entry === "string") return entry;
+  if (typeof entry === "object" && entry.url) return entry.url;
+  return null;
+}
+
+function buildImageUrlFromPath(pathOrUrl) {
+  if (!pathOrUrl) return "";
+  if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
+  const base = inferBaseForRelativePaths();
+  return ensureNoDoubleSlash(base, pathOrUrl);
+}
+
+function getPrimaryImageUrl(product) {
+  const imgs = product?.images || product?.image || [];
+  if (typeof imgs === "string") {
+    const normalized = normalizeImageEntry(imgs);
+    return buildImageUrlFromPath(normalized);
+  }
+  if (Array.isArray(imgs) && imgs.length > 0) {
+    for (const candidate of imgs) {
+      const urlOrPath = normalizeImageEntry(candidate);
+      if (!urlOrPath) continue;
+      if (/^https?:\/\//i.test(urlOrPath)) return urlOrPath;
+      return buildImageUrlFromPath(urlOrPath);
+    }
+  }
+  return "";
+}
 
 export default function AdminProductList() {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [pageSize, setPageSize] = useState(10);
-  const navigate = useNavigate();
-
-  // Use REACT_APP_API_URL if provided (must be set in .env for prod builds).
-  // If empty, the fetch uses relative URLs (works with `proxy` in package.json during dev).
-  const API_BASE = (process.env.REACT_APP_API_URL || "").replace(/\/+$/, "");
-
-  // ADMIN token used for admin-only endpoints in dev (fallback provided).
-  // **Do not store real secrets client-side in production.**
-  const ADMIN_TOKEN = process.env.REACT_APP_ADMIN_TOKEN || "seemati123";
-
-  // Candidate endpoints (will try sequentially)
-  function candidateUrls(page, limit) {
-    const qs = `?page=${page}&limit=${limit}`;
-    const paths = [
-      "/admin-api/products",
-      "/api/products",
-      "/products", // last resort — your backend may not expose this
-    ];
-    // full URLs if API_BASE set, otherwise relative paths
-    return paths.map((p) => (API_BASE ? `${API_BASE}${p}${qs}` : `${p}${qs}`));
-  }
-
-  async function tryFetch(urls) {
-    // tries each URL in order and returns the first OK response (json)
-    for (const u of urls) {
-      try {
-        const res = await fetch(u, { credentials: "include" });
-        if (res.ok) {
-          // parse json and return object { data, usedUrl }
-          const body = await res.json();
-          return { body, usedUrl: u, status: res.status };
-        } else {
-          // record non-OK to show later, but keep trying
-          console.warn(`[AdminProductList] ${u} returned ${res.status}`);
-        }
-      } catch (err) {
-        // network error — e.g., backend down, CORS, etc.
-        console.warn(`[AdminProductList] fetch ${u} error:`, err);
-      }
-    }
-    // none succeeded
-    throw new Error("No usable endpoint responded OK");
-  }
-
-  async function fetchProducts() {
-    setLoading(true);
-    setError(null);
-    try {
-      const urls = candidateUrls(1, pageSize);
-      const result = await tryFetch(urls);
-      // Normalize product list from different possible shapes
-      const data = result.body;
-      let list = [];
-      if (Array.isArray(data)) list = data;
-      else if (Array.isArray(data.products)) list = data.products;
-      else if (Array.isArray(data.products?.docs)) list = data.products.docs || [];
-      else list = data.products ?? [];
-
-      setProducts(list);
-      console.log(`[AdminProductList] loaded from ${result.usedUrl} (status ${result.status})`);
-    } catch (err) {
-      console.error("Failed to load products", err);
-      // Provide helpful error text including which URLs were attempted
-      const attempted = candidateUrls(1, pageSize).join("  \n");
-      setError(`Failed to load products. Tried endpoints:\n${attempted}\n\nConsole has details.`);
-      setProducts([]);
-    } finally {
-      setLoading(false);
-    }
-  }
 
   useEffect(() => {
-    fetchProducts();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pageSize]);
+    let mounted = true;
+    setLoading(true);
 
-  async function handleDelete(prod) {
-    const id = prod._id ?? prod.id ?? prod.slug;
-    if (!id) return alert("Missing product id");
-    if (!window.confirm(`Delete "${prod.title ?? prod.name ?? id}" ?`)) return;
-    try {
-      const base = API_BASE || "";
-      const res = await fetch(`${base}/admin-api/products/${encodeURIComponent(id)}`, {
-        method: "DELETE",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${ADMIN_TOKEN}`, // added auth header
-        },
-      });
-      if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        throw new Error(`Delete failed: ${res.status} ${txt}`);
-      }
-      await fetchProducts();
-    } catch (err) {
-      console.error("Delete error", err);
-      alert("Delete failed: " + (err.message || err));
-    }
-  }
+    axios
+      .get("/products")
+      .then((res) => {
+        if (!mounted) return;
+        const payload = res?.data;
+        const list = Array.isArray(payload)
+          ? payload
+          : Array.isArray(payload?.products)
+          ? payload.products
+          : payload?.data || [];
+        setProducts(list);
+      })
+      .catch((err) => {
+        console.error("Failed to fetch products:", err);
+        setError(err?.message || "Failed to fetch products");
+      })
+      .finally(() => mounted && setLoading(false));
 
-  function handleEdit(prod) {
-    const id = prod._id ?? prod.id ?? prod.slug;
-    if (!id) {
-      alert("Product id/slug missing — cannot edit.");
-      console.error("Edit attempted but product has no id/slug:", prod);
-      return;
-    }
-    const primary = `/admin/products/${encodeURIComponent(id)}/edit`;
-    const fallback = `/admin/products/edit/${encodeURIComponent(id)}`;
-    try {
-      navigate(primary);
-    } catch (err) {
-      try {
-        navigate(fallback);
-      } catch (err2) {
-        if (window.confirm("Unable to open edit route in-app. Open edit page in a new tab?")) {
-          window.open(primary, "_blank");
-        }
-      }
-    }
-  }
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
-  function handlePreview(prod) {
-    const slugOrId = prod.slug ?? prod._id ?? prod.id;
-    if (!slugOrId) return alert("Cannot preview: slug/id missing");
-    window.open(`/product/${slugOrId}`, "_blank");
-  }
-
-  function handleAdd() {
-    navigate("/admin/products/add");
-  }
-
-  function renderImageForProduct(p) {
-    const images = getImageUrls(p.images ?? p.gallery ?? []);
-    if (images.length) return images[0];
-    const raw = p.thumbnail ?? p.image ?? p.imageUrl ?? "";
-    if (raw) return getImageUrl(raw);
-    return getImageUrl("");
-  }
+  if (loading) return <div>Loading products…</div>;
+  if (error) return <div style={{ color: "red" }}>Error: {error}</div>;
 
   return (
-    <div style={{ padding: 20 }}>
-      <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
-        <h1 style={{ margin: 0 }}>Products</h1>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input
-            aria-label="per-page"
-            value={pageSize}
-            onChange={(e) => setPageSize(Math.max(1, Number(e.target.value || 10)))}
-            style={{ width: 90, padding: "6px 8px" }}
-          />
-          <button onClick={handleAdd} style={{ padding: "8px 12px", background: "#6b21a8", color: "#fff", border: "none", borderRadius: 6 }}>
-            Add
-          </button>
-        </div>
-      </header>
-
-      {loading ? (
-        <div>Loading products…</div>
-      ) : error ? (
-        <div style={{ color: "#b91c1c", whiteSpace: "pre-wrap" }}>Error loading products: {error}</div>
-      ) : products.length === 0 ? (
-        <div>No products found.</div>
-      ) : (
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
-            <thead>
-              <tr style={{ textAlign: "left", borderBottom: "1px solid #eee" }}>
-                <th style={{ padding: "12px 8px", width: 40 }}>#</th>
-                <th style={{ padding: "12px 8px", width: 120 }}>Image</th>
-                <th style={{ padding: "12px 8px" }}>Title</th>
-                <th style={{ padding: "12px 8px", width: 220 }}>Slug</th>
-                <th style={{ padding: "12px 8px", width: 100 }}>Price</th>
-                <th style={{ padding: "12px 8px", width: 180 }}>Actions</th>
+    <div style={{ padding: 12 }}>
+      <h2>Admin — Products</h2>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr>
+            <th style={{ borderBottom: "1px solid #ddd", padding: 8 }}>Image</th>
+            <th style={{ borderBottom: "1px solid #ddd", padding: 8 }}>Title</th>
+            <th style={{ borderBottom: "1px solid #ddd", padding: 8 }}>SKU</th>
+            <th style={{ borderBottom: "1px solid #ddd", padding: 8 }}>Price</th>
+            <th style={{ borderBottom: "1px solid #ddd", padding: 8 }}>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {products.map((p) => {
+            const imgUrl = getPrimaryImageUrl(p) || "/placeholder-80.png";
+            return (
+              <tr key={p._id || p.id || p.sku}>
+                <td style={{ padding: 8, verticalAlign: "middle" }}>
+                  <img
+                    src={imgUrl}
+                    alt={p.title || "product image"}
+                    style={{ width: 80, height: 80, objectFit: "cover", borderRadius: 6 }}
+                    onError={(e) => {
+                      e.currentTarget.onerror = null;
+                      e.currentTarget.src = "/placeholder-80.png";
+                    }}
+                  />
+                </td>
+                <td style={{ padding: 8 }}>{p.title || p.name}</td>
+                <td style={{ padding: 8 }}>{p.sku || "-"}</td>
+                <td style={{ padding: 8 }}>{p.price ? `₹ ${p.price}` : "-"}</td>
+                <td style={{ padding: 8 }}>
+                  <button onClick={() => (window.location.href = `/admin/edit/${p._id || p.id}`)}>Edit</button>
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {products.map((p, idx) => {
-                const id = p._id ?? p.id ?? p.slug ?? String(idx);
-                const img = renderImageForProduct(p);
-                return (
-                  <tr key={id} style={{ borderBottom: "1px solid #f3f3f3" }}>
-                    <td style={{ padding: "14px 8px" }}>{idx + 1}</td>
-                    <td style={{ padding: "12px 8px" }}>
-                      <div style={{ width: 80, height: 80, borderRadius: 8, overflow: "hidden", border: "1px solid #f3f3f3", display: "flex", alignItems: "center", justifyContent: "center", background: "#fff" }}>
-                        {img ? (
-                          <img
-                            alt={p.title}
-                            src={img}
-                            style={{ width: "100%", height: "100%", objectFit: "contain" }}
-                            onError={(e) => {
-                              e.target.onerror = null;
-                              e.target.src = getImageUrl("");
-                            }}
-                          />
-                        ) : (
-                          <div style={{ color: "#9ca3af", fontSize: 12 }}>No image</div>
-                        )}
-                      </div>
-                    </td>
-                    <td style={{ padding: "12px 8px" }}>{p.title ?? p.name ?? "-"}</td>
-                    <td style={{ padding: "12px 8px", color: "#6b7280" }}>{p.slug ?? "-"}</td>
-                    <td style={{ padding: "12px 8px" }}>₹{Number(p.price ?? p.mrp ?? 0).toFixed(0)}</td>
-                    <td style={{ padding: "12px 8px" }}>
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <button onClick={() => handleEdit(p)} style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #e6e6e6", background: "#fff", cursor: "pointer" }}>
-                          Edit
-                        </button>
-                        <button onClick={() => handleDelete(p)} style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #e6e6e6", background: "#fff", cursor: "pointer", color: "#dc2626" }}>
-                          Delete
-                        </button>
-                        <button onClick={() => handlePreview(p)} title="Preview product" style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #e6e6e6", background: "#fff" }}>
-                          Preview
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
