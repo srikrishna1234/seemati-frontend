@@ -1,101 +1,122 @@
-// backend/app.cjs
-'use strict';
+"use strict";
 
-const path = require('path');
-const express = require('express');
-const morgan = require('morgan');
-const helmet = require('helmet');
-const compression = require('compression');
-const cors = require('cors');
+const path = require("path");
+const express = require("express");
+const morgan = require("morgan");
+const helmet = require("helmet");
+const compression = require("compression");
+const cors = require("cors");
 
 const app = express();
 
 app.use(helmet());
 app.use(compression());
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-if (process.env.NODE_ENV !== 'production') {
-  app.use(morgan('dev'));
+if (process.env.NODE_ENV !== "production") {
+  app.use(morgan("dev"));
 }
 
-/**
- * CORS configuration
- * - Allowed origins: list the frontend origins you serve from
- * - credentials: true -> Access-Control-Allow-Credentials header will be set
- * - dynamic origin handling so preflight is accepted correctly
- */
-const allowedOrigins = [
-  'https://seemati.in',
-  'https://www.seemati.in',
-  'https://api.seemati.in', // if front-end needs to call same-origin from different host
-  // Add any preview/dev origin you use, for example Vercel preview URLs:
-  'https://seemati-frontend-luj7-n8sfvhd1d-b-ravi-shankars-projects.vercel.app'
-];
+// === Robust CORS configuration ===
+// Allowed explicit origins (add any other exact origins you want)
+const explicitAllowed = new Set([
+  "https://seemati.in",
+  "https://www.seemati.in",
+  "https://api.seemati.in",
+  // add exact preview urls you trust here, e.g. 'https://your-preview-url.vercel.app'
+]);
 
+// Helper to check if origin is allowed
+function isAllowedOrigin(origin) {
+  if (!origin) return true; // allow non-browser requests (curl, server-to-server)
+  // Exact match allowed
+  if (explicitAllowed.has(origin)) return true;
+  try {
+    const u = new URL(origin);
+    const host = u.hostname.toLowerCase();
+
+    // allow any subdomain of seemati.in (e.g., admin.seemati.in)
+    if (host === "seemati.in" || host.endsWith(".seemati.in")) return true;
+
+    // allow Vercel preview domains and similar preview hosts
+    // tweak this rule if you want to restrict previews more
+    if (host.endsWith(".vercel.app") || host.endsWith(".netlify.app")) return true;
+
+    // allow localhost for development (adjust port as needed)
+    if (host === "localhost") return true;
+  } catch (e) {
+    // If URL parsing fails, reject by default
+    return false;
+  }
+  return false;
+}
+
+// Use dynamic origin function so Access-Control-Allow-Origin is NOT '*'
+// when credentials are sent (withCredentials=true)
 app.use((req, res, next) => {
-  // Debug logging for CORS (only in dev or when DEBUG_CORS env var is set)
   if (process.env.DEBUG_CORS) {
-    console.log('[CORS DEBUG] incoming raw:', req.get('origin'));
+    console.log("[CORS DEBUG] incoming origin:", req.get("origin"));
   }
   next();
 });
 
 app.use(cors({
-  origin: function(origin, callback) {
-    // allow non-browser requests such as curl (origin === undefined)
+  origin: (origin, callback) => {
+    // allow requests without origin (server-to-server or curl)
     if (!origin) return callback(null, true);
-    // accept if origin is in our whitelist
-    if (allowedOrigins.indexOf(origin) !== -1) {
+
+    if (isAllowedOrigin(origin)) {
       return callback(null, true);
     }
-    // otherwise reject
-    return callback(new Error('CORS policy: origin not allowed'), false);
+
+    // Log the blocked origin for debugging and return a helpful error
+    console.warn("[CORS] blocked origin:", origin);
+    return callback(new Error("CORS policy: origin not allowed"), false);
   },
-  credentials: true,           // Access-Control-Allow-Credentials: true
-  methods: ['GET','POST','PUT','DELETE','OPTIONS'],
-  allowedHeaders: ['Content-Type','Authorization','X-Requested-With','Accept']
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"]
 }));
 
-// === Route mounting ===
+// --- Mount routers here ---
 try {
-  const otpRouter = require('./src/routes/otpRoutes.cjs');
-  app.use('/api/otp', otpRouter);
-  console.log('Mounted router: /api/otp -> ./src/routes/otpRoutes.cjs');
+  const otpRouter = require("./src/routes/otpRoutes.cjs");
+  app.use("/api/otp", otpRouter);
+  console.log("Mounted router: /api/otp -> ./src/routes/otpRoutes.cjs");
 } catch (err) {
-  console.error('Failed to mount OTP router:', err && err.stack ? err.stack : err);
+  console.error("Failed to mount OTP router:", err && err.stack ? err.stack : err);
 }
 
-// other routers (if you have productRoutes etc.)
 try {
-  const productRoutes = require('./src/routes/productRoutes.cjs');
-  app.use('/api/products', productRoutes);
-  console.log('Mounted router: /api/products -> ./src/routes/productRoutes.cjs');
+  const productRoutes = require("./src/routes/productRoutes.cjs");
+  app.use("/api/products", productRoutes);
+  console.log("Mounted router: /api/products -> ./src/routes/productRoutes.cjs");
 } catch (err) {
   // ignore if not present
 }
 
 // static folders
-app.use('/public', express.static(path.join(__dirname, 'public')));
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use("/public", express.static(path.join(__dirname, "public")));
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // health
-app.get('/health', (req, res) => res.json({ ok: true, uptime: process.uptime() }));
+app.get("/health", (req, res) => res.json({ ok: true, uptime: process.uptime() }));
 
-// Catch 404 for unknown API endpoints
+// explicit API 404 JSON
 app.use((req, res, next) => {
-  if (req.path.startsWith('/api')) {
-    return res.status(404).json({ error: 'API endpoint not found' });
+  if (req.path.startsWith("/api")) {
+    return res.status(404).json({ error: "API endpoint not found" });
   }
-  res.status(404).send('Not Found');
+  res.status(404).send("Not Found");
 });
 
-// Error handler
+// error handler
 app.use((err, req, res, next) => {
   console.error(err && err.stack ? err.stack : err);
   const status = err.status || 500;
-  const message = err.message || 'Internal Server Error';
-  if (req.path.startsWith('/api')) {
+  const message = err.message || "Internal Server Error";
+  if (req.path.startsWith("/api")) {
     return res.status(status).json({ error: message });
   }
   res.status(status).send(message);
@@ -104,7 +125,7 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 4000;
 if (require.main === module) {
   app.listen(PORT, () => {
-    console.log(`Backend listening on port ${PORT} (NODE_ENV=${process.env.NODE_ENV || 'dev'})`);
+    console.log(`Backend listening on port ${PORT} (NODE_ENV=${process.env.NODE_ENV || "dev"})`);
   });
 }
 
