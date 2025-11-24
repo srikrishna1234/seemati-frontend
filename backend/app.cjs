@@ -454,3 +454,4 @@ async function connectMongoIfConfigured() {
   console.error('Fatal startup error (app.cjs):', e && (e.stack || e));
   process.exit(1);
 });
+
