@@ -1,143 +1,118 @@
-// src/admin/AdminProductList.js
-import React, { useEffect, useState } from "react";
-import axios from "../api/axiosInstance";
+import React from 'react';
+import { Link } from 'react-router-dom';
 
 /**
- * AdminProductList.js
- * - Full replacement that handles mixed image formats your API returns:
- *   - absolute S3 URLs (https://...)
- *   - absolute localhost URLs (http://localhost:4000/uploads/...)
- *   - relative paths (/uploads/..., uploads/...)
- *   - image objects { url: '...', alt: '...' }
+ * AdminProductList - full replacement file
  *
- * Save this file as src/admin/AdminProductList.js (full replacement).
+ * Props:
+ * - products: array of product objects [{ _id, name, price, stock, images: [url,...], sku }]
+ * - onDelete: function(productId)
+ *
+ * Notes:
+ * - Edit link points to /admin/products/:id/edit
+ * - Add Product button links to /admin/products/new (change if your route differs)
+ * - Thumbnails use object-fit: contain so full image is visible.
  */
 
-function ensureNoDoubleSlash(a, b) {
-  return `${a.replace(/\/$/, "")}/${b.replace(/^\//, "")}`;
-}
-
-function inferBaseForRelativePaths() {
-  const envApi = process.env.REACT_APP_API_URL;
-  if (envApi) return envApi.replace(/\/$/, "");
-  if (typeof window !== "undefined") {
-    try {
-      const origin = new URL(window.location.origin);
-      if (origin.hostname === "localhost" || origin.hostname === "127.0.0.1") {
-        origin.port = "4000";
-      }
-      return origin.toString().replace(/\/$/, "");
-    } catch (e) {}
-  }
-  return "http://localhost:4000";
-}
-
-function normalizeImageEntry(entry) {
-  if (!entry) return null;
-  if (typeof entry === "string") return entry;
-  if (typeof entry === "object" && entry.url) return entry.url;
-  return null;
-}
-
-function buildImageUrlFromPath(pathOrUrl) {
-  if (!pathOrUrl) return "";
-  if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
-  const base = inferBaseForRelativePaths();
-  return ensureNoDoubleSlash(base, pathOrUrl);
-}
-
-function getPrimaryImageUrl(product) {
-  const imgs = product?.images || product?.image || [];
-  if (typeof imgs === "string") {
-    const normalized = normalizeImageEntry(imgs);
-    return buildImageUrlFromPath(normalized);
-  }
-  if (Array.isArray(imgs) && imgs.length > 0) {
-    for (const candidate of imgs) {
-      const urlOrPath = normalizeImageEntry(candidate);
-      if (!urlOrPath) continue;
-      if (/^https?:\/\//i.test(urlOrPath)) return urlOrPath;
-      return buildImageUrlFromPath(urlOrPath);
-    }
-  }
-  return "";
-}
-
-export default function AdminProductList() {
-  const [products, setProducts] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    let mounted = true;
-    setLoading(true);
-
-    axios
-      .get("/products")
-      .then((res) => {
-        if (!mounted) return;
-        const payload = res?.data;
-        const list = Array.isArray(payload)
-          ? payload
-          : Array.isArray(payload?.products)
-          ? payload.products
-          : payload?.data || [];
-        setProducts(list);
-      })
-      .catch((err) => {
-        console.error("Failed to fetch products:", err);
-        setError(err?.message || "Failed to fetch products");
-      })
-      .finally(() => mounted && setLoading(false));
-
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  if (loading) return <div>Loading products…</div>;
-  if (error) return <div style={{ color: "red" }}>Error: {error}</div>;
-
+export default function AdminProductList({ products = [], onDelete }) {
   return (
-    <div style={{ padding: 12 }}>
-      <h2>Admin — Products</h2>
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-        <thead>
-          <tr>
-            <th style={{ borderBottom: "1px solid #ddd", padding: 8 }}>Image</th>
-            <th style={{ borderBottom: "1px solid #ddd", padding: 8 }}>Title</th>
-            <th style={{ borderBottom: "1px solid #ddd", padding: 8 }}>SKU</th>
-            <th style={{ borderBottom: "1px solid #ddd", padding: 8 }}>Price</th>
-            <th style={{ borderBottom: "1px solid #ddd", padding: 8 }}>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {products.map((p) => {
-            const imgUrl = getPrimaryImageUrl(p) || "/placeholder-80.png";
-            return (
-              <tr key={p._id || p.id || p.sku}>
-                <td style={{ padding: 8, verticalAlign: "middle" }}>
-                  <img
-                    src={imgUrl}
-                    alt={p.title || "product image"}
-                    style={{ width: 80, height: 80, objectFit: "cover", borderRadius: 6 }}
-                    onError={(e) => {
-                      e.currentTarget.onerror = null;
-                      e.currentTarget.src = "/placeholder-80.png";
-                    }}
-                  />
-                </td>
-                <td style={{ padding: 8 }}>{p.title || p.name}</td>
-                <td style={{ padding: 8 }}>{p.sku || "-"}</td>
-                <td style={{ padding: 8 }}>{p.price ? `₹ ${p.price}` : "-"}</td>
-                <td style={{ padding: 8 }}>
-                  <button onClick={() => (window.location.href = `/admin/edit/${p._id || p.id}`)}>Edit</button>
+    <div className="p-6">
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-3xl font-semibold">Admin — Products</h2>
+
+        {/* Add Product button */}
+        <Link
+          to="/admin/products/new"
+          className="inline-block bg-indigo-600 text-white px-4 py-2 rounded shadow hover:bg-indigo-700"
+        >
+          Add product
+        </Link>
+      </div>
+
+      <div className="overflow-x-auto bg-white border rounded">
+        <table className="min-w-full divide-y">
+          <thead className="bg-white">
+            <tr>
+              <th className="px-6 py-3 text-left text-sm font-medium text-gray-700">Image</th>
+              <th className="px-6 py-3 text-left text-sm font-medium text-gray-700">Title</th>
+              <th className="px-6 py-3 text-left text-sm font-medium text-gray-700">SKU</th>
+              <th className="px-6 py-3 text-left text-sm font-medium text-gray-700">Price</th>
+              <th className="px-6 py-3 text-left text-sm font-medium text-gray-700">Actions</th>
+            </tr>
+          </thead>
+
+          <tbody className="divide-y">
+            {products.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
+                  No products found.
                 </td>
               </tr>
-            );
-          })}
-        </tbody>
-      </table>
+            ) : (
+              products.map((p) => {
+                // choose first image if available
+                const thumb = (p.images && p.images.length) ? p.images[0] : p.image || ''; 
+
+                return (
+                  <tr key={p._id}>
+                    <td className="px-6 py-4 align-middle">
+                      <div className="w-20 h-20 rounded overflow-hidden border flex items-center justify-center bg-gray-50">
+                        {thumb ? (
+                          // Tailwind: w-20 h-20 and object-contain ensures full image visible
+                          <img
+                            src={thumb}
+                            alt={p.name || 'product thumbnail'}
+                            className="w-full h-full object-contain"
+                            onError={(e) => {
+                              e.currentTarget.onerror = null;
+                              e.currentTarget.src = '/fallback-product.png'; // optional fallback
+                            }}
+                          />
+                        ) : (
+                          <div className="text-xs text-gray-400">No image</div>
+                        )}
+                      </div>
+                    </td>
+
+                    <td className="px-6 py-4 align-middle">
+                      <div className="text-sm font-medium text-gray-900">{p.name}</div>
+                    </td>
+
+                    <td className="px-6 py-4 align-middle">
+                      <div className="text-sm text-gray-700">{p.sku || p.SKU || '-'}</div>
+                    </td>
+
+                    <td className="px-6 py-4 align-middle">
+                      <div className="text-sm text-gray-900">
+                        {typeof p.price === 'number' ? `₹ ${p.price}` : p.price ?? '-'}
+                      </div>
+                    </td>
+
+                    <td className="px-6 py-4 align-middle">
+                      <div className="flex items-center gap-3">
+                        <Link
+                          to={`/admin/products/${p._id}/edit`}
+                          className="px-3 py-1 border rounded hover:bg-gray-50"
+                        >
+                          Edit
+                        </Link>
+
+                        <button
+                          onClick={() => onDelete && onDelete(p._id)}
+                          className="px-3 py-1 border rounded text-red-600 hover:bg-red-50"
+                          aria-label={`Delete ${p.name}`}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
