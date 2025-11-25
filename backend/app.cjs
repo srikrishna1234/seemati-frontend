@@ -18,6 +18,9 @@ const cookieParser = require('cookie-parser');
 
 const app = express();
 
+// If running behind a proxy (Render/Heroku), enable trust proxy so secure cookies work correctly
+app.set('trust proxy', true);
+
 app.use(helmet());
 app.use(morgan('combined'));
 app.use(express.json());
@@ -28,13 +31,18 @@ app.use(cookieParser()); // <- enable cookie parsing for auth middleware and rou
 const rawOrigins = process.env.CORS_ORIGINS || '';
 const envOrigins = rawOrigins.split(',').map(s => s.trim()).filter(Boolean);
 
+// Always include production frontend as an allowed origin by default
 const defaultOrigins = [
   'http://localhost:3000',
-  'http://127.0.0.1:3000'
+  'http://127.0.0.1:3000',
+  'https://seemati.in'
 ];
 
 const allowedOrigins = Array.from(new Set([...envOrigins, ...defaultOrigins]));
-const allowCredentials = String(process.env.CORS_ALLOW_CREDENTIALS || 'false').toLowerCase() === 'true';
+
+// If the env variable explicitly sets CORS_ALLOW_CREDENTIALS to "false", respect it; otherwise default to true.
+// This ensures cookies are allowed by default so auth can work across subdomains.
+const allowCredentials = String(process.env.CORS_ALLOW_CREDENTIALS || 'true').toLowerCase() === 'true';
 
 // pattern regex (matches subdomains like xxx.vercel.app and xxx.netlify.app)
 const vercelRegex = /\.vercel\.app$/i;
@@ -43,7 +51,6 @@ const netlifyRegex = /\.netlify\.app$/i;
 function normalizeOrigin(origin) {
   if (!origin) return origin;
   let o = origin.trim();
-  // remove trailing slash if present
   if (o.endsWith('/')) o = o.slice(0, -1);
   return o.toLowerCase();
 }
@@ -89,6 +96,8 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
+// Ensure preflight requests return correct CORS headers
+app.options('*', cors(corsOptions));
 
 // mount routes (keep your current route files)
 try {
