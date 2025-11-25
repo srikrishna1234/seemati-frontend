@@ -1,12 +1,14 @@
 // src/api/axiosInstance.js
 import axios from 'axios';
 
-const baseURL = process.env.REACT_APP_API_URL || 'https://api.seemati.in/api';
+// Keep this pointing to your site root (no duplicate /api).
+// Use REACT_APP_API_URL if set (Vercel env). Default to site root.
+const baseURL = process.env.REACT_APP_API_URL || 'https://api.seemati.in';
 
 const axiosInstance = axios.create({
   baseURL,
   timeout: 30000,
-  withCredentials: true, // keeps cookie-based auth working (you logged in with OTP)
+  withCredentials: true, // keep cookie-based auth working
   headers: {
     'Content-Type': 'application/json',
     Accept: 'application/json',
