@@ -95,6 +95,19 @@ try {
   const otpRoutes = require('./src/routes/otpRoutes.cjs');
   const productRoutes = require('./src/routes/productRoutes.cjs');
 
+  // auth router present in src/routes/auth.cjs
+  let authRoutes = null;
+  try {
+    authRoutes = require('./src/routes/auth.cjs');
+  } catch (e) {
+    console.warn('[App] auth.cjs not found at ./src/routes/auth.cjs — will not mount /api/auth (this is non-fatal in dev)');
+  }
+
+  if (authRoutes) {
+    app.use('/api/auth', authRoutes);
+    console.info('Mounted router: /api/auth -> ./src/routes/auth.cjs');
+  }
+
   app.use('/api/otp', otpRoutes);
   console.info('Mounted router: /api/otp -> ./src/routes/otpRoutes.cjs');
 
