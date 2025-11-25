@@ -1,5 +1,6 @@
-{
+﻿{
+  "version": 2,
   "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
+    { "source": "/api/(.*)", "destination": "https://api.seemati.in/api/$1" }
   ]
 }
