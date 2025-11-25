@@ -1,20 +1,19 @@
-// src/components/LogoutButton.jsx
+// File: src/components/LogoutButton.jsx
+// Full replacement: use axios instance for logout
+
 import React from "react";
 import { useNavigate } from "react-router-dom";
+import api from "../api/axiosInstance";
 
 export default function LogoutButton() {
   const navigate = useNavigate();
 
   async function handleLogout() {
     try {
-      await fetch("/api/auth/logout", {
-        method: "POST",
-        credentials: "include", // include cookie
-      });
+      await api.post("/auth/logout");
     } catch (e) {
       console.error("Logout failed:", e);
     }
-    // Redirect to login page
     navigate("/admin/login", { replace: true });
   }
 

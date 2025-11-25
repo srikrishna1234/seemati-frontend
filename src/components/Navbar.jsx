@@ -1,8 +1,11 @@
-// src/components/Navbar.jsx
+// File: src/components/Navbar.jsx
+// Full replacement: use axios instance for auth/logout calls and keep existing behaviour otherwise
+
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useCartState } from "../context/CartContext";
 import { loadCart, CART_KEY } from "../utils/cartHelpers";
+import api from "../api/axiosInstance";
 
 const WISHLIST_KEY = "wishlist_v1";
 
@@ -16,7 +19,6 @@ function readWishlistCount() {
   }
 }
 
-// read total quantity from cart (supports both shapes)
 function readCartQuantity() {
   try {
     const raw = loadCart();
@@ -24,7 +26,6 @@ function readCartQuantity() {
     if (!Array.isArray(arr)) return 0;
     return arr.reduce((sum, it) => sum + (Number(it?.qty || it?.quantity || 0) || 0), 0);
   } catch (e) {
-    // fallback to legacy localStorage read
     try {
       const raw2 = localStorage.getItem(CART_KEY) || "[]";
       const arr2 = JSON.parse(raw2);
@@ -37,7 +38,6 @@ function readCartQuantity() {
 }
 
 export function Navbar() {
-  // items from app context (if your app uses context this will reflect the global cart)
   let contextItems = [];
   try {
     const ctx = useCartState();
@@ -89,10 +89,9 @@ export function Navbar() {
 
   const checkAuth = useCallback(async () => {
     try {
-      const res = await fetch("/api/auth/me", { credentials: "include" });
-      if (res.ok) {
-        const data = await res.json();
-        setIsAuthed(Boolean(data?.ok));
+      const res = await api.get("/auth/me");
+      if (res && res.status === 200) {
+        setIsAuthed(Boolean(res.data?.ok));
       } else {
         setIsAuthed(false);
       }
@@ -167,10 +166,7 @@ export function Navbar() {
 
   async function handleLogout() {
     try {
-      await fetch("/api/auth/logout", {
-        method: "POST",
-        credentials: "include",
-      });
+      await api.post("/auth/logout");
     } catch (e) {
       console.error("Logout failed:", e);
     } finally {

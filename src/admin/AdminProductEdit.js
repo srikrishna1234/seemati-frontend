@@ -1,11 +1,13 @@
-// src/admin/AdminProductEdit.js
+// File: src/admin/AdminProductEdit.js
+// Full replacement: use axios instance (api) for product GET/PUT/DELETE and for uploads
+
 import React, { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
+import api from "../api/axiosInstance";
 
-const API_PREFIX = "/admin-api"; // admin endpoints root (we post uploads to /admin-api/products/upload)
-const UPLOAD_ENDPOINT = `${API_PREFIX}/products/upload`;
+const API_PREFIX = ""; // we'll rely on `api` baseURL for normal product endpoints
+const UPLOAD_ENDPOINT = `${process.env.REACT_APP_API_URL || "https://api.seemati.in/api"}/admin-api/products/upload`;
 
-/** Try to find an auth token in local/session storage or cookie names */
 function getAuthHeader() {
   const possibleKeys = ["token", "authToken", "accessToken", "jwt", "userToken"];
   let token = null;
@@ -21,25 +23,25 @@ function getAuthHeader() {
       if (!c) continue;
       const [name, ...rest] = c.split("=");
       const val = rest.join("=");
-      if (possibleKeys.includes(name) && val) { token = decodeURIComponent(val); break; }
+      if (possibleKeys.includes(name) && val) {
+        token = decodeURIComponent(val);
+        break;
+      }
     }
   }
   if (!token) return {};
   return { Authorization: `Bearer ${token}` };
 }
 
-/** Return a stable key for an image entry (support string or object) */
 function imageKey(img) {
   if (!img) return null;
-  if (typeof img === "string") return img; // URL string
+  if (typeof img === "string") return img;
   return img._localKey ?? img._id ?? img.id ?? img.filename ?? img.url ?? JSON.stringify(img);
 }
 
-/** Resolve an image object/string to a usable absolute URL for <img src> */
 function resolveImgUrl(img) {
   if (!img) return null;
   if (typeof img === "string") return img.startsWith("http") ? img : `${window.location.origin}${img}`;
-  // object
   const url = img.url || img.filename || img.src || null;
   if (!url) return null;
   return url.startsWith("http") ? url : `${window.location.origin}${url}`;
@@ -57,65 +59,76 @@ export default function AdminProductEdit() {
 
   const [product, setProduct] = useState(null);
   const [keepMap, setKeepMap] = useState({});
-
-  // selected files for upload + previews
   const [newFiles, setNewFiles] = useState([]);
   const [previewUrls, setPreviewUrls] = useState([]);
 
   useEffect(() => {
-    if (!id) { setError("No product id provided."); setLoading(false); return; }
+    if (!id) {
+      setError("No product id provided.");
+      setLoading(false);
+      return;
+    }
     let mounted = true;
 
     async function fetchProduct() {
       setLoading(true);
       setError(null);
-      const endpoints = [
-        `${API_PREFIX}/products/${encodeURIComponent(id)}`,
-        `/api/products/${encodeURIComponent(id)}`, // fallback
-      ];
-      let lastErr = null;
-      for (const ep of endpoints) {
-        try {
-          const headers = getAuthHeader();
-          const res = await fetch(ep, { credentials: "include", headers });
-          const txt = await res.text().catch(() => "");
-          if (!res.ok) { lastErr = `Request ${ep} failed: ${res.status} ${txt}`; continue; }
-          let data = null;
-          try { data = txt ? JSON.parse(txt) : null; } catch (e) { lastErr = `Invalid JSON from ${ep}`; continue; }
-          const resolved = data?.product ?? data ?? null;
-          if (resolved) {
-            if (!mounted) return;
-            resolved.images = resolved.images ?? [];
-            setProduct(resolved);
+      try {
+        // primary: use axios instance
+        const res = await api.get(`/products/${encodeURIComponent(id)}`);
+        const data = res?.data;
+        const resolved = data?.product ?? data ?? null;
+        if (resolved) {
+          if (!mounted) return;
+          resolved.images = resolved.images ?? [];
+          setProduct(resolved);
 
-            // initialize keepMap so all existing images are kept by default
-            const map = {};
-            (resolved.images || []).forEach((img) => {
-              const key = imageKey(img);
-              if (key) map[key] = true;
-            });
-            setKeepMap(map);
-
-            setLoading(false);
-            return;
-          } else {
-            lastErr = lastErr || `No product in response from ${ep}`;
-            continue;
-          }
-        } catch (err) {
-          lastErr = err.message || String(err);
-          console.warn("[AdminProductEdit] fetch attempt failed", err);
+          const map = {};
+          (resolved.images || []).forEach((img) => {
+            const key = imageKey(img);
+            if (key) map[key] = true;
+          });
+          setKeepMap(map);
+          setLoading(false);
+          return;
         }
+
+        // fallback: try absolute URL
+        const fallbackUrl = `${process.env.REACT_APP_API_URL || "https://api.seemati.in/api"}/products/${encodeURIComponent(id)}`;
+        const r2 = await fetch(fallbackUrl, { credentials: "include" });
+        const txt = await r2.text();
+        const parsed = txt ? JSON.parse(txt) : null;
+        const resolved2 = parsed?.product ?? parsed ?? null;
+        if (resolved2) {
+          if (!mounted) return;
+          resolved2.images = resolved2.images ?? [];
+          setProduct(resolved2);
+          const map2 = {};
+          (resolved2.images || []).forEach((img) => {
+            const key = imageKey(img);
+            if (key) map2[key] = true;
+          });
+          setKeepMap(map2);
+          setLoading(false);
+          return;
+        }
+
+        setError("Product not found.");
+      } catch (err) {
+        console.warn("[AdminProductEdit] fetch failed", err);
+        setError(String(err));
+      } finally {
+        if (mounted) setLoading(false);
       }
-      if (mounted) { setError(lastErr || "Product not found."); setLoading(false); }
     }
 
     fetchProduct();
     return () => {
       mounted = false;
-      // cleanup preview object URLs
       previewUrls.forEach((u) => {
-        try { URL.revokeObjectURL(u); } catch (e) {}
+        try {
+          URL.revokeObjectURL(u);
+        } catch (e) {}
       });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -135,20 +148,17 @@ export default function AdminProductEdit() {
     if (!product || !Array.isArray(product.images)) return [];
     return product.images.filter((img) => {
       const key = imageKey(img);
-      // if no stable key, keep it (avoid accidental deletion)
       if (!key) return true;
       return !!keepMap[key];
     });
   }
 
-  // Save product (PUT)
   async function handleSave(e) {
     e?.preventDefault?.();
     if (!product) return;
     setSaving(true);
     setError(null);
 
-    // payload: include images array (preserve shape — if images are strings keep strings, if objects keep objects)
     const payload = {
       title: product.title,
       description: product.description,
@@ -162,48 +172,49 @@ export default function AdminProductEdit() {
       images: getKeptImagesArray(),
     };
 
-    const endpoints = [
-      `${API_PREFIX}/products/${encodeURIComponent(id)}`,
-      `/api/products/${encodeURIComponent(id)}`,
-    ];
-
-    let lastErr = null;
-    for (const ep of endpoints) {
-      try {
-        const headers = { "Content-Type": "application/json", ...getAuthHeader() };
-        const res = await fetch(ep, {
-          method: "PUT",
-          credentials: "include",
-          headers,
-          body: JSON.stringify(payload),
-        });
-        const txt = await res.text().catch(() => "");
-        if (!res.ok) {
-          lastErr = `PUT ${ep} failed: ${res.status} ${txt}`;
-          console.warn(lastErr);
-          continue;
-        }
-        navigate("/admin/products");
-        return;
-      } catch (err) {
-        lastErr = err.message || String(err);
-        console.warn("[AdminProductEdit] save attempt failed", err);
-      }
+    try {
+      await api.put(`/products/${encodeURIComponent(id)}`, payload);
+      navigate("/admin/products");
+      return;
+    } catch (err) {
+      console.warn("[AdminProductEdit] save via api failed", err);
+      // fallback to absolute fetch
     }
 
-    setError(lastErr || "Failed to save product.");
-    setSaving(false);
+    try {
+      const fallbackUrl = `${process.env.REACT_APP_API_URL || "https://api.seemati.in/api"}/products/${encodeURIComponent(id)}`;
+      const res = await fetch(fallbackUrl, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeader() },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(`PUT failed: ${res.status} ${txt}`);
+      }
+      navigate("/admin/products");
+      return;
+    } catch (err) {
+      console.error("[AdminProductEdit] save failed (all attempts)", err);
+      setError(String(err));
+      setSaving(false);
+    }
   }
 
   async function handleDelete() {
     if (!window.confirm("Delete this product?")) return;
     try {
-      const headers = getAuthHeader();
-      const res = await fetch(`${API_PREFIX}/products/${encodeURIComponent(id)}`, {
-        method: "DELETE",
-        credentials: "include",
-        headers,
-      });
+      await api.delete(`/products/${encodeURIComponent(id)}`);
+      navigate("/admin/products");
+      return;
+    } catch (err) {
+      // fallback to fetch
+    }
+
+    try {
+      const fallbackUrl = `${process.env.REACT_APP_API_URL || "https://api.seemati.in/api"}/products/${encodeURIComponent(id)}`;
+      const res = await fetch(fallbackUrl, { method: "DELETE", credentials: "include", headers: getAuthHeader() });
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
         throw new Error(`Delete failed: ${res.status} ${txt}`);
@@ -215,64 +226,54 @@ export default function AdminProductEdit() {
     }
   }
 
-  // File selection: previews & store File objects
   function onFilesSelected(e) {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
-    // revoke previous previews
     previewUrls.forEach((u) => {
-      try { URL.revokeObjectURL(u); } catch (e) {}
+      try {
+        URL.revokeObjectURL(u);
+      } catch (e) {}
     });
     const urls = files.map((f) => URL.createObjectURL(f));
     setNewFiles(files);
     setPreviewUrls(urls);
   }
 
-  // Upload selected files to backend - merges returned objects into product.images
   async function handleUploadFiles() {
-    if (!newFiles || newFiles.length === 0) { alert("Select files first"); return; }
+    if (!newFiles || newFiles.length === 0) {
+      alert("Select files first");
+      return;
+    }
     setUploading(true);
     setError(null);
+
     try {
       const fd = new FormData();
-      // append with key 'files' (your server already accepts this)
       newFiles.forEach((f) => fd.append("files", f));
-      const headers = getAuthHeader(); // do not set Content-Type so browser sets multipart/form-data boundary
-      const res = await fetch(UPLOAD_ENDPOINT, { method: "POST", credentials: "include", headers, body: fd });
-      const txt = await res.text().catch(() => "");
-      if (!res.ok) throw new Error(`Upload failed: ${res.status} ${txt}`);
-      let data = null;
-      try { data = txt ? JSON.parse(txt) : null; } catch (e) { data = null; }
 
-      // Normalize server response:
-      // - If server returns array of image objects or URLs -> append them
-      // - If server returns single object with filename/url -> append it
-      if (Array.isArray(data)) {
-        setProduct((p) => ({ ...p, images: [...(p.images || []), ...data] }));
-        // ensure keepMap true for appended images
-        setKeepMap((m) => {
-          const copy = { ...m };
-          data.forEach((img) => {
-            const key = imageKey(img);
-            if (key) copy[key] = true;
-          });
-          return copy;
+      // try axios post first
+      try {
+        const resp = await api.post("/products/upload", fd, {
+          headers: { ...getAuthHeader() },
+          withCredentials: true,
         });
-      } else if (data && (data.url || data.filename || data._id || data.id)) {
-        setProduct((p) => ({ ...p, images: [...(p.images || []), data] }));
-        setKeepMap((m) => ({ ...m, [imageKey(data)]: true }));
-      } else {
-        // unknown shape — attempt to refetch product to get server state
-        await refetchProduct();
+        const data = resp?.data;
+        await processUploadResponse(data);
+        return;
+      } catch (e) {
+        // fallback to absolute upload endpoint (admin-api path)
+        const res = await fetch(UPLOAD_ENDPOINT, { method: "POST", credentials: "include", body: fd, headers: getAuthHeader() });
+        const txt = await res.text().catch(() => "");
+        if (!res.ok) throw new Error(`Upload failed: ${res.status} ${txt}`);
+        let data = null;
+        try {
+          data = txt ? JSON.parse(txt) : null;
+        } catch (e) {
+          data = null;
+        }
+        await processUploadResponse(data);
+        return;
       }
-
-      // cleanup previews and input
-      previewUrls.forEach((u) => {
-        try { URL.revokeObjectURL(u); } catch (e) {}
-      });
-      setPreviewUrls([]);
-      setNewFiles([]);
-      if (fileInputRef.current) fileInputRef.current.value = "";
     } catch (err) {
       console.error("Upload error", err);
       setError(String(err));
@@ -281,17 +282,42 @@ export default function AdminProductEdit() {
     }
   }
 
+  async function processUploadResponse(data) {
+    if (Array.isArray(data)) {
+      setProduct((p) => ({ ...p, images: [...(p.images || []), ...data] }));
+      setKeepMap((m) => {
+        const copy = { ...m };
+        data.forEach((img) => {
+          const key = imageKey(img);
+          if (key) copy[key] = true;
+        });
+        return copy;
+      });
+    } else if (data && (data.url || data.filename || data._id || data.id)) {
+      setProduct((p) => ({ ...p, images: [...(p.images || []), data] }));
+      setKeepMap((m) => ({ ...m, [imageKey(data)]: true }));
+    } else {
+      await refetchProduct();
+    }
+
+    previewUrls.forEach((u) => {
+      try {
+        URL.revokeObjectURL(u);
+      } catch (e) {}
+    });
+    setPreviewUrls([]);
+    setNewFiles([]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
   async function refetchProduct() {
     try {
-      const headers = getAuthHeader();
-      const res = await fetch(`${API_PREFIX}/products/${encodeURIComponent(id)}`, { credentials: "include", headers });
-      if (!res.ok) return;
-      const data = await res.json().catch(() => null);
+      const res = await api.get(`/products/${encodeURIComponent(id)}`);
+      const data = res?.data;
       const resolved = data?.product ?? data ?? null;
       if (resolved) {
         resolved.images = resolved.images ?? [];
         setProduct(resolved);
-        // ensure keepMap contains new keys
         setKeepMap((m) => {
           const copy = { ...m };
           (resolved.images || []).forEach((img) => {
@@ -301,7 +327,9 @@ export default function AdminProductEdit() {
           return copy;
         });
       }
-    } catch (e) { console.warn("refetchProduct failed", e); }
+    } catch (e) {
+      console.warn("refetchProduct failed", e);
+    }
   }
 
   if (loading) return <div style={{ padding: 20 }}>Loading product…</div>;
@@ -310,7 +338,9 @@ export default function AdminProductEdit() {
     return (
       <div style={{ padding: 20 }}>
         <div style={{ color: "#b91c1c", marginBottom: 12 }}>Error: {String(error)}</div>
-        <div style={{ marginBottom: 12 }}><Link to="/admin/products">Back to products</Link></div>
+        <div style={{ marginBottom: 12 }}>
+          <Link to="/admin/products">Back to products</Link>
+        </div>
         <pre style={{ whiteSpace: "pre-wrap", background: "#fafafa", padding: 12, borderRadius: 6 }}>{String(error)}</pre>
       </div>
     );
@@ -379,7 +409,9 @@ export default function AdminProductEdit() {
           <input value={product.videoUrl || ""} onChange={(e) => updateField("videoUrl", e.target.value)} placeholder="https://youtube.com/..." style={{ width: "100%", padding: 8, marginTop: 6 }} />
         </label>
 
-        <div style={{ marginTop: 8 }}><strong>Images</strong></div>
+        <div style={{ marginTop: 8 }}>
+          <strong>Images</strong>
+        </div>
 
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 10 }}>
           {(product.images || []).map((img) => {

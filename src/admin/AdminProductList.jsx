@@ -1,26 +1,92 @@
-import React from 'react';
+// File: src/admin/AdminProductList.jsx
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import axios from '../api/axiosInstance'; // if this doesn't exist, the code will fallback to fetch
 
-/**
- * AdminProductList - full replacement file
- *
- * Props:
- * - products: array of product objects [{ _id, name, price, stock, images: [url,...], sku }]
- * - onDelete: function(productId)
- *
- * Notes:
- * - Edit link points to /admin/products/:id/edit
- * - Add Product button links to /admin/products/new (change if your route differs)
- * - Thumbnails use object-fit: contain so full image is visible.
- */
+export default function AdminProductList({ onDelete }) {
+  const [products, setProducts] = useState(null); // null = loading, [] = loaded empty
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [usedEndpoint, setUsedEndpoint] = useState(null);
 
-export default function AdminProductList({ products = [], onDelete }) {
+  useEffect(() => {
+    let cancelled = false;
+
+    async function tryFetch(url) {
+      try {
+        // prefer axios if available
+        if (axios && typeof axios.get === 'function') {
+          const res = await axios.get(url);
+          return { ok: true, data: res.data, status: res.status };
+        } else {
+          const r = await fetch(url, { credentials: 'include' });
+          const txt = await r.text();
+          let data = null;
+          try { data = JSON.parse(txt); } catch(e){ data = txt; }
+          return { ok: r.ok, data, status: r.status, statusText: r.statusText };
+        }
+      } catch (err) {
+        return { ok: false, error: err };
+      }
+    }
+
+    async function load() {
+      setLoading(true);
+      setError(null);
+
+      // list of candidate endpoints (try admin first, then public)
+      const endpoints = ['/admin/products', '/products'];
+
+      for (let i = 0; i < endpoints.length; i++) {
+        const ep = endpoints[i];
+        // if you use a custom API base, modify ep to include it, e.g. `${process.env.REACT_APP_API_BASE}${ep}`
+        const result = await tryFetch(ep);
+        if (cancelled) return;
+
+        if (result.ok && Array.isArray(result.data)) {
+          setProducts(result.data);
+          setUsedEndpoint(ep);
+          setLoading(false);
+          return;
+        }
+
+        // if endpoint returned 200 but not an array, show it for debugging
+        if (result.ok && !Array.isArray(result.data)) {
+          setError(`Endpoint ${ep} returned ${typeof result.data} (expected array). Response: ${JSON.stringify(result.data).slice(0,200)}`);
+          setProducts([]);
+          setUsedEndpoint(ep);
+          setLoading(false);
+          return;
+        }
+
+        // if fetch failed with a status, collect that in error and try next endpoint
+        if (result.status && !result.ok) {
+          // try next if present, but remember last error
+          setError(`GET ${ep} returned HTTP ${result.status}${result.statusText ? ' ' + result.statusText : ''}`);
+          continue;
+        }
+
+        // if exception
+        if (!result.ok && result.error) {
+          setError(`Request ${ep} failed: ${String(result.error).slice(0,200)}`);
+          continue;
+        }
+      }
+
+      // none succeeded
+      setProducts([]);
+      setLoading(false);
+    }
+
+    load();
+    return () => { cancelled = true; };
+  }, []);
+
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-3xl font-semibold">Admin — Products</h2>
 
-        {/* Add Product button */}
         <Link
           to="/admin/products/new"
           className="inline-block bg-indigo-600 text-white px-4 py-2 rounded shadow hover:bg-indigo-700"
@@ -29,44 +95,45 @@ export default function AdminProductList({ products = [], onDelete }) {
         </Link>
       </div>
 
-      <div className="overflow-x-auto bg-white border rounded">
-        <table className="min-w-full divide-y">
-          <thead className="bg-white">
-            <tr>
-              <th className="px-6 py-3 text-left text-sm font-medium text-gray-700">Image</th>
-              <th className="px-6 py-3 text-left text-sm font-medium text-gray-700">Title</th>
-              <th className="px-6 py-3 text-left text-sm font-medium text-gray-700">SKU</th>
-              <th className="px-6 py-3 text-left text-sm font-medium text-gray-700">Price</th>
-              <th className="px-6 py-3 text-left text-sm font-medium text-gray-700">Actions</th>
-            </tr>
-          </thead>
+      <div className="overflow-x-auto bg-white border rounded p-4">
+        {loading && <div className="text-sm text-gray-600">Loading products...</div>}
 
-          <tbody className="divide-y">
-            {products.length === 0 ? (
+        {!loading && error && (
+          <div className="mb-4 text-sm text-red-600">
+            <strong>Error:</strong> {error}
+            <div className="text-xs text-gray-500 mt-1">Tried endpoint: {usedEndpoint ?? 'none'}</div>
+          </div>
+        )}
+
+        {!loading && products && products.length === 0 && (
+          <div className="text-gray-600">No products found.</div>
+        )}
+
+        {!loading && products && products.length > 0 && (
+          <table className="min-w-full divide-y">
+            <thead className="bg-white">
               <tr>
-                <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
-                  No products found.
-                </td>
+                <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Image</th>
+                <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Title</th>
+                <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">SKU</th>
+                <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Price</th>
+                <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Actions</th>
               </tr>
-            ) : (
-              products.map((p) => {
-                // choose first image if available
-                const thumb = (p.images && p.images.length) ? p.images[0] : p.image || ''; 
+            </thead>
 
+            <tbody className="divide-y">
+              {products.map((p) => {
+                const thumb = (p.images && p.images.length) ? p.images[0] : p.image || '';
                 return (
-                  <tr key={p._id}>
-                    <td className="px-6 py-4 align-middle">
+                  <tr key={p._id || p.id || p.sku || Math.random()}>
+                    <td className="px-4 py-3 align-middle">
                       <div className="w-20 h-20 rounded overflow-hidden border flex items-center justify-center bg-gray-50">
                         {thumb ? (
-                          // Tailwind: w-20 h-20 and object-contain ensures full image visible
                           <img
                             src={thumb}
                             alt={p.name || 'product thumbnail'}
                             className="w-full h-full object-contain"
-                            onError={(e) => {
-                              e.currentTarget.onerror = null;
-                              e.currentTarget.src = '/fallback-product.png'; // optional fallback
-                            }}
+                            onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = '/fallback-product.png'; }}
                           />
                         ) : (
                           <div className="text-xs text-gray-400">No image</div>
@@ -74,44 +141,36 @@ export default function AdminProductList({ products = [], onDelete }) {
                       </div>
                     </td>
 
-                    <td className="px-6 py-4 align-middle">
+                    <td className="px-4 py-3 align-middle">
                       <div className="text-sm font-medium text-gray-900">{p.name}</div>
                     </td>
 
-                    <td className="px-6 py-4 align-middle">
+                    <td className="px-4 py-3 align-middle">
                       <div className="text-sm text-gray-700">{p.sku || p.SKU || '-'}</div>
                     </td>
 
-                    <td className="px-6 py-4 align-middle">
+                    <td className="px-4 py-3 align-middle">
                       <div className="text-sm text-gray-900">
                         {typeof p.price === 'number' ? `₹ ${p.price}` : p.price ?? '-'}
                       </div>
                     </td>
 
-                    <td className="px-6 py-4 align-middle">
+                    <td className="px-4 py-3 align-middle">
                       <div className="flex items-center gap-3">
-                        <Link
-                          to={`/admin/products/${p._id}/edit`}
-                          className="px-3 py-1 border rounded hover:bg-gray-50"
-                        >
+                        <Link to={`/admin/products/${p._id || p.id}/edit`} className="px-3 py-1 border rounded hover:bg-gray-50">
                           Edit
                         </Link>
-
-                        <button
-                          onClick={() => onDelete && onDelete(p._id)}
-                          className="px-3 py-1 border rounded text-red-600 hover:bg-red-50"
-                          aria-label={`Delete ${p.name}`}
-                        >
+                        <button onClick={() => onDelete && onDelete(p._id || p.id)} className="px-3 py-1 border rounded text-red-600 hover:bg-red-50">
                           Delete
                         </button>
                       </div>
                     </td>
                   </tr>
                 );
-              })
-            )}
-          </tbody>
-        </table>
+              })}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );
