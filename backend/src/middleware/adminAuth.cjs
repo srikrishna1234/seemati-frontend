@@ -18,7 +18,6 @@ module.exports = function adminAuth(req, res, next) {
   // 1) Try cookie first (preferred)
   if (req.cookies && req.cookies.seemati_auth) {
     token = req.cookies.seemati_auth;
-    // console.log('[adminAuth] Using token from cookie');
   }
 
   // 2) If no cookie, try Authorization header
@@ -26,7 +25,6 @@ module.exports = function adminAuth(req, res, next) {
     const authHeader = req.headers.authorization || req.headers.Authorization || '';
     if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
       token = authHeader.slice(7).trim();
-      // console.log('[adminAuth] Using token from Authorization header');
     }
   }
 
