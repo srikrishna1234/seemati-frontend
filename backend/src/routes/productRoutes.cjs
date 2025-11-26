@@ -1,106 +1,219 @@
 ﻿// backend/src/routes/productRoutes.cjs
-// Public product routes (CommonJS) — router paths are ROOT-relative so mounting at /products works.
-// Defensive model loading and safe query parsing.
-'use strict';
-
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const path = require('path');
-const fs = require('fs');
-const { createRequire } = require('module');
-const requireLocal = createRequire(__filename);
-const LOG = '[productRoutes]';
+const mongoose = require("mongoose");
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs");
 
-// Safe Product model loader (fallbacks)
-let Product = null;
-function loadProductModel() {
-  if (Product) return Product;
-  const candidates = [
-    path.join(__dirname, '..', '..', 'models', 'Product.cjs'),
-    path.join(__dirname, '..', '..', 'models', 'Product.js'),
-    path.join(process.cwd(), 'backend', 'models', 'Product.cjs'),
-    path.join(process.cwd(), 'backend', 'models', 'Product.js'),
-  ];
-  for (const c of candidates) {
-    try {
-      if (!fs.existsSync(c)) continue;
-      const m = requireLocal(c);
-      Product = m && (m.default || m.Product) ? (m.default || m.Product) : m;
-      if (Product) {
-        console.log(`${LOG} Loaded Product model from ${c}`);
-        break;
-      }
-    } catch (err) {
-      console.warn(`${LOG} model load failed for ${c}:`, err && err.message ? err.message : err);
-    }
-  }
-  if (!Product) console.warn(`${LOG} Product model not found; product endpoints will return 500.`);
-  return Product;
+// Load Product model (adjust path if different)
+const Product = require("../models/Product.cjs");
+
+// Local upload folder (ONLY if you're not using S3)
+const UPLOADS_DIR = path.join(__dirname, "../../uploads");
+const upload = multer({
+  dest: UPLOADS_DIR,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
+});
+
+// Helper: convert stored image paths (e.g. "/uploads/abc.jpg") to absolute URLs
+function makeAbsoluteImageUrls(images = [], req) {
+  if (!Array.isArray(images)) return images;
+  const base = process.env.BASE_URL || `${req.protocol}://${req.get("host")}`;
+  return images.map((img) => {
+    if (!img) return img;
+    // already absolute
+    if (img.startsWith("http://") || img.startsWith("https://")) return img;
+    // relative path beginning with '/'
+    if (img.startsWith("/")) return `${base}${img}`;
+    // fallback: prepend base
+    return `${base}/${img}`;
+  });
 }
 
-// Helper: parse ints safely
-function parsePositiveInt(v, fallback) {
-  const n = parseInt(String(v || ''), 10);
-  if (Number.isNaN(n) || n <= 0) return fallback;
-  return n;
-}
-
-// GET /products/        -> list products (paginated)
-router.get('/', async (req, res) => {
+// Helper: delete local upload files (only if path looks local under /uploads)
+async function deleteLocalUploadFile(imagePath) {
   try {
-    const Prod = loadProductModel();
-    if (!Prod) return res.status(500).json({ ok: false, message: 'Product model not available' });
+    if (!imagePath) return;
+    // Only delete relative uploads like "/uploads/..."
+    if (!imagePath.startsWith("/uploads/")) return;
 
-    const page = parsePositiveInt(req.query.page, 1);
-    const limit = Math.min(200, parsePositiveInt(req.query.limit, 24));
-    const skip = (page - 1) * limit;
+    // map "/uploads/abc.jpg" -> "<project>/uploads/abc.jpg"
+    const rel = imagePath.replace(/^\//, ""); // remove leading slash
+    const full = path.join(__dirname, "../../", rel);
 
-    const q = (req.query.q || '').trim();
-    const fieldsRaw = (req.query.fields || '').trim();
-    let projection = null;
-    if (fieldsRaw) {
-      projection = {};
-      fieldsRaw.split(',').map(s => s.trim()).filter(Boolean).forEach(f => projection[f] = 1);
+    // Safety: ensure it's inside uploads folder
+    if (!full.startsWith(UPLOADS_DIR)) {
+      console.warn("Refusing to delete file outside uploads dir:", full);
+      return;
     }
 
-    const filter = { deleted: { $ne: true } };
-    if (q) {
-      filter.$or = [
-        { title: { $regex: q, $options: 'i' } },
-        { description: { $regex: q, $options: 'i' } },
-        { slug: { $regex: q, $options: 'i' } },
-      ];
+    if (fs.existsSync(full)) {
+      await fs.promises.unlink(full);
+      console.log("Deleted local upload file:", full);
+    } else {
+      console.warn("File not found for deletion:", full);
     }
-
-    const [total, products] = await Promise.all([
-      Prod.countDocuments(filter).exec(),
-      Prod.find(filter, projection).skip(skip).limit(limit).lean().exec()
-    ]);
-
-    const totalPages = Math.ceil((total || 0) / limit) || 1;
-    return res.json({ ok: true, page, limit, total, totalPages, products });
   } catch (err) {
-    console.error(`${LOG} GET / error:`, err && (err.stack || err));
-    return res.status(500).json({ ok: false, message: err && err.message ? err.message : 'Server error' });
+    console.error("Error deleting file:", err && err.message ? err.message : err);
+  }
+}
+
+// ---------------------------------------------------------
+// GET /api/products/:id
+// ---------------------------------------------------------
+router.get("/:id", async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid product id" });
+    }
+
+    const product = await Product.findById(id).lean();
+    if (!product) return res.status(404).json({ message: "Product not found" });
+
+    // convert images to absolute URLs for client
+    product.images = makeAbsoluteImageUrls(product.images || [], req);
+
+    return res.json(product);
+  } catch (err) {
+    console.error("GET /api/products/:id error:", err);
+    next(err);
   }
 });
 
-// GET /products/:id_or_slug
-router.get('/:id', async (req, res) => {
+// ---------------------------------------------------------
+// PUT /api/products/:id — JSON UPDATE (no file upload)
+// Expects body keys: title, slug, price, description, images (array)
+// ---------------------------------------------------------
+router.put("/:id", async (req, res, next) => {
   try {
-    const Prod = loadProductModel();
-    if (!Prod) return res.status(500).json({ ok: false, message: 'Product model not available' });
-
     const id = req.params.id;
-    // try by _id first, then slug
-    let doc = null;
-    try { doc = await Prod.findById(id).lean().exec(); } catch (e) { /* ignore invalid id */ }
-    if (!doc) doc = await Prod.findOne({ slug: id }).lean().exec();
-    if (!doc) return res.status(404).json({ ok: false, message: 'Not found' });
-    return res.json({ ok: true, data: doc });
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid product id" });
+    }
+
+    const allowed = ["title", "slug", "price", "description", "images", "tags", "stock"];
+    const updates = {};
+
+    allowed.forEach((key) => {
+      if (req.body[key] !== undefined) updates[key] = req.body[key];
+    });
+
+    const updated = await Product.findByIdAndUpdate(id, updates, {
+      new: true,
+    }).lean();
+
+    if (!updated) return res.status(404).json({ message: "Product not found" });
+
+    updated.images = makeAbsoluteImageUrls(updated.images || [], req);
+
+    return res.json(updated);
   } catch (err) {
-    console.error(`${LOG} GET /:id error:`, err && (err.stack || err));
-    return res.status(500).json({ ok: false, message: err && err.message ? err.message : 'Server error' });
+    console.error("PUT JSON update error:", err);
+    next(err);
+  }
+});
+
+// ---------------------------------------------------------
+// PUT /api/products/:id/upload — MULTIPART (file upload)
+// - field 'images' for new files (multiple)
+// - field 'keepImages' JSON string for existing image paths to retain
+// ---------------------------------------------------------
+router.put("/:id/upload", upload.array("images"), async (req, res, next) => {
+  try {
+    const id = req.params.id;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid product id" });
+    }
+
+    const product = await Product.findById(id);
+    if (!product) return res.status(404).json({ message: "Product not found" });
+
+    // Parse keepImages (existing image URLs to keep)
+    let keepImages = [];
+    if (req.body.keepImages) {
+      try {
+        keepImages = JSON.parse(req.body.keepImages);
+      } catch (parseErr) {
+        console.warn("Failed to parse keepImages:", parseErr);
+        // fallback: if it's a single string, try using it as one element
+        if (typeof req.body.keepImages === "string") keepImages = [req.body.keepImages];
+      }
+    }
+
+    // New uploaded image paths (store as relative paths like /uploads/<file>)
+    const uploadedFiles = (req.files || []).map((file) => {
+      return `/uploads/${path.basename(file.path)}`;
+    });
+
+    // Merge existing + new
+    const newImagesArray = [...(keepImages || []), ...uploadedFiles];
+
+    // Update fields
+    if (req.body.title !== undefined) product.title = req.body.title;
+    if (req.body.slug !== undefined) product.slug = req.body.slug;
+    if (req.body.price !== undefined) product.price = req.body.price;
+    if (req.body.description !== undefined) product.description = req.body.description;
+    if (req.body.tags !== undefined) product.tags = req.body.tags;
+    if (req.body.stock !== undefined) product.stock = req.body.stock;
+
+    // If client sent images explicitly (via keepImages), replace; otherwise keep previous behavior
+    product.images = newImagesArray;
+
+    await product.save();
+
+    const productObj = product.toObject();
+    productObj.images = makeAbsoluteImageUrls(productObj.images || [], req);
+
+    return res.json(productObj);
+  } catch (err) {
+    console.error("PUT multipart update error:", err);
+    next(err);
+  }
+});
+
+// ---------------------------------------------------------
+// DELETE /api/products/:id
+// - deletes DB document and local upload files referenced in product.images (only /uploads/...)
+// ---------------------------------------------------------
+router.delete("/:id", async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid product id" });
+    }
+
+    const product = await Product.findById(id);
+    if (!product) return res.status(404).json({ message: "Product not found" });
+
+    // Delete local files referenced (safely)
+    const images = product.images || [];
+    for (const img of images) {
+      try {
+        // If image is absolute URL, but points to our uploads path (e.g., BASE_URL + /uploads/...), convert to relative
+        let relative = img;
+        const base = process.env.BASE_URL || `${req.protocol}://${req.get("host")}`;
+        if (relative.startsWith(base)) {
+          relative = relative.replace(base, "");
+        }
+
+        if (relative.startsWith("/uploads/")) {
+          await deleteLocalUploadFile(relative);
+        }
+      } catch (err) {
+        console.error("Error deleting referenced image:", err && err.message ? err.message : err);
+      }
+    }
+
+    await product.remove();
+
+    return res.json({ message: "Product deleted" });
+  } catch (err) {
+    console.error("DELETE /api/products/:id error:", err);
+    next(err);
   }
 });
 
