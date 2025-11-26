@@ -23,38 +23,49 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-// Read FRONTEND_URLS env and normalize
-const rawOrigins = process.env.FRONTEND_URLS || process.env.FRONTEND_URL || '';
-// allow values separated by comma or newline
+// Read FRONTEND_URLS env and be tolerant of common paste mistakes
+let rawOrigins = process.env.FRONTEND_URLS || process.env.FRONTEND_URL || '';
+// If someone accidentally pasted "FRONTEND_URLS=..." as the value, strip it
+if (rawOrigins.trim().toUpperCase().startsWith('FRONTEND_URLS=')) {
+  rawOrigins = rawOrigins.trim().substring('FRONTEND_URLS='.length);
+}
+
+// Split by comma or newline, trim and filter empty
 const allowedOrigins = rawOrigins
   .split(/[,\\n]/)
   .map((s) => (s || '').trim())
   .filter(Boolean);
 
+// Always include the production hosts if not present
+['https://seemati.in', 'https://www.seemati.in'].forEach((h) => {
+  if (!allowedOrigins.includes(h)) allowedOrigins.push(h);
+});
+
+// Log what we will allow
 console.log('[CORS] FRONTEND_URLS raw:', rawOrigins);
 console.log('[CORS] allowedOrigins:', allowedOrigins);
 
-// CORS options with safe wildcard for vercel preview subdomains (temporary)
+/**
+ * CORS options:
+ * - Allow no-origin (curl / server-to-server)
+ * - Allow exact matches from allowedOrigins
+ * - Allow any vercel preview subdomain (*.vercel.app) automatically
+ * - Allow localhost in non-production for dev
+ */
 const corsOptions = {
   origin: function (origin, callback) {
-    // Allow server-to-server requests (no origin)
-    if (!origin) {
-      // non-browser or same-origin requests
-      return callback(null, true);
-    }
+    // Allow server-to-server or same-origin (no origin header)
+    if (!origin) return callback(null, true);
 
     // Exact match with configured origins
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      return callback(null, true);
-    }
+    if (allowedOrigins.indexOf(origin) !== -1) return callback(null, true);
 
-    // Allow local dev host in non-production
+    // Allow localhost in non-production
     if (process.env.NODE_ENV !== 'production' && origin.startsWith('http://localhost')) {
       return callback(null, true);
     }
 
-    // TEMPORARY: accept any vercel preview deploys for convenience (endsWith .vercel.app)
-    // This is helpful while you iterate; remove this block later if you want stricter security.
+    // Wildcard: allow any vercel preview deploy (hostname endsWith .vercel.app)
     try {
       const u = new URL(origin);
       if (u.hostname && u.hostname.endsWith('.vercel.app')) {
@@ -62,7 +73,7 @@ const corsOptions = {
         return callback(null, true);
       }
     } catch (err) {
-      // ignore parse errors
+      // ignore parsing errors and fall through to reject
     }
 
     // Not allowed
@@ -72,14 +83,13 @@ const corsOptions = {
   credentials: true,
   optionsSuccessStatus: 200,
 };
+
 app.use(cors(corsOptions));
 
-// Health check
+// Basic health check
 app.get('/', (req, res) => res.status(200).json({ ok: true, env: process.env.NODE_ENV || 'development' }));
 
-// Delay mounting routers until DB connection in startServer (below)
-
-// Basic error handler
+// Errors handler
 app.use((err, req, res, next) => {
   console.error('ERROR:', err && err.message ? err.message : err);
   if (err && err.message && err.message.includes('CORS')) {
@@ -88,7 +98,7 @@ app.use((err, req, res, next) => {
   res.status(err && err.status ? err.status : 500).json({ error: err && err.message ? err.message : 'Internal server error' });
 });
 
-// ---------- MongoDB connect + start ----------
+// ---------- MongoDB connect + mount and start ----------
 const MONGO_URI = process.env.MONGO_URI;
 if (!MONGO_URI) {
   console.error('MONGO_URI is not set. Set it in Render environment variables.');
@@ -123,11 +133,12 @@ const startServer = async () => {
   try {
     await connectWithRetry();
 
-    // Mount routers
+    // Mount routers after DB connect
     try {
       const authRouter = require('./src/routes/auth.cjs');
       const otpRouter = require('./src/routes/otpRoutes.cjs');
       const productRouter = require('./src/routes/productRoutes.cjs');
+
       if (authRouter) app.use('/api/auth', authRouter);
       if (otpRouter) app.use('/api/otp', otpRouter);
       if (productRouter) app.use('/api/products', productRouter);
