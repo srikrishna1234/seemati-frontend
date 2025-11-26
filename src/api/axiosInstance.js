@@ -1,18 +1,13 @@
-// src/api/axiosInstance.js
-import axios from 'axios';
-
-// Use REACT_APP_API_URL if provided, otherwise default to the API base including /api
-// This keeps existing call sites working (they often do api.post('/otp/send') or api.get('/auth/me'))
-const baseURL = process.env.REACT_APP_API_URL || 'https://api.seemati.in/api';
+import axios from "axios";
 
 const axiosInstance = axios.create({
-  baseURL,
-  timeout: 30000,
-  withCredentials: true, // keeps cookie-based auth working
+  baseURL: "https://api.seemati.in/api",  // VERY IMPORTANT
+  withCredentials: true,                  // Send cookie (seemati_auth)
   headers: {
-    'Content-Type': 'application/json',
-    Accept: 'application/json',
+    "Content-Type": "application/json",
+    Accept: "application/json",
   },
+  timeout: 20000,
 });
 
 export default axiosInstance;
