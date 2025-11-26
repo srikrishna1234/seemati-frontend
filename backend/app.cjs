@@ -1,138 +1,95 @@
-﻿// backend/app.cjs
-'use strict';
+﻿// app.cjs
+// Full file: Express app configured for cookies + CORS + trust proxy for production deployments.
 
-require('dotenv').config();
+import express from "express";
+import cors from "cors";
+import cookieParser from "cookie-parser";
+import helmet from "helmet";
+import morgan from "morgan";
+import path from "path";
+import dotenv from "dotenv";
 
-// Ensure DB connection attempted before routes are mounted
-try {
-  require('./utils/db.cjs');
-} catch (err) {
-  console.error('[App] Could not require ./utils/db.cjs:', err && err.message ? err.message : err);
-}
-
-const express = require('express');
-const cors = require('cors');
-const morgan = require('morgan');
-const helmet = require('helmet');
-const cookieParser = require('cookie-parser');
+dotenv.config();
 
 const app = express();
 
-// If running behind a proxy (Render/Heroku), enable trust proxy so secure cookies work correctly
-app.set('trust proxy', true);
-
-app.use(helmet());
-app.use(morgan('combined'));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use(cookieParser()); // <- enable cookie parsing for auth middleware and routes
-
-// CORS setup
-const rawOrigins = process.env.CORS_ORIGINS || '';
-const envOrigins = rawOrigins.split(',').map(s => s.trim()).filter(Boolean);
-
-// Always include production frontend as an allowed origin by default
-const defaultOrigins = [
-  'http://localhost:3000',
-  'http://127.0.0.1:3000',
-  'https://seemati.in'
-];
-
-const allowedOrigins = Array.from(new Set([...envOrigins, ...defaultOrigins]));
-
-// If the env variable explicitly sets CORS_ALLOW_CREDENTIALS to "false", respect it; otherwise default to true.
-// This ensures cookies are allowed by default so auth can work across subdomains.
-const allowCredentials = String(process.env.CORS_ALLOW_CREDENTIALS || 'true').toLowerCase() === 'true';
-
-// pattern regex (matches subdomains like xxx.vercel.app and xxx.netlify.app)
-const vercelRegex = /\.vercel\.app$/i;
-const netlifyRegex = /\.netlify\.app$/i;
-
-function normalizeOrigin(origin) {
-  if (!origin) return origin;
-  let o = origin.trim();
-  if (o.endsWith('/')) o = o.slice(0, -1);
-  return o.toLowerCase();
+// If your app is behind a proxy (Render, Vercel, Cloud Run), enable trust proxy
+// so secure cookies and client IP detection work correctly.
+if (process.env.NODE_ENV === "production") {
+  app.set("trust proxy", 1); // trust first proxy
 }
 
-function isAllowedByPattern(origin) {
-  if (!origin) return false;
-  try {
-    const o = normalizeOrigin(origin);
-    if (vercelRegex.test(o)) return true;
-    if (netlifyRegex.test(o)) return true;
-    // add other dynamic host patterns here if needed
-  } catch (e) {
-    return false;
-  }
-  return false;
+// Basic security headers
+app.use(helmet());
+
+// Logging
+app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
+
+// Body parsing + cookie parser
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
+
+// CORS: allow credentials and use a whitelist from env
+// Set FRONTEND_URL to the exact origin of your admin frontend (e.g. https://seemati.in or https://admin.seemati.in or the Vercel preview domain)
+// You can also provide multiple origins separated by commas in FRONTEND_URLS
+const rawOrigins = process.env.FRONTEND_URLS || process.env.FRONTEND_URL || "";
+const allowedOrigins = rawOrigins.split(",").map(s => s.trim()).filter(Boolean);
+
+// Fallback: if allowedOrigins is empty in dev, allow localhost
+if (allowedOrigins.length === 0 && process.env.NODE_ENV !== "production") {
+  allowedOrigins.push("http://localhost:3000");
 }
 
 const corsOptions = {
   origin: function (origin, callback) {
-    // No origin => non-browser or same-origin (server-to-server) — allow
-    if (!origin) {
-      console.info('[CORS] No origin provided (non-browser or same-origin). Allowing.');
+    // Allow non-browser requests (cURL, server-to-server) where origin is undefined
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) !== -1) {
       return callback(null, true);
+    } else {
+      return callback(new Error("CORS: Origin not allowed"), false);
     }
-
-    const normalized = normalizeOrigin(origin);
-
-    if (allowedOrigins.indexOf(normalized) !== -1) {
-      console.info(`[CORS] Origin allowed (explicit): ${origin}`);
-      return callback(null, true);
-    }
-
-    if (isAllowedByPattern(origin)) {
-      console.info(`[CORS] Origin allowed by pattern: ${origin}`);
-      return callback(null, true);
-    }
-
-    console.warn(`[CORS] Origin rejected: ${origin}`);
-    return callback(new Error('CORS policy: origin not allowed'), false);
   },
-  credentials: allowCredentials,
+  credentials: true, // <--- IMPORTANT: allow cookies to be sent
   optionsSuccessStatus: 200,
 };
 
 app.use(cors(corsOptions));
-// Ensure preflight requests return correct CORS headers
-app.options('*', cors(corsOptions));
 
-// mount routes (keep your current route files)
-try {
-  const otpRoutes = require('./src/routes/otpRoutes.cjs');
-  const productRoutes = require('./src/routes/productRoutes.cjs');
+// Mount your routers (adjust paths if different)
+import authRouter from "./src/routes/auth.cjs";
+import otpRouter from "./src/routes/otpRoutes.cjs";
+import productRouter from "./src/routes/productRoutes.cjs";
 
-  // auth router present in src/routes/auth.cjs
-  let authRoutes = null;
-  try {
-    authRoutes = require('./src/routes/auth.cjs');
-  } catch (e) {
-    console.warn('[App] auth.cjs not found at ./src/routes/auth.cjs — will not mount /api/auth (this is non-fatal in dev)');
-  }
+app.use("/api/auth", authRouter);
+app.use("/api/otp", otpRouter);
+app.use("/api/products", productRouter);
 
-  if (authRoutes) {
-    app.use('/api/auth', authRoutes);
-    console.info('Mounted router: /api/auth -> ./src/routes/auth.cjs');
-  }
-
-  app.use('/api/otp', otpRoutes);
-  console.info('Mounted router: /api/otp -> ./src/routes/otpRoutes.cjs');
-
-  app.use('/api/products', productRoutes);
-  app.use('/products', productRoutes);
-  console.info('Mounted router: /api/products -> ./src/routes/productRoutes.cjs');
-} catch (err) {
-  console.error('Error mounting routers:', err && err.message ? err.message : err);
-}
-
-// health
-app.get('/healthz', (req, res) => res.json({ ok: true }));
-
-const PORT = Number(process.env.PORT || process.env.NODE_PORT || 10000);
-app.listen(PORT, () => {
-  console.info(`Backend listening on port ${PORT} (NODE_ENV=${process.env.NODE_ENV})`);
+// Root endpoint (health check) - return 200 so hosting platform health checks pass
+app.get("/", (req, res) => {
+  res.status(200).json({ ok: true, env: process.env.NODE_ENV || "development" });
 });
 
-module.exports = app;
+// 404 handler
+app.use((req, res, next) => {
+  res.status(404).json({ error: "Not found" });
+});
+
+// Basic error handler (improve as needed)
+app.use((err, req, res, next) => {
+  console.error("ERROR:", err?.message || err);
+  if (err.message && err.message.includes("CORS")) {
+    return res.status(403).json({ error: "CORS error: origin not allowed" });
+  }
+  res.status(err.status || 500).json({ error: err.message || "Internal server error" });
+});
+
+// Start server
+const PORT = process.env.PORT || process.env.SERVER_PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`[Mongo] Attempting connection to MongoDB...`);
+  console.log(`Backend listening on port ${PORT} (NODE_ENV=${process.env.NODE_ENV})`);
+});
+
+export default app;
