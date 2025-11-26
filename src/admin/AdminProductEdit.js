@@ -9,7 +9,6 @@ function stringToArray(str) {
   if (Array.isArray(str)) return str;
   return String(str).split(",").map(s => s.trim()).filter(Boolean);
 }
-
 function arrayToString(arr) {
   if (!arr) return "";
   if (Array.isArray(arr)) return arr.join(", ");
@@ -19,9 +18,7 @@ function arrayToString(arr) {
 export default function AdminProductEdit() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const API_BASE = process.env.REACT_APP_API_URL
-    ? process.env.REACT_APP_API_URL.replace(/\/$/, "")
-    : "";
+  const API_BASE = process.env.REACT_APP_API_URL ? process.env.REACT_APP_API_URL.replace(/\/$/, "") : "";
 
   const [loading, setLoading] = useState(true);
   const [title, setTitle] = useState("");
@@ -42,64 +39,143 @@ export default function AdminProductEdit() {
   const [newFiles, setNewFiles] = useState([]);
   const [newPreviews, setNewPreviews] = useState([]);
 
+  // Try multiple endpoints for GET product
   useEffect(() => {
-    async function load() {
-      setLoading(true);
+    async function tryGet(url) {
       try {
-        const res = await axiosInstance.get(`/admin/products/${id}`);
-        let product = res.data?.product ?? res.data?.data ?? res.data;
-
-        if (product?.product) product = product.product;
-
-        setTitle(product?.title ?? "");
-        setSlug(product?.slug ?? "");
-        setPrice(product?.price ?? "");
-        setMrp(product?.mrp ?? "");
-        setStock(product?.stock ?? "");
-        setSku(product?.sku ?? "");
-        setBrand(product?.brand ?? "");
-        setCategory(product?.category ?? "");
-        setVideoUrl(product?.videoUrl ?? "");
-        setColorsText(arrayToString(product?.colors ?? []));
-        setSizesText(arrayToString(product?.sizes ?? []));
-        setDescription(product?.description ?? "");
-        setPublished(Boolean(product?.published));
-
-        // Normalize images
-        let imgs = product?.images ?? [];
-        if (!Array.isArray(imgs)) imgs = [imgs];
-        const normalized = imgs
-          .map((img) => {
-            if (!img) return null;
-            let url = typeof img === "string" ? img : img.url || img.path;
-            if (url && !/^https?:\/\//.test(url)) {
-              if (API_BASE) url = `${API_BASE}/${url.replace(/^\/+/, "")}`;
-            }
-            return { url, raw: img };
-          })
-          .filter(Boolean);
-        setExistingImages(normalized);
+        const res = await axiosInstance.get(url);
+        return { ok: true, url, data: res.data, res };
       } catch (err) {
-        console.error("Fetch product failed:", err);
+        return { ok: false, url, err, status: err?.response?.status, data: err?.response?.data };
       }
+    }
+
+    function normalizeProduct(raw) {
+      if (!raw) return null;
+      let obj = raw?.product ?? raw?.data ?? raw?.result ?? raw;
+      if (obj?.product) obj = obj.product;
+      if (obj?.data) obj = obj.data;
+      return obj;
+    }
+
+    function normalizeImgs(product) {
+      let imgs = product?.images ?? product?.image ?? product?.photos ?? [];
+      if (!Array.isArray(imgs) && imgs) {
+        if (typeof imgs === "string") imgs = imgs.split(",").map(s => s.trim()).filter(Boolean);
+        else imgs = [imgs];
+      }
+      return imgs.map(img => {
+        if (!img) return null;
+        let url = typeof img === "string" ? img : img.url || img.path || img.filename || "";
+        if (url && !/^https?:\/\//i.test(url)) {
+          if (API_BASE) url = `${API_BASE}/${url.replace(/^\/+/, "")}`;
+        }
+        return { url, raw: img };
+      }).filter(Boolean);
+    }
+
+    async function fetchAggressive() {
+      setLoading(true);
+
+      // probable single-item endpoints
+      const singles = [
+        `/admin/products/${id}`,
+        `/admin/products/edit/${id}`,
+        `/admin/product/${id}`,
+        `/products/${id}`,
+        `/product/${id}`,
+        `/api/admin/products/${id}`,
+        `/api/products/${id}`,
+        `/v1/products/${id}`,
+      ];
+
+      // list endpoints (search inside)
+      const lists = [
+        `/admin/products`,
+        `/products`,
+        `/api/products`,
+        `/v1/products`,
+      ];
+
+      console.log("[AdminEdit] Trying single endpoints:", singles);
+      for (const ep of singles) {
+        const r = await tryGet(ep);
+        console.log("[AdminEdit] tried", ep, r.ok ? "OK" : `FAILED ${r.status || ""}`, r.ok ? r.data : r.data || r.err);
+        if (r.ok && r.data) {
+          const p = normalizeProduct(r.data);
+          if (p) {
+            console.log("[AdminEdit] Using product from", ep, p);
+            fillFromProduct(p);
+            setLoading(false);
+            return;
+          }
+        }
+      }
+
+      console.log("[AdminEdit] Trying list endpoints:", lists);
+      for (const le of lists) {
+        const r = await tryGet(le);
+        console.log("[AdminEdit] tried list", le, r.ok ? "OK" : `FAILED ${r.status || ""}`, r.ok ? r.data : r.data || r.err);
+        if (r.ok && r.data) {
+          let list = r.data;
+          if (!Array.isArray(list)) {
+            list = r.data?.products ?? r.data?.data ?? r.data?.result ?? r.data?.items ?? list;
+          }
+          if (Array.isArray(list)) {
+            const found = list.find(p => String(p._id ?? p.id ?? p._doc?._id ?? "") === String(id));
+            if (found) {
+              const p = normalizeProduct(found) ?? found;
+              console.log("[AdminEdit] Found product inside list", le, p);
+              fillFromProduct(p);
+              setLoading(false);
+              return;
+            }
+          } else {
+            console.log("[AdminEdit] list endpoint returned non-array:", le, r.data);
+          }
+        }
+      }
+
+      console.error("[AdminEdit] Could not find product via any endpoint tried. Check server routes or axios baseURL.");
       setLoading(false);
     }
 
-    load();
+    function fillFromProduct(product) {
+      if (!product) return;
+      setTitle(product?.title ?? product?.name ?? "");
+      setSlug(product?.slug ?? "");
+      setPrice(product?.price ?? "");
+      setMrp(product?.mrp ?? "");
+      setStock(product?.stock ?? product?.quantity ?? "");
+      setSku(product?.sku ?? "");
+      setBrand(product?.brand ?? "");
+      setCategory(product?.category ?? product?.cat ?? "");
+      setVideoUrl(product?.videoUrl ?? product?.video ?? "");
+      const colors = product?.colors ?? product?.colours ?? [];
+      setColorsText(Array.isArray(colors) ? arrayToString(colors) : String(colors ?? ""));
+      const sizes = product?.sizes ?? product?.size ?? [];
+      setSizesText(Array.isArray(sizes) ? arrayToString(sizes) : String(sizes ?? ""));
+      setDescription(product?.description ?? "");
+      setPublished(Boolean(product?.published));
+      setExistingImages(normalizeImgs(product));
+    }
+
+    fetchAggressive();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  // Preview new files
+  // previews for newly chosen files
   useEffect(() => {
-    if (!newFiles?.length) return setNewPreviews([]);
-
+    if (!newFiles || newFiles.length === 0) {
+      setNewPreviews([]);
+      return;
+    }
     const previews = [];
     newFiles.forEach((file, idx) => {
       const reader = new FileReader();
       reader.onload = (e) => {
         previews[idx] = e.target.result;
-        if (previews.filter(Boolean).length === newFiles.length) {
-          setNewPreviews(previews);
-        }
+        if (previews.filter(Boolean).length === newFiles.length) setNewPreviews(previews);
       };
       reader.readAsDataURL(file);
     });
@@ -109,25 +185,23 @@ export default function AdminProductEdit() {
     setNewFiles(Array.from(e.target.files || []));
   }
 
-  function removeExistingImage(i) {
-    const arr = [...existingImages];
-    arr.splice(i, 1);
-    setExistingImages(arr);
+  function removeExistingImage(index) {
+    const copy = [...existingImages];
+    copy.splice(index, 1);
+    setExistingImages(copy);
+  }
+  function removeNewPreview(index) {
+    const copyFiles = [...newFiles];
+    const copyPreviews = [...newPreviews];
+    copyFiles.splice(index, 1);
+    copyPreviews.splice(index, 1);
+    setNewFiles(copyFiles);
+    setNewPreviews(copyPreviews);
   }
 
-  function removeNewPreview(i) {
-    const a = [...newFiles];
-    const b = [...newPreviews];
-    a.splice(i, 1);
-    b.splice(i, 1);
-    setNewFiles(a);
-    setNewPreviews(b);
-  }
-
-  // FINAL SAVE FUNCTION – CORRECT ROUTE
+  // Save — correct update endpoint (admin)
   async function handleSave(e) {
     e.preventDefault();
-
     const payload = {
       title,
       slug,
@@ -142,88 +216,78 @@ export default function AdminProductEdit() {
       sizes: stringToArray(sizesText),
       description,
       published,
-      images: existingImages.map((i) => i.raw ?? i.url)
+      images: existingImages.map(i => i.raw ?? i.url)
     };
+
+    console.log("[AdminEdit] saving payload:", payload);
 
     try {
       await axiosInstance.put(`/admin/products/${id}`, payload);
       navigate("/admin/products");
     } catch (err) {
-      console.error("SAVE FAILED:", err);
-      alert("Save failed — check console and network tab for details.");
+      console.error("[AdminEdit] Save failed:", err, err?.response?.data ?? "");
+      alert("Save failed — check console & network tab.");
     }
   }
 
-  if (loading) return <div style={{ padding: 20 }}>Loading…</div>;
+  if (loading) return <div style={{ padding: 20 }}>Loading...</div>;
 
   return (
     <div className="admin-edit-wrap">
-      <h1>Edit product — {title}</h1>
+      <h1>Edit product — {title || ""}</h1>
       <button onClick={() => navigate("/admin/products")}>Back to products</button>
 
       <form onSubmit={handleSave} className="admin-edit-form">
         <div className="col-left">
-          <label>Title <input value={title} onChange={(e) => setTitle(e.target.value)} /></label>
-          <label>Slug <input value={slug} onChange={(e) => setSlug(e.target.value)} /></label>
-          <label>Price <input value={price} onChange={(e) => setPrice(e.target.value)} /></label>
-          <label>MRP <input value={mrp} onChange={(e) => setMrp(e.target.value)} /></label>
-          <label>Stock <input value={stock} onChange={(e) => setStock(e.target.value)} /></label>
-          <label>SKU <input value={sku} onChange={(e) => setSku(e.target.value)} /></label>
-          <label>Brand <input value={brand} onChange={(e) => setBrand(e.target.value)} /></label>
-          <label>Category <input value={category} onChange={(e) => setCategory(e.target.value)} /></label>
-          <label>Video URL <input value={videoUrl} onChange={(e) => setVideoUrl(e.target.value)} /></label>
+          <label>Title<input value={title} onChange={e => setTitle(e.target.value)} /></label>
+          <label>Slug<input value={slug} onChange={e => setSlug(e.target.value)} /></label>
+          <label>Price<input value={price} onChange={e => setPrice(e.target.value)} /></label>
+          <label>MRP<input value={mrp} onChange={e => setMrp(e.target.value)} /></label>
+          <label>Stock<input value={stock} onChange={e => setStock(e.target.value)} /></label>
+          <label>SKU<input value={sku} onChange={e => setSku(e.target.value)} /></label>
+          <label>Brand<input value={brand} onChange={e => setBrand(e.target.value)} /></label>
+          <label>Category<input value={category} onChange={e => setCategory(e.target.value)} /></label>
+          <label>Video URL<input value={videoUrl} onChange={e => setVideoUrl(e.target.value)} /></label>
         </div>
 
         <div className="col-right">
+          <div className="images-section">
+            <h4>Existing images</h4>
+            <div className="images-grid">
+              {existingImages.length === 0 && <div>No existing images</div>}
+              {existingImages.map((img, idx) => (
+                <div className="image-card" key={idx}>
+                  <img src={img.url || "/placeholder.png"} alt={`img-${idx}`} onError={(e)=>{e.target.src="/placeholder.png";}} />
+                  <button type="button" onClick={() => removeExistingImage(idx)}>×</button>
+                </div>
+              ))}
+            </div>
 
-          <h4>Existing images</h4>
-          <div className="images-grid">
-            {existingImages.map((img, idx) => (
-              <div className="image-card" key={idx}>
-                <img src={img.url} alt="" />
-                <button type="button" onClick={() => removeExistingImage(idx)}>×</button>
-              </div>
-            ))}
+            <h4>Add new images</h4>
+            <input type="file" multiple accept="image/*" onChange={handleFileChange} />
+            <div className="images-grid">
+              {newPreviews.map((p, idx) => (
+                <div className="image-card" key={idx}>
+                  <img src={p} alt={`preview-${idx}`} />
+                  <button type="button" onClick={() => removeNewPreview(idx)}>×</button>
+                </div>
+              ))}
+            </div>
           </div>
 
-          <h4>Add new images</h4>
-          <input type="file" multiple accept="image/*" onChange={handleFileChange} />
-
-          <div className="images-grid">
-            {newPreviews.map((src, idx) => (
-              <div className="image-card" key={idx}>
-                <img src={src} alt="" />
-                <button type="button" onClick={() => removeNewPreview(idx)}>×</button>
-              </div>
-            ))}
-          </div>
-
-          <label>Colors (comma-separated)
-            <input value={colorsText} onChange={(e) => setColorsText(e.target.value)} />
-          </label>
-
+          <label>Colors (comma-separated)<input value={colorsText} onChange={e => setColorsText(e.target.value)} placeholder="e.g. red, blue" /></label>
           <div className="color-swatches">
             {stringToArray(colorsText).map((c, i) => (
-              <div key={i} className="swatch-item">
-                <div className="swatch" style={{ backgroundColor: c }} />
+              <div className="swatch-item" key={i}>
+                <div className="swatch" style={{ backgroundColor: c }} title={c} />
                 <span>{c}</span>
               </div>
             ))}
           </div>
 
-          <label>Sizes (comma-separated)
-            <input value={sizesText} onChange={(e) => setSizesText(e.target.value)} />
-          </label>
-
-          <label>Description
-            <textarea value={description} onChange={(e) => setDescription(e.target.value)} />
-          </label>
-
-          <label className="checkbox-row">
-            <input type="checkbox" checked={published} onChange={(e) => setPublished(e.target.checked)} />
-            Published
-          </label>
-
+          <label>Sizes (comma-separated)<input value={sizesText} onChange={e => setSizesText(e.target.value)} placeholder="e.g. S, M, L" /></label>
+          <label>Description<textarea value={description} onChange={e => setDescription(e.target.value)} /></label>
+          <label className="checkbox-row"><input type="checkbox" checked={published} onChange={e => setPublished(e.target.checked)} /> Published</label>
         </div>
 
         <div style={{ width: "100%", marginTop: 12 }}>
