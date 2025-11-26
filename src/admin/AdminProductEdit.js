@@ -1,196 +1,169 @@
-// frontend/src/admin/AdminProductEdit.js
 import React, { useEffect, useState } from "react";
-import { useParams, Link, useNavigate } from "react-router-dom";
-import axios from "../api/axiosInstance";
+import { useParams, useNavigate } from "react-router-dom";
+import axiosInstance from "../api/axiosInstance";
 
 export default function AdminProductEdit() {
-  const { id } = useParams(); // /admin/products/edit/:id
+  const { id } = useParams();
   const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [product, setProduct] = useState(null);
-  const [form, setForm] = useState({
-    title: "",
-    slug: "",
-    price: "",
-    mrp: "",
-    description: "",
-    imagesCSV: "", // comma-separated URLs
-  });
   const [error, setError] = useState(null);
-  const [successMsg, setSuccessMsg] = useState("");
+
+  const [product, setProduct] = useState(null);
+
+  const [title, setTitle] = useState("");
+  const [price, setPrice] = useState("");
+  const [mrp, setMrp] = useState("");
+  const [description, setDescription] = useState("");
+  const [stock, setStock] = useState("");
+  const [sku, setSku] = useState("");
+
+  const [colors, setColors] = useState([]);
+  const [sizes, setSizes] = useState([]);
+
+  const [existingImages, setExistingImages] = useState([]);
+  const [removedExisting, setRemovedExisting] = useState(new Set());
+
+  const [newFiles, setNewFiles] = useState([]);
+  const [newPreviews, setNewPreviews] = useState([]);
 
   useEffect(() => {
-    let mounted = true;
-    async function fetchProduct() {
+    async function loadProduct() {
       try {
-        setLoading(true);
-        setError(null);
-        const res = await axios.get(`/api/products/${id}`);
-        const p = res.data && (res.data.product || res.data);
-        if (!mounted) return;
+        const res = await axiosInstance.get(`/api/products/${id}`);
+        const p = res.data;
+
         setProduct(p);
-        setForm({
-          title: p.title || "",
-          slug: p.slug || "",
-          price: p.price != null ? String(p.price) : "",
-          mrp: p.mrp != null ? String(p.mrp) : "",
-          description: p.description || "",
-          imagesCSV: Array.isArray(p.images)
-            ? p.images.map((i) => (typeof i === "string" ? i : i.url || "")).filter(Boolean).join(",")
-            : "",
-        });
+        setTitle(p.title || "");
+        setPrice(p.price || "");
+        setMrp(p.mrp || "");
+        setDescription(p.description || "");
+        setStock(p.stock || "");
+        setSku(p.sku || "");
+        setColors(Array.isArray(p.colors) ? p.colors : []);
+        setSizes(Array.isArray(p.sizes) ? p.sizes : []);
+        setExistingImages(Array.isArray(p.images) ? p.images : []);
       } catch (err) {
-        console.error("AdminProductEdit fetch error:", err);
-        if (mounted) {
-          setError(err.response?.data?.message || err.message || "Failed to load product");
-        }
+        setError("Failed to load product");
       } finally {
-        if (mounted) setLoading(false);
+        setLoading(false);
       }
     }
-    fetchProduct();
-    return () => (mounted = false);
+    loadProduct();
   }, [id]);
 
-  function onChange(e) {
-    const { name, value } = e.target;
-    setForm((f) => ({ ...f, [name]: value }));
+  function handleNewFiles(e) {
+    const files = Array.from(e.target.files || []);
+    setNewFiles(files);
+    setNewPreviews(files.map((f) => URL.createObjectURL(f)));
   }
 
-  async function onSubmit(e) {
+  function toggleRemoveExisting(index) {
+    const copy = new Set(removedExisting);
+    if (copy.has(index)) copy.delete(index);
+    else copy.add(index);
+    setRemovedExisting(copy);
+  }
+
+  function keepImages() {
+    return existingImages.filter((_, idx) => !removedExisting.has(idx));
+  }
+
+  async function handleSubmit(e) {
     e.preventDefault();
     setSaving(true);
     setError(null);
-    setSuccessMsg("");
-    try {
-      // prepare payload
-      const payload = {
-        title: form.title,
-        slug: form.slug,
-        price: form.price === "" ? null : Number(form.price),
-        mrp: form.mrp === "" ? null : Number(form.mrp),
-        description: form.description,
-        images: form.imagesCSV
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean)
-          .map((u) => ({ url: u })),
-      };
 
-      const res = await axios.put(`/api/products/${id}`, payload);
-      const updated = res.data && (res.data.product || res.data);
-      setProduct(updated);
-      setSuccessMsg("Product updated successfully.");
-      // update form values to normalized data
-      setForm((f) => ({
-        ...f,
-        imagesCSV:
-          updated &&
-          Array.isArray(updated.images) &&
-          updated.images.map((i) => (typeof i === "string" ? i : i.url || "")).filter(Boolean).join(","),
-      }));
+    try {
+      const fd = new FormData();
+      fd.append("title", title);
+      fd.append("price", price);
+      fd.append("mrp", mrp);
+      fd.append("description", description);
+      fd.append("stock", stock);
+      fd.append("sku", sku);
+      fd.append("colors", JSON.stringify(colors));
+      fd.append("sizes", JSON.stringify(sizes));
+      fd.append("keepImages", JSON.stringify(keepImages()));
+
+      newFiles.forEach((f) => fd.append("images", f));
+
+      await axiosInstance.put(`/api/products/${id}/upload`, fd, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+
+      navigate("/admin/products");
     } catch (err) {
-      console.error("Update failed:", err);
-      setError(err.response?.data?.message || err.message || "Update failed");
+      console.error(err);
+      setError("Update failed");
     } finally {
       setSaving(false);
     }
   }
 
-  const handleDelete = async () => {
-    try {
-      const ok = window.confirm("Delete product permanently?");
-      if (!ok) return;
-      await axios.delete(`/api/products/${id}`);
-      alert("Deleted. Returning to products...");
-      navigate("/admin/products");
-    } catch (err) {
-      console.error("Delete failed:", err);
-      alert("Delete failed: " + (err.response?.data?.message || err.message));
-    }
-  };
-
-  if (loading) {
-    return (
-      <div style={{ padding: 20 }}>
-        <h2>Loading product…</h2>
-      </div>
-    );
-  }
-
-  if (error && !product) {
-    return (
-      <div style={{ padding: 20 }}>
-        <h2 style={{ color: "red" }}>Error: {error}</h2>
-        <p>
-          <Link to="/admin/products">Back to products</Link>
-        </p>
-      </div>
-    );
-  }
+  if (loading) return <div>Loading…</div>;
 
   return (
-    <div style={{ padding: 20 }}>
-      <h2>Edit product — {product?.title || "—"}</h2>
-      <div style={{ marginBottom: 12 }}>
-        <button onClick={() => navigate("/admin/products")} style={{ marginRight: 8 }}>
-          Back to products
-        </button>
-        <button onClick={handleDelete} style={{ marginRight: 8 }}>
-          Delete
-        </button>
-      </div>
+    <div style={{ maxWidth: 800, padding: 20 }}>
+      <h2>Edit Product</h2>
+      {error && <p style={{ color: "red" }}>{error}</p>}
 
-      <form onSubmit={onSubmit} style={{ maxWidth: 880 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <div>
-            <label style={{ display: "block", marginBottom: 6 }}>
-              Title
-              <input name="title" value={form.title} onChange={onChange} style={{ width: "100%", padding: 8, marginTop: 6 }} />
-            </label>
+      <form onSubmit={handleSubmit}>
 
-            <label style={{ display: "block", marginBottom: 6 }}>
-              Slug
-              <input name="slug" value={form.slug} onChange={onChange} style={{ width: "100%", padding: 8, marginTop: 6 }} />
-            </label>
+        <label>Title</label>
+        <input value={title} onChange={(e) => setTitle(e.target.value)} />
 
-            <label style={{ display: "block", marginBottom: 6 }}>
-              Price (₹)
-              <input name="price" value={form.price} onChange={onChange} style={{ width: "100%", padding: 8, marginTop: 6 }} />
-            </label>
+        <label>Price</label>
+        <input type="number" value={price} onChange={(e) => setPrice(e.target.value)} />
 
-            <label style={{ display: "block", marginBottom: 6 }}>
-              MRP (₹)
-              <input name="mrp" value={form.mrp} onChange={onChange} style={{ width: "100%", padding: 8, marginTop: 6 }} />
-            </label>
-          </div>
+        <label>MRP</label>
+        <input type="number" value={mrp} onChange={(e) => setMrp(e.target.value)} />
 
-          <div>
-            <label style={{ display: "block", marginBottom: 6 }}>
-              Images (comma-separated URLs)
-              <textarea name="imagesCSV" value={form.imagesCSV} onChange={onChange} rows={6} style={{ width: "100%", padding: 8, marginTop: 6 }} />
-            </label>
+        <label>Description</label>
+        <textarea value={description} onChange={(e) => setDescription(e.target.value)} />
 
-            <label style={{ display: "block", marginBottom: 6 }}>
-              Description
-              <textarea name="description" value={form.description} onChange={onChange} rows={6} style={{ width: "100%", padding: 8, marginTop: 6 }} />
-            </label>
-          </div>
+        <label>Stock</label>
+        <input type="number" value={stock} onChange={(e) => setStock(e.target.value)} />
+
+        <label>SKU</label>
+        <input value={sku} onChange={(e) => setSku(e.target.value)} />
+
+        <h3>Existing Images</h3>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          {existingImages.map((img, index) => (
+            <div key={index} style={{ position: "relative" }}>
+              <img src={img} style={{ width: 120, height: 120, objectFit: "cover" }} />
+              <button
+                type="button"
+                onClick={() => toggleRemoveExisting(index)}
+                style={{
+                  position: "absolute",
+                  top: 5,
+                  right: 5,
+                  background: removedExisting.has(index) ? "green" : "red",
+                  color: "#fff",
+                }}>
+                {removedExisting.has(index) ? "Undo" : "X"}
+              </button>
+            </div>
+          ))}
         </div>
 
-        {successMsg && <div style={{ marginTop: 12, color: "green" }}>{successMsg}</div>}
-        {error && <div style={{ marginTop: 12, color: "red" }}>Error: {error}</div>}
+        <h3>Add New Images</h3>
+        <input type="file" multiple onChange={handleNewFiles} />
 
-        <div style={{ marginTop: 14 }}>
-          <button type="submit" disabled={saving} style={{ marginRight: 8 }}>
-            {saving ? "Saving..." : "Save changes"}
-          </button>
-          <button type="button" onClick={() => navigate("/admin/products")}>
-            Done
-          </button>
-        </div>
+        {newPreviews.length > 0 && (
+          <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+            {newPreviews.map((p, i) => (
+              <img key={i} src={p} style={{ width: 120, height: 120, objectFit: "cover" }} />
+            ))}
+          </div>
+        )}
+
+        <button disabled={saving} type="submit" style={{ marginTop: 20 }}>
+          {saving ? "Saving…" : "Save Changes"}
+        </button>
       </form>
     </div>
   );
