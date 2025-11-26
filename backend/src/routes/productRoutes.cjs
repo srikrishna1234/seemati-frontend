@@ -29,9 +29,8 @@ function normalizeImageEntry(img) {
     if (typeof img.url === "string") return img.url;
     if (typeof img.path === "string") return img.path;
     if (typeof img.key === "string") return img.key;
-    // Sometimes Mongoose returns nested objects - try common fields
-    if (img.location && typeof img.location === "string") return img.location;
-    if (img.src && typeof img.src === "string") return img.src;
+    if (typeof img.location === "string") return img.location;
+    if (typeof img.src === "string") return img.src;
   }
   return null;
 }
@@ -44,11 +43,8 @@ function makeAbsoluteImageUrls(images = [], req) {
     .map((img) => normalizeImageEntry(img))
     .filter(Boolean)
     .map((imgStr) => {
-      // already absolute
       if (imgStr.startsWith("http://") || imgStr.startsWith("https://")) return imgStr;
-      // relative path beginning with '/'
       if (imgStr.startsWith("/")) return `${base}${imgStr}`;
-      // fallback: prepend base
       return `${base}/${imgStr}`;
     });
 }
@@ -110,7 +106,6 @@ router.get("/", async (req, res, next) => {
             item.thumbnail = `${process.env.BASE_URL || `${req.protocol}://${req.get("host")}`}/${thumb}`;
           }
         }
-
       } catch (err) {
         console.warn("Warning converting images for product id", item._id, err && err.message ? err.message : err);
         item.images = [];
@@ -118,6 +113,7 @@ router.get("/", async (req, res, next) => {
       return item;
     });
 
+    // return array (frontend expects an array)
     return res.json(itemsWithAbsoluteImages);
   } catch (err) {
     console.error("GET /api/products error:", err && err.stack ? err.stack : err);
@@ -155,20 +151,44 @@ router.get("/:id", async (req, res, next) => {
   }
 });
 
-// PUT (JSON update)
+// PUT (JSON update) — now defensive about images shape
 router.put("/:id", async (req, res, next) => {
   try {
     const id = req.params.id;
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ message: "Invalid product id" });
     }
+
+    // Normalize images if present in request body
+    if (req.body.images) {
+      let imgs = req.body.images;
+      // sometimes body comes as JSON string
+      if (typeof imgs === "string") {
+        try {
+          imgs = JSON.parse(imgs);
+        } catch (e) {
+          // leave as-is
+        }
+      }
+
+      if (Array.isArray(imgs)) {
+        const normalized = imgs.map(normalizeImageEntry).filter(Boolean);
+        req.body.images = normalized;
+      } else {
+        // not an array -> remove to avoid DB cast issues
+        delete req.body.images;
+      }
+    }
+
     const allowed = ["title", "slug", "price", "description", "images", "tags", "stock", "thumbnail", "mrp", "compareAtPrice"];
     const updates = {};
     allowed.forEach((key) => {
       if (req.body[key] !== undefined) updates[key] = req.body[key];
     });
+
     const updated = await Product.findByIdAndUpdate(id, updates, { new: true }).lean();
     if (!updated) return res.status(404).json({ message: "Product not found" });
+
     updated.images = makeAbsoluteImageUrls(updated.images || [], req);
     return res.json(updated);
   } catch (err) {
@@ -253,8 +273,3 @@ router.delete("/:id", async (req, res, next) => {
 });
 
 module.exports = router;
-
-
-
-
-
