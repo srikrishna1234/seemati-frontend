@@ -4,10 +4,22 @@ import { useParams, useNavigate } from "react-router-dom";
 import axiosInstance from "../api/axiosInstance";
 import "./AdminProductEdit.css";
 
+/*
+ Full replacement AdminProductEdit.js
+
+ Goals:
+ - Aggressively try many likely endpoints for a single product GET.
+ - If single-item endpoints 404, try list endpoints and find product by id.
+ - Normalize many common response shapes and populate the form.
+ - Log every attempt and the normalized object so you (or I) can read DevTools console
+   and tell exactly which endpoint returned the data.
+ - Keep UI as two-column, image previews, color swatches, etc.
+*/
+
 function stringToArray(str) {
   if (!str) return [];
   if (Array.isArray(str)) return str;
-  return String(str).split(",").map(s => s.trim()).filter(Boolean);
+  return String(str).split(",").map((s) => s.trim()).filter(Boolean);
 }
 
 function arrayToString(arr) {
@@ -40,115 +52,158 @@ export default function AdminProductEdit() {
   const [newFiles, setNewFiles] = useState([]);
   const [newPreviews, setNewPreviews] = useState([]);
 
-  useEffect(() => {
-    async function fetchFrom(url) {
-      try {
-        const r = await axiosInstance.get(url);
-        return r;
-      } catch (err) {
-        // bubble up the error
-        throw err;
-      }
+  // ---------- Fetch helpers ----------
+  async function tryGet(endpoint) {
+    try {
+      const res = await axiosInstance.get(endpoint);
+      return { ok: true, endpoint, res };
+    } catch (err) {
+      return { ok: false, endpoint, err, status: err?.response?.status, data: err?.response?.data };
     }
+  }
 
-    async function fetchProduct() {
+  function normalizeProduct(raw) {
+    // raw may be the product, or an object that wraps it { product: {...} }, { data: {...} }, etc.
+    let product = raw?.product ?? raw?.result ?? raw?.data ?? raw;
+    if (!product) return null;
+    if (product?.product) product = product.product;
+    if (product?.data) product = product.data;
+    return product;
+  }
+
+  function normalizeImagesFromProduct(product) {
+    let imgs = product?.images ?? product?.image ?? product?.photos ?? [];
+    if (!Array.isArray(imgs) && imgs) {
+      if (typeof imgs === "string") imgs = imgs.split(",").map(s => s.trim()).filter(Boolean);
+      else imgs = [imgs];
+    }
+    const normalized = imgs.map((img) => {
+      if (!img) return null;
+      let url = typeof img === "string" ? img : img.url || img.path || img.filename || "";
+      if (url && !/^https?:\/\//i.test(url)) {
+        if (API_BASE) url = `${API_BASE}/${url.replace(/^\/+/, "")}`;
+      }
+      return { url, raw: img };
+    }).filter(Boolean);
+    return normalized;
+  }
+
+  // ---------- Primary fetch logic ----------
+  useEffect(() => {
+    async function fetchProductAggressive() {
       setLoading(true);
-      let res = null;
-      const tried = [];
 
-      // Try common endpoints: admin then public
-      const endpoints = [
+      const singleEndpoints = [
         `/admin/products/${id}`,
         `/products/${id}`,
+        `/admin/product/${id}`,
+        `/product/${id}`,
+        `/api/admin/products/${id}`,
+        `/api/products/${id}`,
+        `/v1/products/${id}`,
+        `/v1/admin/products/${id}`,
+        `/admin/products/get/${id}`,
+        `/admin/products?id=${id}`, // sometimes uses query param
       ];
 
-      for (const ep of endpoints) {
-        try {
-          tried.push(ep);
-          res = await fetchFrom(ep);
-          if (res) break;
-        } catch (err) {
-          // if 404 or network error, continue to next
-          // console.log will show errors
-          console.warn(`fetch ${ep} failed:`, err && err.response ? err.response.status : err.message);
+      const listEndpoints = [
+        `/admin/products`,
+        `/products`,
+        `/api/products`,
+        `/v1/products`,
+      ];
+
+      const tried = [];
+
+      // 1) Try single-item endpoints first
+      for (const ep of singleEndpoints) {
+        const r = await tryGet(ep);
+        tried.push(r);
+        if (r.ok && r.res && r.res.data) {
+          console.log("[AdminEdit] Found product at", ep, r.res.data);
+          const product = normalizeProduct(r.res.data);
+          console.log("[AdminEdit] Normalized product:", product);
+          if (product) {
+            populateFromProduct(product);
+            setLoading(false);
+            return;
+          }
+        } else {
+          console.warn("[AdminEdit] attempt failed for", ep, "status:", r.status, "data:", r.data);
         }
       }
 
-      console.log("Tried endpoints:", tried, "final response:", res);
-
-      if (!res) {
-        // failed to fetch product
-        setLoading(false);
-        console.error("Could not fetch product from tried endpoints");
-        return;
+      // 2) If none of the single-item endpoints returned the product,
+      // try list endpoints and search for the product by id
+      for (const le of listEndpoints) {
+        const r = await tryGet(le);
+        tried.push(r);
+        if (r.ok && r.res && r.res.data) {
+          const payload = r.res.data;
+          // payload may be array directly, or wrapped { products: [...] } etc.
+          let list = payload;
+          if (!Array.isArray(list)) {
+            // try common wrappers
+            list = payload?.products ?? payload?.data ?? payload?.result ?? payload?.items ?? list;
+          }
+          if (Array.isArray(list)) {
+            // try to find by matching _id or id (some APIs use id or _id)
+            const found = list.find(p => String(p._id ?? p.id ?? p._doc?._id ?? "") === String(id));
+            if (found) {
+              console.log("[AdminEdit] Found product inside list endpoint", le, "product:", found);
+              const product = normalizeProduct(found);
+              populateFromProduct(product ?? found);
+              setLoading(false);
+              return;
+            }
+          } else {
+            console.log("[AdminEdit] list endpoint returned non-array payload for", le, payload);
+          }
+        } else {
+          console.warn("[AdminEdit] list attempt failed for", le, "status:", r.status);
+        }
       }
 
-      // Normalize response: try several common shapes
-      let data = res.data;
-      // sometimes response is { product: {...} } or { result: {...} } or directly the object
-      let product = data?.product ?? data?.result ?? data?.data ?? data;
+      // 3) If still nothing, log everything (for debugging) and stop
+      console.error("[AdminEdit] Could not find product. Tried endpoints:", tried.map(t => ({ endpoint: t.endpoint, ok: t.ok, status: t.status })));
+      setLoading(false);
+    }
 
-      // If product includes wrappers like { product: { data: {...} } }
-      if (product && product.product) product = product.product;
-      if (product && product.data) product = product.data;
-
-      console.log("Normalized product object:", product);
-
-      // Defensive defaults
+    function populateFromProduct(product) {
+      if (!product) return;
       setTitle(product?.title ?? product?.name ?? "");
       setSlug(product?.slug ?? "");
-      setPrice(product?.price ?? "");
+      setPrice(product?.price ?? product?.mrp ?? "");
       setMrp(product?.mrp ?? "");
-      setStock(product?.stock ?? "");
+      setStock(product?.stock ?? product?.quantity ?? "");
       setSku(product?.sku ?? "");
       setBrand(product?.brand ?? "");
       setCategory(product?.category ?? product?.cat ?? "");
       setVideoUrl(product?.videoUrl ?? product?.video ?? "");
-      const colours = product?.colors ?? product?.colours ?? product?.colour ?? product?.color ?? [];
+      const colours = product?.colors ?? product?.colours ?? product?.color ?? [];
       setColorsText(Array.isArray(colours) ? arrayToString(colours) : String(colours ?? ""));
       const sizes = product?.sizes ?? product?.size ?? [];
       setSizesText(Array.isArray(sizes) ? arrayToString(sizes) : String(sizes ?? ""));
       setDescription(product?.description ?? "");
       setPublished(Boolean(product?.published));
-
-      // Normalize images array
-      let imgs = product?.images ?? product?.image ?? product?.photos ?? [];
-      if (!Array.isArray(imgs) && imgs) {
-        // could be comma-separated string or single string
-        if (typeof imgs === "string") {
-          imgs = imgs.split(",").map(s => s.trim()).filter(Boolean);
-        } else {
-          imgs = [imgs];
-        }
-      }
-      const normalized = imgs.map((img) => {
-        if (!img) return null;
-        // img could be string (url or path) or object { url, path, filename }
-        let url = typeof img === "string" ? img : img.url || img.path || img.filename || "";
-        if (url && !/^https?:\/\//i.test(url)) {
-          // prefix API base if provided
-          if (API_BASE) url = `${API_BASE}/${url.replace(/^\/+/, "")}`;
-        }
-        return { url, raw: img };
-      }).filter(Boolean);
-      console.log("Normalized images:", normalized);
-      setExistingImages(normalized);
-
-      setLoading(false);
+      const imgs = normalizeImagesFromProduct(product);
+      setExistingImages(imgs);
     }
 
-    fetchProduct();
+    fetchProductAggressive();
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  // preview newly chosen files
+  // ---------- file preview logic ----------
   useEffect(() => {
-    if (!newFiles || newFiles.length === 0) return setNewPreviews([]);
-    const readers = [];
+    if (!newFiles || newFiles.length === 0) {
+      setNewPreviews([]);
+      return;
+    }
     const previews = [];
     newFiles.forEach((file, idx) => {
       const reader = new FileReader();
-      readers.push(reader);
       reader.onload = (e) => {
         previews[idx] = e.target.result;
         if (previews.filter(Boolean).length === newFiles.length) {
@@ -157,7 +212,6 @@ export default function AdminProductEdit() {
       };
       reader.readAsDataURL(file);
     });
-    return () => {};
   }, [newFiles]);
 
   function handleFileChange(e) {
@@ -180,6 +234,7 @@ export default function AdminProductEdit() {
     setNewPreviews(copyPreviews);
   }
 
+  // ---------- save ----------
   async function handleSave(e) {
     e.preventDefault();
     const payload = {
@@ -196,40 +251,43 @@ export default function AdminProductEdit() {
       sizes: stringToArray(sizesText),
       description,
       published,
-      // images: existingImages.map(i => i.raw || i.url) // adapt if backend expects
+      // images: existingImages.map(i => i.raw ?? i.url) // adapt if backend expects
     };
 
-    console.log("Saving payload:", payload);
+    console.log("[AdminEdit] Saving payload:", payload);
 
     try {
-      // attempt to update main product (some backends require admin prefix)
-      const res = await axiosInstance.put(`/admin/products/${id}`, payload).catch(async (err) => {
-        console.warn("PUT /admin/products failed, trying /products/:id", err && err.response && err.response.status);
-        return axiosInstance.put(`/products/${id}`, payload);
-      });
+      // try admin PUT then public PUT
+      let res;
+      try {
+        res = await axiosInstance.put(`/admin/products/${id}`, payload);
+      } catch (err) {
+        console.warn("[AdminEdit] PUT /admin/products failed, trying /products/:id", err?.response?.status);
+        res = await axiosInstance.put(`/products/${id}`, payload);
+      }
 
-      // upload new files if any (example, adapt to your backend)
+      // handle new file uploads if backend supports multipart endpoint
       if (newFiles.length > 0) {
-        const fd = new FormData();
-        newFiles.forEach(f => fd.append("images", f));
         try {
+          const fd = new FormData();
+          newFiles.forEach(f => fd.append("images", f));
           await axiosInstance.post(`/admin/products/${id}/images`, fd, {
             headers: { "Content-Type": "multipart/form-data" },
           });
         } catch (uErr) {
-          console.warn("Uploading new files failed; your backend might expect presigned flow.", uErr);
+          console.warn("[AdminEdit] image upload failed or endpoint different:", uErr);
         }
       }
 
-      // after save - refresh or navigate
+      // done
       navigate("/admin/products");
     } catch (err) {
-      console.error("Save failed", err);
+      console.error("[AdminEdit] Save failed:", err);
       alert("Save failed — check console and network tab for details.");
     }
   }
 
-  if (loading) return <div style={{padding:20}}>Loading...</div>;
+  if (loading) return <div style={{ padding: 20 }}>Loading...</div>;
 
   return (
     <div className="admin-edit-wrap">
@@ -282,7 +340,7 @@ export default function AdminProductEdit() {
               {existingImages.length === 0 && <div>No existing images</div>}
               {existingImages.map((img, idx) => (
                 <div key={idx} className="image-card">
-                  <img src={img.url || "/placeholder.png"} alt={`existing-${idx}`} onError={(e)=>{ e.target.src = "/placeholder.png"; }} />
+                  <img src={img.url || "/placeholder.png"} alt={`existing-${idx}`} onError={(e) => { e.target.src = "/placeholder.png"; }} />
                   <button type="button" onClick={() => removeExistingImage(idx)}>×</button>
                 </div>
               ))}
@@ -322,11 +380,11 @@ export default function AdminProductEdit() {
             <textarea value={description} onChange={(e) => setDescription(e.target.value)} />
           </label>
 
-          <label className="checkbox-row"><input type="checkbox" checked={published} onChange={(e)=>setPublished(e.target.checked)} /> Published</label>
+          <label className="checkbox-row"><input type="checkbox" checked={published} onChange={(e) => setPublished(e.target.checked)} /> Published</label>
 
         </div>
 
-        <div style={{width:"100%", marginTop:12}}>
+        <div style={{ width: "100%", marginTop: 12 }}>
           <button type="submit">Save</button>
           <button type="button" onClick={() => navigate("/admin/products")}>Done</button>
         </div>
