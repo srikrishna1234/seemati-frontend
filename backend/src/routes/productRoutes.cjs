@@ -118,13 +118,7 @@ router.get("/", async (req, res, next) => {
       return item;
     });
 
-    return res.json({
-      page,
-      limit,
-      total,
-      count: itemsWithAbsoluteImages.length,
-      items: itemsWithAbsoluteImages
-    });
+    return res.json(itemsWithAbsoluteImages);
   } catch (err) {
     console.error("GET /api/products error:", err && err.stack ? err.stack : err);
     next(err);
@@ -259,5 +253,8 @@ router.delete("/:id", async (req, res, next) => {
 });
 
 module.exports = router;
+
+
+
 
 
