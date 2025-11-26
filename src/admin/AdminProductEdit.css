@@ -1,0 +1,160 @@
+/* src/admin/AdminProductEdit.css */
+.admin-edit-wrap {
+  padding: 24px;
+  font-family: Arial, Helvetica, sans-serif;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.admin-edit-wrap h1 {
+  font-size: 28px;
+  margin-bottom: 12px;
+}
+
+.admin-edit-wrap > button {
+  margin-bottom: 16px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+/* form layout: two responsive columns */
+.admin-edit-form {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.col-left,
+.col-right {
+  flex: 1 1 420px;
+  min-width: 320px;
+  box-sizing: border-box;
+}
+
+/* label + input block */
+.admin-edit-form label {
+  display: block;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+
+.admin-edit-form input[type="text"],
+.admin-edit-form input[type="url"],
+.admin-edit-form input[type="number"],
+.admin-edit-form textarea,
+.admin-edit-form input[type="email"] {
+  width: 100%;
+  padding: 8px;
+  box-sizing: border-box;
+  border: 1px solid #cfcfcf;
+  border-radius: 2px;
+  font-size: 14px;
+}
+
+.admin-edit-form textarea {
+  min-height: 100px;
+  resize: vertical;
+}
+
+/* Images section */
+.images-section h4 {
+  margin: 8px 0;
+  font-size: 15px;
+}
+
+.images-grid {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 8px 0 12px;
+}
+
+.image-card {
+  width: 96px;
+  height: 96px;
+  border: 1px solid #e2e2e2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  background: #fff;
+  box-sizing: border-box;
+  position: relative;
+}
+
+.image-card img {
+  max-width: 88px;
+  max-height: 64px;
+  object-fit: contain;
+}
+
+/* remove button inside image card */
+.image-card > button {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: rgba(0,0,0,0.6);
+  color: #fff;
+  border: none;
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 18px;
+  text-align: center;
+  border-radius: 2px;
+}
+
+/* color swatches */
+.color-swatches {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+
+.swatch-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.swatch {
+  width: 20px;
+  height: 20px;
+  border: 1px solid #ccc;
+  border-radius: 2px;
+}
+
+/* actions */
+.form-actions {
+  width: 100%;
+  margin-top: 16px;
+  display: flex;
+  gap: 8px;
+}
+
+.form-actions button {
+  padding: 8px 12px;
+  cursor: pointer;
+  border: 1px solid #bbb;
+  background: #fff;
+  border-radius: 4px;
+}
+
+/* checkbox row */
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* small screens: stack columns */
+@media (max-width: 880px) {
+  .col-left,
+  .col-right { flex-basis: 100%; min-width: 100%; }
+}
