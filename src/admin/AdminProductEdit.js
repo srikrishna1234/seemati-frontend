@@ -7,7 +7,7 @@ import "./AdminProductEdit.css";
 function stringToArray(str) {
   if (!str) return [];
   if (Array.isArray(str)) return str;
-  return String(str).split(",").map(s => s.trim()).filter(Boolean);
+  return String(str).split(",").map((s) => s.trim()).filter(Boolean);
 }
 function arrayToString(arr) {
   if (!arr) return "";
@@ -39,7 +39,7 @@ export default function AdminProductEdit() {
   const [newFiles, setNewFiles] = useState([]);
   const [newPreviews, setNewPreviews] = useState([]);
 
-  // Try multiple endpoints for GET product
+  // ---------------- GET product (aggressive, tolerant) ----------------
   useEffect(() => {
     async function tryGet(url) {
       try {
@@ -76,8 +76,6 @@ export default function AdminProductEdit() {
 
     async function fetchAggressive() {
       setLoading(true);
-
-      // probable single-item endpoints
       const singles = [
         `/admin/products/${id}`,
         `/admin/products/edit/${id}`,
@@ -88,8 +86,6 @@ export default function AdminProductEdit() {
         `/api/products/${id}`,
         `/v1/products/${id}`,
       ];
-
-      // list endpoints (search inside)
       const lists = [
         `/admin/products`,
         `/products`,
@@ -100,11 +96,10 @@ export default function AdminProductEdit() {
       console.log("[AdminEdit] Trying single endpoints:", singles);
       for (const ep of singles) {
         const r = await tryGet(ep);
-        console.log("[AdminEdit] tried", ep, r.ok ? "OK" : `FAILED ${r.status || ""}`, r.ok ? r.data : r.data || r.err);
+        console.log("[AdminEdit] tried", ep, r.ok ? "OK" : `FAILED ${r.status || ""}`, r.ok ? r.data : r.data ?? r.err);
         if (r.ok && r.data) {
           const p = normalizeProduct(r.data);
           if (p) {
-            console.log("[AdminEdit] Using product from", ep, p);
             fillFromProduct(p);
             setLoading(false);
             return;
@@ -115,7 +110,7 @@ export default function AdminProductEdit() {
       console.log("[AdminEdit] Trying list endpoints:", lists);
       for (const le of lists) {
         const r = await tryGet(le);
-        console.log("[AdminEdit] tried list", le, r.ok ? "OK" : `FAILED ${r.status || ""}`, r.ok ? r.data : r.data || r.err);
+        console.log("[AdminEdit] tried list", le, r.ok ? "OK" : `FAILED ${r.status || ""}`, r.ok ? r.data : r.data ?? r.err);
         if (r.ok && r.data) {
           let list = r.data;
           if (!Array.isArray(list)) {
@@ -125,7 +120,6 @@ export default function AdminProductEdit() {
             const found = list.find(p => String(p._id ?? p.id ?? p._doc?._id ?? "") === String(id));
             if (found) {
               const p = normalizeProduct(found) ?? found;
-              console.log("[AdminEdit] Found product inside list", le, p);
               fillFromProduct(p);
               setLoading(false);
               return;
@@ -164,7 +158,7 @@ export default function AdminProductEdit() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  // previews for newly chosen files
+  // ---------------- previews for new files ----------------
   useEffect(() => {
     if (!newFiles || newFiles.length === 0) {
       setNewPreviews([]);
@@ -184,24 +178,26 @@ export default function AdminProductEdit() {
   function handleFileChange(e) {
     setNewFiles(Array.from(e.target.files || []));
   }
-
-  function removeExistingImage(index) {
-    const copy = [...existingImages];
-    copy.splice(index, 1);
-    setExistingImages(copy);
+  function removeExistingImage(i) {
+    const a = [...existingImages]; a.splice(i, 1); setExistingImages(a);
   }
-  function removeNewPreview(index) {
-    const copyFiles = [...newFiles];
-    const copyPreviews = [...newPreviews];
-    copyFiles.splice(index, 1);
-    copyPreviews.splice(index, 1);
-    setNewFiles(copyFiles);
-    setNewPreviews(copyPreviews);
+  function removeNewPreview(i) {
+    const a = [...newFiles]; const b = [...newPreviews]; a.splice(i, 1); b.splice(i, 1); setNewFiles(a); setNewPreviews(b);
   }
 
-  // Save — correct update endpoint (admin)
+  // ---------------- tolerant save: try multiple endpoints/methods ----------------
+  async function tryRequest(method, url, body) {
+    try {
+      const res = await axiosInstance.request({ method, url, data: body });
+      return { ok: true, url, method, res };
+    } catch (err) {
+      return { ok: false, url, method, err, status: err?.response?.status, data: err?.response?.data };
+    }
+  }
+
   async function handleSave(e) {
     e.preventDefault();
+
     const payload = {
       title,
       slug,
@@ -216,18 +212,47 @@ export default function AdminProductEdit() {
       sizes: stringToArray(sizesText),
       description,
       published,
-      images: existingImages.map(i => i.raw ?? i.url)
+      images: existingImages.map(i => i.raw ?? i.url),
     };
 
-    console.log("[AdminEdit] saving payload:", payload);
+    console.log("[AdminEdit] Prepared payload:", payload);
+    setLoading(true);
 
-    try {
-      await axiosInstance.put(`/admin/products/${id}`, payload);
-      navigate("/admin/products");
-    } catch (err) {
-      console.error("[AdminEdit] Save failed:", err, err?.response?.data ?? "");
-      alert("Save failed — check console & network tab.");
+    // Candidate save attempts in order of likelihood.
+    // We'll try until one succeeds or all fail.
+    const attempts = [
+      { method: "put", url: `/admin/products/${id}` },            // expected
+      { method: "post", url: `/admin/products/${id}` },           // maybe POST instead of PUT
+      { method: "post", url: `/admin/products/edit/${id}` },      // some apps use edit path
+      { method: "post", url: `/admin/products/update/${id}` },    // alternate
+      { method: "put", url: `/products/${id}` },                  // fallback (unlikely)
+      { method: "post", url: `/products/${id}` },                 // fallback
+      { method: "post", url: `/admin/products` , bodyIdInBody: true }, // POST with id in body
+      { method: "put", url: `/api/admin/products/${id}` },        // prefixed api
+      { method: "post", url: `/api/admin/products/${id}` },       // prefixed api
+    ];
+
+    for (const at of attempts) {
+      // allow placing id in body for certain endpoints
+      const body = at.bodyIdInBody ? { ...payload, id } : payload;
+      console.log(`[AdminEdit] attempting ${at.method.toUpperCase()} ${at.url}`);
+      const r = await tryRequest(at.method, at.url, body);
+      if (r.ok) {
+        console.log("[AdminEdit] Save succeeded with", at.method.toUpperCase(), at.url, r.res && r.res.data);
+        setLoading(false);
+        // navigate after a short delay to let backend settle
+        navigate("/admin/products");
+        return;
+      } else {
+        console.warn("[AdminEdit] attempt failed:", at.method.toUpperCase(), at.url, "status:", r.status, "resp:", r.data ?? r.err);
+        // if 405 or 400 or 500, we may stop or continue — continue so we find any working route
+      }
     }
+
+    // If we reach here, all attempts failed. Print more context and show user dialog.
+    console.error("[AdminEdit] All save attempts failed. See aggregated results above.");
+    setLoading(false);
+    alert("Save failed (all attempts). Check console and network tab for details. I tried several endpoints and methods.");
   }
 
   if (loading) return <div style={{ padding: 20 }}>Loading...</div>;
@@ -256,8 +281,8 @@ export default function AdminProductEdit() {
             <div className="images-grid">
               {existingImages.length === 0 && <div>No existing images</div>}
               {existingImages.map((img, idx) => (
-                <div className="image-card" key={idx}>
-                  <img src={img.url || "/placeholder.png"} alt={`img-${idx}`} onError={(e)=>{e.target.src="/placeholder.png";}} />
+                <div key={idx} className="image-card">
+                  <img src={img.url || "/placeholder.png"} alt={`img-${idx}`} onError={(ev)=>ev.target.src="/placeholder.png"} />
                   <button type="button" onClick={() => removeExistingImage(idx)}>×</button>
                 </div>
               ))}
@@ -267,7 +292,7 @@ export default function AdminProductEdit() {
             <input type="file" multiple accept="image/*" onChange={handleFileChange} />
             <div className="images-grid">
               {newPreviews.map((p, idx) => (
-                <div className="image-card" key={idx}>
+                <div key={idx} className="image-card">
                   <img src={p} alt={`preview-${idx}`} />
                   <button type="button" onClick={() => removeNewPreview(idx)}>×</button>
                 </div>
