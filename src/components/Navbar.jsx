@@ -89,13 +89,18 @@ export function Navbar() {
 
   const checkAuth = useCallback(async () => {
     try {
-      const res = await api.get("/auth/me");
-      if (res && res.status === 200) {
-        setIsAuthed(Boolean(res.data?.ok));
+      // NOTE: use the full /api/auth/me path so it matches backend routes
+      const res = await api.get("/api/auth/me");
+      if (res && res.status === 200 && res.data && res.data.ok) {
+        // Only treat as authed if user has admin role
+        const roles = Array.isArray(res.data.user?.roles) ? res.data.user.roles : [];
+        const isAdmin = roles.includes("admin");
+        setIsAuthed(Boolean(isAdmin));
       } else {
         setIsAuthed(false);
       }
     } catch (e) {
+      // Any error -> not authed
       setIsAuthed(false);
     }
   }, []);
@@ -166,7 +171,8 @@ export function Navbar() {
 
   async function handleLogout() {
     try {
-      await api.post("/auth/logout");
+      // use the full /api/auth/logout so backend route is hit
+      await api.post("/api/auth/logout");
     } catch (e) {
       console.error("Logout failed:", e);
     } finally {
