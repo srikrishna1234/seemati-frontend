@@ -1,7 +1,9 @@
+// frontend/src/api/axiosInstance.js
 import axios from "axios";
 
 const axiosInstance = axios.create({
-  baseURL: "https://api.seemati.in",
+  // include the '/api' prefix so frontend calls like '/products' map to '/api/products'
+  baseURL: "https://api.seemati.in/api",
   withCredentials: true,
   timeout: 15000,
 });
