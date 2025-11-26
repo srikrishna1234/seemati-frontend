@@ -2,8 +2,7 @@
 import axios from "axios";
 
 const axiosInstance = axios.create({
-  // include the '/api' prefix so frontend calls like '/products' map to '/api/products'
-  baseURL: "https://api.seemati.in/api",
+  baseURL: "https://api.seemati.in", // root host; keep frontend calls as /api/...
   withCredentials: true,
   timeout: 15000,
 });
