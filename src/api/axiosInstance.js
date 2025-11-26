@@ -1,34 +1,30 @@
 // src/api/axiosInstance.js
-import axios from 'axios';
+// Full replacement — sets baseURL and sends cookies with each request
+import axios from "axios";
 
-const baseURL = process.env.REACT_APP_API_URL || 'https://api.seemati.in';
+const API_BASE = process.env.REACT_APP_API_BASE_URL || "https://api.seemati.in/api";
 
-// increase timeout to handle slow cold-starts (60s)
-const axiosInstance = axios.create({
-  baseURL,
-  withCredentials: true,
+// create instance
+const api = axios.create({
+  baseURL: API_BASE,
+  timeout: 30000,
+  withCredentials: true, // IMPORTANT: include cookies
   headers: {
-    Accept: 'application/json',
-    'Content-Type': 'application/json',
+    Accept: "application/json",
+    "Content-Type": "application/json",
   },
-  timeout: 60000, // 60 seconds
 });
 
-// Optional verbose logs in development to help debug requests
-if (process.env.NODE_ENV === 'development') {
-  axiosInstance.interceptors.request.use(req => {
-    // eslint-disable-next-line no-console
-    console.log('[axios] req:', req.method?.toUpperCase(), req.baseURL + req.url);
-    return req;
-  });
-  axiosInstance.interceptors.response.use(
-    res => res,
-    err => {
-      // eslint-disable-next-line no-console
-      console.error('[axios] resp error:', err?.config?.url, err?.message, err?.response?.status);
-      return Promise.reject(err);
+// Optional: simple response interceptor for debug-friendly errors
+api.interceptors.response.use(
+  (res) => res,
+  (err) => {
+    // attach response data to error for easier debugging
+    if (err && err.response && err.response.data) {
+      err.message = err.response.data.message || JSON.stringify(err.response.data) || err.message;
     }
-  );
-}
+    return Promise.reject(err);
+  }
+);
 
-export default axiosInstance;
+export default api;

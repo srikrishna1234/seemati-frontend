@@ -1,118 +1,135 @@
-import React from 'react';
-import { Link } from 'react-router-dom';
+// src/admin/AdminProductList.jsx
+import React, { useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import api from "../api/axiosInstance";
 
 /**
- * AdminProductList - full replacement file
+ * AdminProductList
+ * Full replacement file. Fetches products from the API and renders a simple table.
  *
- * Props:
- * - products: array of product objects [{ _id, name, price, stock, images: [url,...], sku }]
- * - onDelete: function(productId)
- *
- * Notes:
- * - Edit link points to /admin/products/:id/edit
- * - Add Product button links to /admin/products/new (change if your route differs)
- * - Thumbnails use object-fit: contain so full image is visible.
+ * Behavior:
+ * - Uses api (axios instance) already present in your project.
+ * - Fetches the same endpoint you used in the console.
+ * - Expects response shape: { ok:true, page, limit, total, products: [...] }
+ * - Renders an image thumbnail, title, slug, price and simple actions.
  */
 
-export default function AdminProductList({ products = [], onDelete }) {
+export default function AdminProductList() {
+  const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const navigate = useNavigate();
+
+  async function loadProducts() {
+    setLoading(true);
+    setError(null);
+    try {
+      const url =
+        "/products?page=1&limit=100&fields=title,price,mrp,compareAtPrice,slug,thumbnail,images,description";
+      // Note: axios instance (api) should already point to baseURL https://api.seemati.in/api
+      const res = await api.get(url, { withCredentials: true });
+      // defensive: accept either { data: { products: [...] } } or direct array
+      const payload = res && res.data ? res.data : {};
+      const list = Array.isArray(payload.products) ? payload.products : [];
+      setProducts(list);
+    } catch (err) {
+      console.error("AdminProductList load error:", err);
+      setError(err?.response?.data?.message || err.message || "Failed to load products");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadProducts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function goEdit(id) {
+    navigate(`/admin/products/${id}/edit`);
+  }
+
+  async function handleDelete(id) {
+    if (!confirm("Delete product? This cannot be undone.")) return;
+    try {
+      await api.delete(`/products/${id}`, { withCredentials: true });
+      // remove locally
+      setProducts((p) => p.filter((it) => it._id !== id));
+    } catch (err) {
+      alert("Delete failed: " + (err?.response?.data?.message || err.message));
+    }
+  }
+
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-3xl font-semibold">Admin — Products</h2>
+    <div style={{ padding: 24 }}>
+      <h1>Admin — Products</h1>
+      <p>
+        <Link to="/admin/products/new">Add product</Link>
+      </p>
 
-        {/* Add Product button */}
-        <Link
-          to="/admin/products/new"
-          className="inline-block bg-indigo-600 text-white px-4 py-2 rounded shadow hover:bg-indigo-700"
-        >
-          Add product
-        </Link>
-      </div>
-
-      <div className="overflow-x-auto bg-white border rounded">
-        <table className="min-w-full divide-y">
-          <thead className="bg-white">
-            <tr>
-              <th className="px-6 py-3 text-left text-sm font-medium text-gray-700">Image</th>
-              <th className="px-6 py-3 text-left text-sm font-medium text-gray-700">Title</th>
-              <th className="px-6 py-3 text-left text-sm font-medium text-gray-700">SKU</th>
-              <th className="px-6 py-3 text-left text-sm font-medium text-gray-700">Price</th>
-              <th className="px-6 py-3 text-left text-sm font-medium text-gray-700">Actions</th>
-            </tr>
-          </thead>
-
-          <tbody className="divide-y">
-            {products.length === 0 ? (
-              <tr>
-                <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
-                  No products found.
-                </td>
+      {loading ? (
+        <p>Loading products…</p>
+      ) : error ? (
+        <div style={{ color: "darkred" }}>
+          <strong>Error:</strong> {String(error)}
+        </div>
+      ) : !products || products.length === 0 ? (
+        <div>No products found.</div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr style={{ textAlign: "left", borderBottom: "2px solid #eee" }}>
+                <th style={{ padding: "8px 12px" }}>Image</th>
+                <th style={{ padding: "8px 12px" }}>Title</th>
+                <th style={{ padding: "8px 12px" }}>Slug / SKU</th>
+                <th style={{ padding: "8px 12px" }}>Price</th>
+                <th style={{ padding: "8px 12px" }}>Actions</th>
               </tr>
-            ) : (
-              products.map((p) => {
-                // choose first image if available
-                const thumb = (p.images && p.images.length) ? p.images[0] : p.image || ''; 
-
+            </thead>
+            <tbody>
+              {products.map((p) => {
+                const thumb =
+                  (p.thumbnail && p.thumbnail.url) ||
+                  (Array.isArray(p.images) && p.images[0] && p.images[0].url) ||
+                  "";
                 return (
-                  <tr key={p._id}>
-                    <td className="px-6 py-4 align-middle">
-                      <div className="w-20 h-20 rounded overflow-hidden border flex items-center justify-center bg-gray-50">
-                        {thumb ? (
-                          // Tailwind: w-20 h-20 and object-contain ensures full image visible
-                          <img
-                            src={thumb}
-                            alt={p.name || 'product thumbnail'}
-                            className="w-full h-full object-contain"
-                            onError={(e) => {
-                              e.currentTarget.onerror = null;
-                              e.currentTarget.src = '/fallback-product.png'; // optional fallback
-                            }}
-                          />
-                        ) : (
-                          <div className="text-xs text-gray-400">No image</div>
-                        )}
-                      </div>
+                  <tr key={p._id} style={{ borderBottom: "1px solid #f0f0f0" }}>
+                    <td style={{ padding: "8px 12px", width: 120 }}>
+                      {thumb ? (
+                        <img
+                          src={thumb}
+                          alt={p.title || p.slug || "product"}
+                          style={{ width: 80, height: 80, objectFit: "cover", borderRadius: 6 }}
+                        />
+                      ) : (
+                        <div style={{ width: 80, height: 80, background: "#fafafa", borderRadius: 6 }} />
+                      )}
                     </td>
-
-                    <td className="px-6 py-4 align-middle">
-                      <div className="text-sm font-medium text-gray-900">{p.name}</div>
+                    <td style={{ padding: "8px 12px" }}>
+                      <div style={{ fontWeight: 700 }}>{p.title || "(no title)"}</div>
+                      <div style={{ color: "#666", fontSize: 13 }}>{p.description || ""}</div>
                     </td>
-
-                    <td className="px-6 py-4 align-middle">
-                      <div className="text-sm text-gray-700">{p.sku || p.SKU || '-'}</div>
+                    <td style={{ padding: "8px 12px" }}>{p.slug || p.sku || "-"}</td>
+                    <td style={{ padding: "8px 12px" }}>
+                      ₹{Number(p.price || 0).toLocaleString()}
+                      {p.mrp ? <div style={{ fontSize: 12, color: "#999" }}>MRP: ₹{p.mrp}</div> : null}
                     </td>
-
-                    <td className="px-6 py-4 align-middle">
-                      <div className="text-sm text-gray-900">
-                        {typeof p.price === 'number' ? `₹ ${p.price}` : p.price ?? '-'}
-                      </div>
-                    </td>
-
-                    <td className="px-6 py-4 align-middle">
-                      <div className="flex items-center gap-3">
-                        <Link
-                          to={`/admin/products/${p._id}/edit`}
-                          className="px-3 py-1 border rounded hover:bg-gray-50"
-                        >
-                          Edit
-                        </Link>
-
-                        <button
-                          onClick={() => onDelete && onDelete(p._id)}
-                          className="px-3 py-1 border rounded text-red-600 hover:bg-red-50"
-                          aria-label={`Delete ${p.name}`}
-                        >
-                          Delete
-                        </button>
-                      </div>
+                    <td style={{ padding: "8px 12px" }}>
+                      <button onClick={() => goEdit(p._id)} style={{ marginRight: 8 }}>
+                        Edit
+                      </button>
+                      <button onClick={() => handleDelete(p._id)} style={{ background: "#ef4444", color: "#fff" }}>
+                        Delete
+                      </button>
                     </td>
                   </tr>
                 );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
