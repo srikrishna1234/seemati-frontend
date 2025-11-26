@@ -1,4 +1,4 @@
-﻿// backend/src/routes/productRoutes.cjs
+// backend/src/routes/productRoutes.cjs
 const express = require("express");
 const router = express.Router();
 const mongoose = require("mongoose");
@@ -16,16 +16,41 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
 });
 
+/**
+ * Normalize an image entry to a string path/url.
+ * - If entry is a string -> return it
+ * - If entry is an object with .url, .path, or .key -> return that string
+ * - Otherwise return null
+ */
+function normalizeImageEntry(img) {
+  if (!img && img !== 0) return null;
+  if (typeof img === "string") return img;
+  if (typeof img === "object") {
+    if (typeof img.url === "string") return img.url;
+    if (typeof img.path === "string") return img.path;
+    if (typeof img.key === "string") return img.key;
+    // Sometimes Mongoose returns nested objects - try common fields
+    if (img.location && typeof img.location === "string") return img.location;
+    if (img.src && typeof img.src === "string") return img.src;
+  }
+  return null;
+}
+
 // Helper: convert stored image paths (e.g. "/uploads/abc.jpg") to absolute URLs
 function makeAbsoluteImageUrls(images = [], req) {
-  if (!Array.isArray(images)) return images;
+  if (!Array.isArray(images)) return [];
   const base = process.env.BASE_URL || `${req.protocol}://${req.get("host")}`;
-  return images.map((img) => {
-    if (!img) return img;
-    if (img.startsWith("http://") || img.startsWith("https://")) return img;
-    if (img.startsWith("/")) return `${base}${img}`;
-    return `${base}/${img}`;
-  });
+  return images
+    .map((img) => normalizeImageEntry(img))
+    .filter(Boolean)
+    .map((imgStr) => {
+      // already absolute
+      if (imgStr.startsWith("http://") || imgStr.startsWith("https://")) return imgStr;
+      // relative path beginning with '/'
+      if (imgStr.startsWith("/")) return `${base}${imgStr}`;
+      // fallback: prepend base
+      return `${base}/${imgStr}`;
+    });
 }
 
 // Helper: delete local upload files (only if path looks local under /uploads)
@@ -53,11 +78,6 @@ async function deleteLocalUploadFile(imagePath) {
 /**
  * GET /
  * List products with pagination and field selection.
- * Query params:
- *  - page (default 1)
- *  - limit (default 20)
- *  - fields (comma-separated, e.g. title,price,images)
- *  - sort (optional, e.g. createdAt:desc or price:asc)
  */
 router.get("/", async (req, res, next) => {
   try {
@@ -67,23 +87,33 @@ router.get("/", async (req, res, next) => {
     const sortQuery = req.query.sort || "-createdAt";
 
     const projection = fields ? fields.join(" ") : null;
-
     const skip = (page - 1) * limit;
-
-    const query = {}; // extendable for filters later (q, tags, etc.)
+    const query = {}; // future filters can be applied here
 
     const [items, total] = await Promise.all([
       Product.find(query, projection).sort(sortQuery).skip(skip).limit(limit).lean(),
       Product.countDocuments(query)
     ]);
 
-    // convert images for each item
     const itemsWithAbsoluteImages = items.map(item => {
-      item.images = makeAbsoluteImageUrls(item.images || [], req);
-      // also convert thumbnail if present and not absolute
-      if (item.thumbnail && !item.thumbnail.startsWith("http")) {
-        if (item.thumbnail.startsWith("/")) item.thumbnail = `${process.env.BASE_URL || `${req.protocol}://${req.get("host")}`}${item.thumbnail}`;
-        else item.thumbnail = `${process.env.BASE_URL || `${req.protocol}://${req.get("host")}`}/${item.thumbnail}`;
+      try {
+        item.images = makeAbsoluteImageUrls(item.images || [], req);
+
+        // handle thumbnail safely
+        const thumb = normalizeImageEntry(item.thumbnail);
+        if (thumb) {
+          if (thumb.startsWith("http://") || thumb.startsWith("https://")) {
+            item.thumbnail = thumb;
+          } else if (thumb.startsWith("/")) {
+            item.thumbnail = `${process.env.BASE_URL || `${req.protocol}://${req.get("host")}`}${thumb}`;
+          } else {
+            item.thumbnail = `${process.env.BASE_URL || `${req.protocol}://${req.get("host")}`}/${thumb}`;
+          }
+        }
+
+      } catch (err) {
+        console.warn("Warning converting images for product id", item._id, err && err.message ? err.message : err);
+        item.images = [];
       }
       return item;
     });
@@ -96,14 +126,12 @@ router.get("/", async (req, res, next) => {
       items: itemsWithAbsoluteImages
     });
   } catch (err) {
-    console.error("GET /api/products error:", err);
+    console.error("GET /api/products error:", err && err.stack ? err.stack : err);
     next(err);
   }
 });
 
-// ---------------------------------------------------------
-// GET /api/products/:id
-// ---------------------------------------------------------
+// GET /:id
 router.get("/:id", async (req, res, next) => {
   try {
     const id = req.params.id;
@@ -112,24 +140,35 @@ router.get("/:id", async (req, res, next) => {
     }
     const product = await Product.findById(id).lean();
     if (!product) return res.status(404).json({ message: "Product not found" });
+
     product.images = makeAbsoluteImageUrls(product.images || [], req);
+
+    const thumb = normalizeImageEntry(product.thumbnail);
+    if (thumb) {
+      if (thumb.startsWith("http://") || thumb.startsWith("https://")) {
+        product.thumbnail = thumb;
+      } else if (thumb.startsWith("/")) {
+        product.thumbnail = `${process.env.BASE_URL || `${req.protocol}://${req.get("host")}`}${thumb}`;
+      } else {
+        product.thumbnail = `${process.env.BASE_URL || `${req.protocol}://${req.get("host")}`}/${thumb}`;
+      }
+    }
+
     return res.json(product);
   } catch (err) {
-    console.error("GET /api/products/:id error:", err);
+    console.error("GET /api/products/:id error:", err && err.stack ? err.stack : err);
     next(err);
   }
 });
 
-// ---------------------------------------------------------
-// PUT /api/products/:id — JSON UPDATE (no file upload)
-// ---------------------------------------------------------
+// PUT (JSON update)
 router.put("/:id", async (req, res, next) => {
   try {
     const id = req.params.id;
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ message: "Invalid product id" });
     }
-    const allowed = ["title", "slug", "price", "description", "images", "tags", "stock", "thumbnail"];
+    const allowed = ["title", "slug", "price", "description", "images", "tags", "stock", "thumbnail", "mrp", "compareAtPrice"];
     const updates = {};
     allowed.forEach((key) => {
       if (req.body[key] !== undefined) updates[key] = req.body[key];
@@ -139,14 +178,12 @@ router.put("/:id", async (req, res, next) => {
     updated.images = makeAbsoluteImageUrls(updated.images || [], req);
     return res.json(updated);
   } catch (err) {
-    console.error("PUT JSON update error:", err);
+    console.error("PUT JSON update error:", err && err.stack ? err.stack : err);
     next(err);
   }
 });
 
-// ---------------------------------------------------------
-// PUT /api/products/:id/upload — MULTIPART (file upload)
-// ---------------------------------------------------------
+// PUT upload (multipart)
 router.put("/:id/upload", upload.array("images"), async (req, res, next) => {
   try {
     const id = req.params.id;
@@ -162,20 +199,13 @@ router.put("/:id/upload", upload.array("images"), async (req, res, next) => {
       try {
         keepImages = JSON.parse(req.body.keepImages);
       } catch (parseErr) {
-        console.warn("Failed to parse keepImages:", parseErr);
         if (typeof req.body.keepImages === "string") keepImages = [req.body.keepImages];
       }
     }
 
-    // New uploaded image paths (store as relative paths like /uploads/<file>)
-    const uploadedFiles = (req.files || []).map((file) => {
-      return `/uploads/${path.basename(file.path)}`;
-    });
-
-    // Merge existing + new
+    const uploadedFiles = (req.files || []).map((file) => `/uploads/${path.basename(file.path)}`);
     const newImagesArray = [...(keepImages || []), ...uploadedFiles];
 
-    // Update fields
     if (req.body.title !== undefined) product.title = req.body.title;
     if (req.body.slug !== undefined) product.slug = req.body.slug;
     if (req.body.price !== undefined) product.price = req.body.price;
@@ -185,22 +215,18 @@ router.put("/:id/upload", upload.array("images"), async (req, res, next) => {
     if (req.body.thumbnail !== undefined) product.thumbnail = req.body.thumbnail;
 
     product.images = newImagesArray;
-
     await product.save();
 
     const productObj = product.toObject();
     productObj.images = makeAbsoluteImageUrls(productObj.images || [], req);
-
     return res.json(productObj);
   } catch (err) {
-    console.error("PUT multipart update error:", err);
+    console.error("PUT multipart update error:", err && err.stack ? err.stack : err);
     next(err);
   }
 });
 
-// ---------------------------------------------------------
-// DELETE /api/products/:id
-// ---------------------------------------------------------
+// DELETE
 router.delete("/:id", async (req, res, next) => {
   try {
     const id = req.params.id;
@@ -210,11 +236,10 @@ router.delete("/:id", async (req, res, next) => {
     const product = await Product.findById(id);
     if (!product) return res.status(404).json({ message: "Product not found" });
 
-    // Delete local files referenced (safely)
     const images = product.images || [];
     for (const img of images) {
       try {
-        let relative = img;
+        let relative = normalizeImageEntry(img) || "";
         const base = process.env.BASE_URL || `${req.protocol}://${req.get("host")}`;
         if (relative.startsWith(base)) relative = relative.replace(base, "");
         if (relative.startsWith("/uploads/")) {
@@ -226,12 +251,12 @@ router.delete("/:id", async (req, res, next) => {
     }
 
     await product.remove();
-
     return res.json({ message: "Product deleted" });
   } catch (err) {
-    console.error("DELETE /api/products/:id error:", err);
+    console.error("DELETE /api/products/:id error:", err && err.stack ? err.stack : err);
     next(err);
   }
 });
 
 module.exports = router;
+
