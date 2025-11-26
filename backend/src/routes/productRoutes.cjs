@@ -22,11 +22,8 @@ function makeAbsoluteImageUrls(images = [], req) {
   const base = process.env.BASE_URL || `${req.protocol}://${req.get("host")}`;
   return images.map((img) => {
     if (!img) return img;
-    // already absolute
     if (img.startsWith("http://") || img.startsWith("https://")) return img;
-    // relative path beginning with '/'
     if (img.startsWith("/")) return `${base}${img}`;
-    // fallback: prepend base
     return `${base}/${img}`;
   });
 }
@@ -35,19 +32,13 @@ function makeAbsoluteImageUrls(images = [], req) {
 async function deleteLocalUploadFile(imagePath) {
   try {
     if (!imagePath) return;
-    // Only delete relative uploads like "/uploads/..."
     if (!imagePath.startsWith("/uploads/")) return;
-
-    // map "/uploads/abc.jpg" -> "<project>/uploads/abc.jpg"
-    const rel = imagePath.replace(/^\//, ""); // remove leading slash
+    const rel = imagePath.replace(/^\//, "");
     const full = path.join(__dirname, "../../", rel);
-
-    // Safety: ensure it's inside uploads folder
     if (!full.startsWith(UPLOADS_DIR)) {
       console.warn("Refusing to delete file outside uploads dir:", full);
       return;
     }
-
     if (fs.existsSync(full)) {
       await fs.promises.unlink(full);
       console.log("Deleted local upload file:", full);
@@ -59,6 +50,57 @@ async function deleteLocalUploadFile(imagePath) {
   }
 }
 
+/**
+ * GET /
+ * List products with pagination and field selection.
+ * Query params:
+ *  - page (default 1)
+ *  - limit (default 20)
+ *  - fields (comma-separated, e.g. title,price,images)
+ *  - sort (optional, e.g. createdAt:desc or price:asc)
+ */
+router.get("/", async (req, res, next) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 20));
+    const fields = req.query.fields ? req.query.fields.split(",").map(f => f.trim()).filter(Boolean) : null;
+    const sortQuery = req.query.sort || "-createdAt";
+
+    const projection = fields ? fields.join(" ") : null;
+
+    const skip = (page - 1) * limit;
+
+    const query = {}; // extendable for filters later (q, tags, etc.)
+
+    const [items, total] = await Promise.all([
+      Product.find(query, projection).sort(sortQuery).skip(skip).limit(limit).lean(),
+      Product.countDocuments(query)
+    ]);
+
+    // convert images for each item
+    const itemsWithAbsoluteImages = items.map(item => {
+      item.images = makeAbsoluteImageUrls(item.images || [], req);
+      // also convert thumbnail if present and not absolute
+      if (item.thumbnail && !item.thumbnail.startsWith("http")) {
+        if (item.thumbnail.startsWith("/")) item.thumbnail = `${process.env.BASE_URL || `${req.protocol}://${req.get("host")}`}${item.thumbnail}`;
+        else item.thumbnail = `${process.env.BASE_URL || `${req.protocol}://${req.get("host")}`}/${item.thumbnail}`;
+      }
+      return item;
+    });
+
+    return res.json({
+      page,
+      limit,
+      total,
+      count: itemsWithAbsoluteImages.length,
+      items: itemsWithAbsoluteImages
+    });
+  } catch (err) {
+    console.error("GET /api/products error:", err);
+    next(err);
+  }
+});
+
 // ---------------------------------------------------------
 // GET /api/products/:id
 // ---------------------------------------------------------
@@ -68,13 +110,9 @@ router.get("/:id", async (req, res, next) => {
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ message: "Invalid product id" });
     }
-
     const product = await Product.findById(id).lean();
     if (!product) return res.status(404).json({ message: "Product not found" });
-
-    // convert images to absolute URLs for client
     product.images = makeAbsoluteImageUrls(product.images || [], req);
-
     return res.json(product);
   } catch (err) {
     console.error("GET /api/products/:id error:", err);
@@ -84,31 +122,21 @@ router.get("/:id", async (req, res, next) => {
 
 // ---------------------------------------------------------
 // PUT /api/products/:id — JSON UPDATE (no file upload)
-// Expects body keys: title, slug, price, description, images (array)
 // ---------------------------------------------------------
 router.put("/:id", async (req, res, next) => {
   try {
     const id = req.params.id;
-
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ message: "Invalid product id" });
     }
-
-    const allowed = ["title", "slug", "price", "description", "images", "tags", "stock"];
+    const allowed = ["title", "slug", "price", "description", "images", "tags", "stock", "thumbnail"];
     const updates = {};
-
     allowed.forEach((key) => {
       if (req.body[key] !== undefined) updates[key] = req.body[key];
     });
-
-    const updated = await Product.findByIdAndUpdate(id, updates, {
-      new: true,
-    }).lean();
-
+    const updated = await Product.findByIdAndUpdate(id, updates, { new: true }).lean();
     if (!updated) return res.status(404).json({ message: "Product not found" });
-
     updated.images = makeAbsoluteImageUrls(updated.images || [], req);
-
     return res.json(updated);
   } catch (err) {
     console.error("PUT JSON update error:", err);
@@ -118,17 +146,13 @@ router.put("/:id", async (req, res, next) => {
 
 // ---------------------------------------------------------
 // PUT /api/products/:id/upload — MULTIPART (file upload)
-// - field 'images' for new files (multiple)
-// - field 'keepImages' JSON string for existing image paths to retain
 // ---------------------------------------------------------
 router.put("/:id/upload", upload.array("images"), async (req, res, next) => {
   try {
     const id = req.params.id;
-
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ message: "Invalid product id" });
     }
-
     const product = await Product.findById(id);
     if (!product) return res.status(404).json({ message: "Product not found" });
 
@@ -139,7 +163,6 @@ router.put("/:id/upload", upload.array("images"), async (req, res, next) => {
         keepImages = JSON.parse(req.body.keepImages);
       } catch (parseErr) {
         console.warn("Failed to parse keepImages:", parseErr);
-        // fallback: if it's a single string, try using it as one element
         if (typeof req.body.keepImages === "string") keepImages = [req.body.keepImages];
       }
     }
@@ -159,8 +182,8 @@ router.put("/:id/upload", upload.array("images"), async (req, res, next) => {
     if (req.body.description !== undefined) product.description = req.body.description;
     if (req.body.tags !== undefined) product.tags = req.body.tags;
     if (req.body.stock !== undefined) product.stock = req.body.stock;
+    if (req.body.thumbnail !== undefined) product.thumbnail = req.body.thumbnail;
 
-    // If client sent images explicitly (via keepImages), replace; otherwise keep previous behavior
     product.images = newImagesArray;
 
     await product.save();
@@ -177,7 +200,6 @@ router.put("/:id/upload", upload.array("images"), async (req, res, next) => {
 
 // ---------------------------------------------------------
 // DELETE /api/products/:id
-// - deletes DB document and local upload files referenced in product.images (only /uploads/...)
 // ---------------------------------------------------------
 router.delete("/:id", async (req, res, next) => {
   try {
@@ -185,7 +207,6 @@ router.delete("/:id", async (req, res, next) => {
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ message: "Invalid product id" });
     }
-
     const product = await Product.findById(id);
     if (!product) return res.status(404).json({ message: "Product not found" });
 
@@ -193,13 +214,9 @@ router.delete("/:id", async (req, res, next) => {
     const images = product.images || [];
     for (const img of images) {
       try {
-        // If image is absolute URL, but points to our uploads path (e.g., BASE_URL + /uploads/...), convert to relative
         let relative = img;
         const base = process.env.BASE_URL || `${req.protocol}://${req.get("host")}`;
-        if (relative.startsWith(base)) {
-          relative = relative.replace(base, "");
-        }
-
+        if (relative.startsWith(base)) relative = relative.replace(base, "");
         if (relative.startsWith("/uploads/")) {
           await deleteLocalUploadFile(relative);
         }
