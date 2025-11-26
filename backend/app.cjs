@@ -1,4 +1,4 @@
-﻿// backend/app.cjs
+// backend/app.cjs
 'use strict';
 
 const express = require('express');
@@ -42,7 +42,7 @@ if (rawOrigins.trim().toUpperCase().startsWith('FRONTEND_URLS=')) {
 }
 
 const allowedOrigins = rawOrigins
-  .split(/[,\\n]/)
+  .split(/[,\n]/)
   .map((s) => (s || '').trim())
   .filter(Boolean);
 
