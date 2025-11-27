@@ -6,7 +6,7 @@ const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 
-// Load Product model (adjust path if different)
+// Load Product model
 const Product = require("../models/Product.cjs");
 
 // Local upload folder (ONLY if you're not using S3)
@@ -16,12 +16,7 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
 });
 
-/**
- * Normalize an image entry to a string path/url.
- * - If entry is a string -> return it
- * - If entry is an object with .url, .path, or .key -> return that string
- * - Otherwise return null
- */
+/* helpers same as before (normalizeImageEntry, makeAbsoluteImageUrls, deleteLocalUploadFile) */
 function normalizeImageEntry(img) {
   if (!img && img !== 0) return null;
   if (typeof img === "string") return img;
@@ -34,8 +29,6 @@ function normalizeImageEntry(img) {
   }
   return null;
 }
-
-// Helper: convert stored image paths (e.g. "/uploads/abc.jpg") to absolute URLs
 function makeAbsoluteImageUrls(images = [], req) {
   if (!Array.isArray(images)) return [];
   const base = process.env.BASE_URL || `${req.protocol}://${req.get("host")}`;
@@ -48,8 +41,6 @@ function makeAbsoluteImageUrls(images = [], req) {
       return `${base}/${imgStr}`;
     });
 }
-
-// Helper: delete local upload files (only if path looks local under /uploads)
 async function deleteLocalUploadFile(imagePath) {
   try {
     if (!imagePath) return;
@@ -71,10 +62,7 @@ async function deleteLocalUploadFile(imagePath) {
   }
 }
 
-/**
- * GET /
- * List products with pagination and field selection.
- */
+/* GET /  (list) ... same as before */
 router.get("/", async (req, res, next) => {
   try {
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
@@ -84,7 +72,7 @@ router.get("/", async (req, res, next) => {
 
     const projection = fields ? fields.join(" ") : null;
     const skip = (page - 1) * limit;
-    const query = {}; // future filters can be applied here
+    const query = {};
 
     const [items, total] = await Promise.all([
       Product.find(query, projection).sort(sortQuery).skip(skip).limit(limit).lean(),
@@ -94,17 +82,11 @@ router.get("/", async (req, res, next) => {
     const itemsWithAbsoluteImages = items.map(item => {
       try {
         item.images = makeAbsoluteImageUrls(item.images || [], req);
-
-        // handle thumbnail safely
         const thumb = normalizeImageEntry(item.thumbnail);
         if (thumb) {
-          if (thumb.startsWith("http://") || thumb.startsWith("https://")) {
-            item.thumbnail = thumb;
-          } else if (thumb.startsWith("/")) {
-            item.thumbnail = `${process.env.BASE_URL || `${req.protocol}://${req.get("host")}`}${thumb}`;
-          } else {
-            item.thumbnail = `${process.env.BASE_URL || `${req.protocol}://${req.get("host")}`}/${thumb}`;
-          }
+          if (thumb.startsWith("http://") || thumb.startsWith("https://")) item.thumbnail = thumb;
+          else if (thumb.startsWith("/")) item.thumbnail = `${process.env.BASE_URL || `${req.protocol}://${req.get("host")}`}${thumb}`;
+          else item.thumbnail = `${process.env.BASE_URL || `${req.protocol}://${req.get("host")}`}/${thumb}`;
         }
       } catch (err) {
         console.warn("Warning converting images for product id", item._id, err && err.message ? err.message : err);
@@ -113,7 +95,6 @@ router.get("/", async (req, res, next) => {
       return item;
     });
 
-    // return array (frontend expects an array)
     return res.json(itemsWithAbsoluteImages);
   } catch (err) {
     console.error("GET /api/products error:", err && err.stack ? err.stack : err);
@@ -121,27 +102,20 @@ router.get("/", async (req, res, next) => {
   }
 });
 
-// GET /:id
+/* GET /:id */
 router.get("/:id", async (req, res, next) => {
   try {
     const id = req.params.id;
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid product id" });
-    }
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: "Invalid product id" });
     const product = await Product.findById(id).lean();
     if (!product) return res.status(404).json({ message: "Product not found" });
 
     product.images = makeAbsoluteImageUrls(product.images || [], req);
-
     const thumb = normalizeImageEntry(product.thumbnail);
     if (thumb) {
-      if (thumb.startsWith("http://") || thumb.startsWith("https://")) {
-        product.thumbnail = thumb;
-      } else if (thumb.startsWith("/")) {
-        product.thumbnail = `${process.env.BASE_URL || `${req.protocol}://${req.get("host")}`}${thumb}`;
-      } else {
-        product.thumbnail = `${process.env.BASE_URL || `${req.protocol}://${req.get("host")}`}/${thumb}`;
-      }
+      if (thumb.startsWith("http://") || thumb.startsWith("https://")) product.thumbnail = thumb;
+      else if (thumb.startsWith("/")) product.thumbnail = `${process.env.BASE_URL || `${req.protocol}://${req.get("host")}`}${thumb}`;
+      else product.thumbnail = `${process.env.BASE_URL || `${req.protocol}://${req.get("host")}`}/${thumb}`;
     }
 
     return res.json(product);
@@ -151,42 +125,52 @@ router.get("/:id", async (req, res, next) => {
   }
 });
 
-// PUT (JSON update) — now defensive about images shape
+/* PUT JSON update - extended allowed fields & parsing */
 router.put("/:id", async (req, res, next) => {
   try {
     const id = req.params.id;
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid product id" });
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: "Invalid product id" });
+
+    // Parse colors/sizes if provided as comma string
+    const body = { ...req.body };
+
+    if (body.colors && typeof body.colors === "string") {
+      body.colors = body.colors.split(",").map(s => s.trim()).filter(Boolean);
+    }
+    if (body.sizes && typeof body.sizes === "string") {
+      body.sizes = body.sizes.split(",").map(s => s.trim()).filter(Boolean);
     }
 
-    // Normalize images if present in request body
-    if (req.body.images) {
-      let imgs = req.body.images;
-      // sometimes body comes as JSON string
+    // Normalize images array if present
+    if (body.images) {
+      let imgs = body.images;
       if (typeof imgs === "string") {
-        try {
-          imgs = JSON.parse(imgs);
-        } catch (e) {
-          // leave as-is
-        }
+        try { imgs = JSON.parse(imgs); } catch (e) { imgs = [imgs]; }
       }
-
       if (Array.isArray(imgs)) {
-        const normalized = imgs.map(normalizeImageEntry).filter(Boolean);
-        req.body.images = normalized;
+        body.images = imgs.map(normalizeImageEntry).filter(Boolean);
       } else {
-        // not an array -> remove to avoid DB cast issues
-        delete req.body.images;
+        delete body.images;
       }
     }
 
-    const allowed = ["title", "slug", "price", "description", "images", "tags", "stock", "thumbnail", "mrp", "compareAtPrice"];
+    // Convert published to boolean if present
+    if (body.published !== undefined) {
+      body.published = (body.published === true || body.published === "true" || body.published === "1");
+    }
+
+    // Allowed fields (expanded)
+    const allowed = [
+      "title","slug","price","description","images","tags","stock","thumbnail",
+      "mrp","compareAtPrice","sku","brand","category","colors","sizes","videoUrl","published"
+    ];
+
     const updates = {};
-    allowed.forEach((key) => {
-      if (req.body[key] !== undefined) updates[key] = req.body[key];
+    allowed.forEach((k) => {
+      if (body[k] !== undefined) updates[k] = body[k];
     });
 
-    const updated = await Product.findByIdAndUpdate(id, updates, { new: true }).lean();
+    const updated = await Product.findByIdAndUpdate(id, updates, { new: true, runValidators: true }).lean();
     if (!updated) return res.status(404).json({ message: "Product not found" });
 
     updated.images = makeAbsoluteImageUrls(updated.images || [], req);
@@ -197,22 +181,18 @@ router.put("/:id", async (req, res, next) => {
   }
 });
 
-// PUT upload (multipart)
+/* PUT multipart upload (images) — unchanged, but keepImages already supported */
 router.put("/:id/upload", upload.array("images"), async (req, res, next) => {
   try {
     const id = req.params.id;
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid product id" });
-    }
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: "Invalid product id" });
     const product = await Product.findById(id);
     if (!product) return res.status(404).json({ message: "Product not found" });
 
-    // Parse keepImages (existing image URLs to keep)
+    // Parse keepImages
     let keepImages = [];
     if (req.body.keepImages) {
-      try {
-        keepImages = JSON.parse(req.body.keepImages);
-      } catch (parseErr) {
+      try { keepImages = JSON.parse(req.body.keepImages); } catch (e) {
         if (typeof req.body.keepImages === "string") keepImages = [req.body.keepImages];
       }
     }
@@ -240,13 +220,11 @@ router.put("/:id/upload", upload.array("images"), async (req, res, next) => {
   }
 });
 
-// DELETE
+/* DELETE /:id - unchanged */
 router.delete("/:id", async (req, res, next) => {
   try {
     const id = req.params.id;
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid product id" });
-    }
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: "Invalid product id" });
     const product = await Product.findById(id);
     if (!product) return res.status(404).json({ message: "Product not found" });
 

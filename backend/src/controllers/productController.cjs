@@ -1,33 +1,20 @@
 ﻿// backend/src/controllers/productController.cjs
 'use strict';
 
-/*
-  CommonJS product controller compatible with app.cjs bootstrap.
-  - Uses require/module.exports (no 'import' / 'export').
-  - Loads the real model at backend/src/models/Product.cjs
-  - Adds aliases so both admin routes and API can use it.
-*/
-
 const path = require('path');
-
 let Product;
 try {
-  // From backend/src/controllers -> backend/src/models/Product.cjs
   Product = require(path.join(__dirname, '..', 'models', 'Product.cjs'));
-  console.log('[productController] Loaded model from backend/src/models/Product.cjs');
+  console.log('[productController] Loaded model');
 } catch (err) {
   console.error('[productController] FAILED to load Product model:', err && err.message);
-  const e = new Error('Product model not found in backend/src/models/Product.cjs');
-
-  // Export a stub that reports error when called so routes show clear message
+  const e = new Error('Product model not found');
   module.exports = {
     getAllProducts: async (req, res) => res.status(500).json({ error: e.message }),
     getProductById: async (req, res) => res.status(500).json({ error: e.message }),
     createProduct: async (req, res) => res.status(500).json({ error: e.message }),
     updateProduct: async (req, res) => res.status(500).json({ error: e.message }),
     deleteProduct: async (req, res) => res.status(500).json({ error: e.message }),
-
-    // aliases used by some routers
     listProducts: async (req, res) => res.status(500).json({ error: e.message }),
     getProduct: async (req, res) => res.status(500).json({ error: e.message }),
   };
@@ -71,12 +58,28 @@ async function createProduct(req, res) {
 async function updateProduct(req, res) {
   try {
     const { id } = req.params;
-    const updates = req.body;
-    const updated = await Product.findByIdAndUpdate(
-      id,
-      updates,
-      { new: true, runValidators: true }
-    ).lean();
+    let updates = { ...req.body };
+
+    // parse colors/sizes if strings
+    if (updates.colors && typeof updates.colors === 'string') {
+      updates.colors = updates.colors.split(',').map(s => s.trim()).filter(Boolean);
+    }
+    if (updates.sizes && typeof updates.sizes === 'string') {
+      updates.sizes = updates.sizes.split(',').map(s => s.trim()).filter(Boolean);
+    }
+    if (updates.published !== undefined) {
+      updates.published = (updates.published === true || updates.published === 'true' || updates.published === '1');
+    }
+
+    // allowed fields (same as routes)
+    const allowed = [
+      "title","slug","price","description","images","tags","stock","thumbnail",
+      "mrp","compareAtPrice","sku","brand","category","colors","sizes","videoUrl","published"
+    ];
+    const filtered = {};
+    allowed.forEach(k => { if (updates[k] !== undefined) filtered[k] = updates[k]; });
+
+    const updated = await Product.findByIdAndUpdate(id, filtered, { new: true, runValidators: true }).lean();
     if (!updated) return res.status(404).json({ error: 'Product not found' });
     return res.json(updated);
   } catch (err) {
@@ -97,16 +100,12 @@ async function deleteProduct(req, res) {
   }
 }
 
-// Export with both canonical names and aliases (for adminProduct router compatibility)
 module.exports = {
-  // canonical names
   getAllProducts,
   getProductById,
   createProduct,
   updateProduct,
   deleteProduct,
-
-  // aliases some routes expect
   listProducts: getAllProducts,
-  getProduct: getProductById,
+  getProduct: getProductById
 };
