@@ -11,7 +11,7 @@ const mongoose = require('mongoose');
 let Product;
 try {
   // Use the capitalized file if present (your repo has Product.cjs), but accept any shape
-  const productModule = require('../models/Product.cjs') || require('../models/product.cjs');
+  const productModule = require('../models/product.cjs') || require('../models/product.cjs');
 
   Product = productModule?.default || productModule?.Product || productModule;
 
