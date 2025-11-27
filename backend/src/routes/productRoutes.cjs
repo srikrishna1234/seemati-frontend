@@ -3,34 +3,37 @@
 
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
 
 // ------------------------------
 // ROBUST PRODUCT MODEL IMPORT
 // ------------------------------
 let Product;
 try {
-  const productModule = require('../models/product.cjs');
+  // Use the capitalized file if present (your repo has Product.cjs), but accept any shape
+  const productModule = require('../models/Product.cjs') || require('../models/product.cjs');
 
-  // Accept any of these shapes:
-  Product =
-    productModule?.default ||
-    productModule?.Product ||
-    productModule;
+  Product = productModule?.default || productModule?.Product || productModule;
 
   if (!Product || typeof Product.find !== 'function') {
-    console.error("[ProductModel] IMPORT FAILED. module keys:", Object.keys(productModule || {}));
-    console.error("[ProductModel] module content:", productModule);
-    throw new Error("Product model is not a valid Mongoose model");
+    console.error('[ProductModel] IMPORT FAILED. module keys:', Object.keys(productModule || {}));
+    console.error('[ProductModel] module content:', productModule);
+    throw new Error('Product model is not a valid Mongoose model');
   }
 
-  console.log("[ProductModel] Loaded Product model successfully.");
+  console.log('[ProductModel] Loaded Product model successfully.');
 } catch (err) {
-  console.error("[ProductModel] ERROR loading model:", err);
-  throw err; // stop server if model broken (important)
+  console.error('[ProductModel] ERROR loading model:', err && err.stack ? err.stack : err);
+  throw err;
+}
+
+// Helper: is a valid 24-char hex ObjectId
+function looksLikeObjectId(str) {
+  return typeof str === 'string' && /^[0-9a-fA-F]{24}$/.test(str);
 }
 
 // ------------------------------
-// GET ALL PRODUCTS
+// GET ALL PRODUCTS (with pagination & field selection)
 // ------------------------------
 router.get('/', async (req, res) => {
   try {
@@ -38,10 +41,7 @@ router.get('/', async (req, res) => {
     const limit = Number(req.query.limit) || 100;
     const skip = (page - 1) * limit;
 
-    // fields filter
-    const fields = req.query.fields
-      ? req.query.fields.replace(/,/g, " ")
-      : "";
+    const fields = req.query.fields ? req.query.fields.replace(/,/g, ' ') : '';
 
     const products = await Product.find({})
       .select(fields)
@@ -56,31 +56,47 @@ router.get('/', async (req, res) => {
       products,
     });
   } catch (err) {
-    console.error("GET /api/products error:", err);
+    console.error('GET /api/products error:', err);
     return res.status(500).json({
       success: false,
-      message: "Server error fetching products",
+      message: 'Server error fetching products',
       error: err.message,
     });
   }
 });
 
 // ------------------------------
-// GET ONE PRODUCT BY SLUG
+// GET ONE PRODUCT BY ID or SLUG
+// Accepts either:
+//   /api/products/<24-hex-id>  -> findById
+//   /api/products/<slug>       -> findOne({ slug })
 // ------------------------------
-router.get('/:slug', async (req, res) => {
+router.get('/:idOrSlug', async (req, res) => {
   try {
-    const product = await Product.findOne({ slug: req.params.slug }).lean();
+    const idOrSlug = req.params.idOrSlug;
 
-    if (!product)
-      return res.status(404).json({ success: false, message: "Product not found" });
+    let product = null;
+
+    if (looksLikeObjectId(idOrSlug)) {
+      // If it's a valid ObjectId, try findById first
+      product = await Product.findById(idOrSlug).lean();
+    }
+
+    if (!product) {
+      // Fallback: treat as slug (also handles cases where id was passed but not found)
+      product = await Product.findOne({ slug: idOrSlug }).lean();
+    }
+
+    if (!product) {
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
 
     res.json({ success: true, product });
   } catch (err) {
-    console.error("GET /api/products/:slug error:", err);
+    console.error('GET /api/products/:idOrSlug error:', err);
     return res.status(500).json({
       success: false,
-      message: "Server error fetching product",
+      message: 'Server error fetching product',
       error: err.message,
     });
   }
