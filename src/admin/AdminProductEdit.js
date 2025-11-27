@@ -4,10 +4,25 @@ import { useParams, useNavigate } from "react-router-dom";
 import axiosInstance from "../api/axiosInstance";
 import "./AdminProductEdit.css";
 
+/*
+  AdminProductEdit replacement
+  - Uploads new files BEFORE saving the product
+  - Uses returned URLs from the backend upload endpoint
+  - Preserves existing images that are 'kept'
+  - Normalizes images to an array of URLs before saving
+*/
+
+const SVG_PLACEHOLDER = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300">
+    <rect width="100%" height="100%" fill="#f3f3f3"/>
+    <text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#bbb" font-size="18">No image</text>
+  </svg>`
+);
+
 function stringToArray(str) {
   if (!str) return [];
   if (Array.isArray(str)) return str;
-  return String(str).split(",").map((s) => s.trim()).filter(Boolean);
+  return String(str).split(",").map(s => s.trim()).filter(Boolean);
 }
 function arrayToString(arr) {
   if (!arr) return "";
@@ -15,18 +30,20 @@ function arrayToString(arr) {
   return String(arr);
 }
 
-const SVG_PLACEHOLDER = 'data:image/svg+xml;utf8,' + encodeURIComponent(
-  `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
-    <rect width="100%" height="100%" fill="#f3f3f3"/>
-    <text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#bbb" font-size="16">No image</text>
-  </svg>`
-);
+// Helper: return upload endpoint for this product id
+function uploadEndpoint(id) {
+  // If you changed your backend route, update this function accordingly
+  return `/api/products/${id}/upload`;
+}
 
 export default function AdminProductEdit() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [loading, setLoading] = useState(true);
 
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  // basic product fields
   const [title, setTitle] = useState("");
   const [slug, setSlug] = useState("");
   const [price, setPrice] = useState("");
@@ -41,20 +58,24 @@ export default function AdminProductEdit() {
   const [description, setDescription] = useState("");
   const [published, setPublished] = useState(false);
 
-  const [existingImages, setExistingImages] = useState([]); // {url, raw, keep}
+  // images
+  // existingImages: array of { url: string, raw: originalDbValue, keep: boolean }
+  const [existingImages, setExistingImages] = useState([]);
+  // newFiles: File[]
   const [newFiles, setNewFiles] = useState([]);
+  // previews for newFiles as data urls
   const [newPreviews, setNewPreviews] = useState([]);
 
+  // Load product on mount
   useEffect(() => {
     let mounted = true;
     async function load() {
       setLoading(true);
       try {
         const res = await axiosInstance.get(`/api/products/${id}`);
-        // Accept both { success: true, product: {...} } and raw product object
         const data = res?.data;
+        // server may return { product: {...} } or product directly
         const p = data?.product ?? data ?? {};
-
         if (!mounted) return;
 
         setTitle(p.title ?? "");
@@ -71,17 +92,22 @@ export default function AdminProductEdit() {
         setDescription(p.description ?? "");
         setPublished(Boolean(p.published || p.isPublished));
 
-        // Map images: support strings or objects with {url, path, alt}
+        // Normalize images from DB: accept strings or objects
         const rawImages = p.images ?? p.image ?? [];
-        const imgs = (Array.isArray(rawImages) ? rawImages : [rawImages]).map((img) => {
-          const raw = img;
-          const url = typeof img === "string" ? img : (img?.url || img?.path || String(img));
-          return { url, raw, keep: true };
+        const arr = Array.isArray(rawImages) ? rawImages : (rawImages ? [rawImages] : []);
+        const imgs = arr.map(i => {
+          if (!i) return { url: SVG_PLACEHOLDER, raw: i, keep: true };
+          if (typeof i === "string") return { url: i, raw: i, keep: true };
+          if (typeof i === "object") {
+            // object might be {url:..., alt:...} or {path:...}
+            const url = i.url ?? i.path ?? (i.src ?? JSON.stringify(i));
+            return { url, raw: i, keep: true };
+          }
+          return { url: String(i), raw: i, keep: true };
         });
         setExistingImages(imgs);
       } catch (err) {
         console.error("Fetch product failed:", err);
-        // Show a clearer message for admins
         alert("Failed to fetch product — check console.");
       } finally {
         if (mounted) setLoading(false);
@@ -91,13 +117,12 @@ export default function AdminProductEdit() {
     return () => { mounted = false; };
   }, [id]);
 
-  // previews for new files
+  // Create data-url previews for newFiles
   useEffect(() => {
     if (!newFiles || newFiles.length === 0) {
       setNewPreviews([]);
       return;
     }
-
     let cancelled = false;
     const readers = [];
     const results = new Array(newFiles.length);
@@ -107,7 +132,6 @@ export default function AdminProductEdit() {
       readers.push(r);
       r.onload = (e) => {
         results[i] = e.target.result;
-        // once all non-empty results collected, set state
         if (!cancelled && results.filter(Boolean).length === newFiles.length) {
           setNewPreviews(results.slice());
         }
@@ -123,25 +147,26 @@ export default function AdminProductEdit() {
 
     return () => {
       cancelled = true;
-      readers.forEach((rr) => {
-        try { rr.abort && rr.abort(); } catch (e) {}
-      });
+      readers.forEach(rr => { try { rr.abort && rr.abort(); } catch (e) {} });
     };
   }, [newFiles]);
 
+  // file change handler (select files)
   function handleFileChange(e) {
-    setNewFiles(Array.from(e.target.files || []));
+    const files = Array.from(e.target.files || []);
+    setNewFiles(files);
   }
 
+  // toggle keep flag for existing image
   function toggleKeepExisting(index) {
-    setExistingImages((s) => {
+    setExistingImages(s => {
       const c = [...s];
       c[index] = { ...c[index], keep: !c[index].keep };
       return c;
     });
   }
   function removeExistingImage(index) {
-    setExistingImages((s) => {
+    setExistingImages(s => {
       const c = [...s];
       c[index] = { ...c[index], keep: false };
       return c;
@@ -156,36 +181,83 @@ export default function AdminProductEdit() {
     setNewPreviews(b);
   }
 
-  async function uploadImagesIfAnyAndGetFinalImages() {
-    // keep current kept images (use raw when available)
-    const keep = existingImages.filter(im => im.keep).map(im => im.raw ?? im.url);
+  // safe img onError handler to show placeholder once
+  const safeOnError = (e) => {
+    try {
+      const img = e.target;
+      if (img.dataset.failed) return;
+      img.dataset.failed = "1";
+      img.src = SVG_PLACEHOLDER;
+    } catch (err) {}
+  };
 
-    if (!newFiles || newFiles.length === 0) {
-      // normalize to array of strings/objects as expected by backend
-      return keep;
-    }
+  // Core: upload new files (if any) and return array of uploaded URLs
+  async function uploadNewFilesAndReturnUrls() {
+    if (!newFiles || newFiles.length === 0) return [];
 
     const fd = new FormData();
     newFiles.forEach(f => fd.append("images", f));
-    fd.append("keepImages", JSON.stringify(keep));
-    fd.append("title", title ?? "");
-    fd.append("slug", slug ?? "");
 
-    // include headers only if axiosInstance needs it; axios will set boundary automatically
-    const res = await axiosInstance.put(`/api/products/${id}/upload`, fd, {
-      headers: { 'Content-Type': 'multipart/form-data' }
+    // the backend endpoint you already used earlier in your existing file:
+    const endpoint = uploadEndpoint(id);
+
+    // Use PUT as in your existing code; change to POST if your API expects POST
+    const res = await axiosInstance.put(endpoint, fd, {
+      headers: { "Content-Type": "multipart/form-data" },
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity
     });
 
-    // Accept either { images: [...] } or direct array
-    const data = res?.data;
-    return data?.images ?? data ?? [];
+    // expect response like { images: [...] } or { files: [ { url } ] } or array
+    const data = res?.data ?? {};
+    // several backends return array directly
+    if (Array.isArray(data)) {
+      // array of strings or objects
+      return data.map(i => (typeof i === "string" ? i : (i.url || i.path || i.filename || ""))).filter(Boolean);
+    }
+    if (Array.isArray(data.images)) {
+      return data.images.map(i => (typeof i === "string" ? i : (i.url || i.path || i.filename))).filter(Boolean);
+    }
+    if (Array.isArray(data.files)) {
+      return data.files.map(f => (f.url || f.filename || f.path)).filter(Boolean);
+    }
+    // fallback: try data.url or data.image
+    if (data.url) return [data.url];
+    return [];
+  }
+
+  // Build final images list: kept existing images (strings) + uploaded urls
+  function keptExistingAsUrls() {
+    return existingImages
+      .filter(i => i.keep)
+      .map(i => {
+        const raw = i.raw;
+        if (!raw) return i.url || SVG_PLACEHOLDER;
+        if (typeof raw === "string") return raw;
+        if (typeof raw === "object") return raw.url ?? raw.path ?? i.url;
+        return String(raw);
+      })
+      .filter(Boolean);
   }
 
   async function handleSave(e) {
     e.preventDefault();
-    setLoading(true);
+    setSaving(true);
+
     try {
-      const finalImages = await uploadImagesIfAnyAndGetFinalImages();
+      // First, upload new images (if any). If upload endpoint fails, do not overwrite DB images.
+      let uploaded = [];
+      if (newFiles && newFiles.length > 0) {
+        uploaded = await uploadNewFilesAndReturnUrls();
+        if (!uploaded || uploaded.length === 0) {
+          // If the backend didn't return urls, abort and show error
+          throw new Error("Upload failed or returned no URLs. Check the upload endpoint response.");
+        }
+      }
+
+      const finalImages = [...keptExistingAsUrls(), ...uploaded];
+
+      // Build payload (normalize arrays)
       const payload = {
         title, slug, price, mrp, stock, sku, brand, category, videoUrl,
         colors: stringToArray(colorsText),
@@ -193,55 +265,59 @@ export default function AdminProductEdit() {
         description, published,
         images: finalImages
       };
+
+      // Save product (PUT)
       await axiosInstance.put(`/api/products/${id}`, payload);
+
+      // on success navigate back to product list
       alert("Product updated");
       navigate("/admin/products");
     } catch (err) {
       console.error("Save failed:", err, err?.response?.data ?? "");
-      alert("Save failed — check console");
+      const msg = err?.response?.data?.error ?? err.message ?? "Save/upload failed";
+      alert("Error: " + msg);
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   }
 
   if (loading) return <div style={{ padding: 20 }}>Loading…</div>;
-
-  const safeOnError = (e) => {
-    try {
-      const img = e.target;
-      if (img.dataset.failed) return;
-      img.dataset.failed = "1";
-      img.src = SVG_PLACEHOLDER;
-    } catch (err) { /* no-op */ }
-  };
 
   return (
     <div className="admin-edit-wrap">
       <h1>Edit product — {title}</h1>
       <button onClick={() => navigate("/admin/products")}>Back to products</button>
 
-      <form onSubmit={handleSave} className="admin-edit-form">
-        <div className="col-left">
-          <label>Title<input value={title} onChange={e => setTitle(e.target.value)} /></label>
-          <label>Slug<input value={slug} onChange={e => setSlug(e.target.value)} /></label>
-          <label>Price<input value={price} onChange={e => setPrice(e.target.value)} /></label>
-          <label>MRP<input value={mrp} onChange={e => setMrp(e.target.value)} /></label>
-          <label>Stock<input value={stock} onChange={e => setStock(e.target.value)} /></label>
-          <label>SKU<input value={sku} onChange={e => setSku(e.target.value)} /></label>
-          <label>Brand<input value={brand} onChange={e => setBrand(e.target.value)} /></label>
-          <label>Category<input value={category} onChange={e => setCategory(e.target.value)} /></label>
-          <label>Video URL<input value={videoUrl} onChange={e => setVideoUrl(e.target.value)} /></label>
+      <form onSubmit={handleSave} className="admin-edit-form" style={{ display: "flex", gap: 16 }}>
+        <div style={{ flex: 1 }}>
+          <label>Title<br /><input value={title} onChange={e => setTitle(e.target.value)} /></label>
+          <br />
+          <label>Slug<br /><input value={slug} onChange={e => setSlug(e.target.value)} /></label>
+          <br />
+          <label>Price<br /><input value={price} onChange={e => setPrice(e.target.value)} /></label>
+          <br />
+          <label>MRP<br /><input value={mrp} onChange={e => setMrp(e.target.value)} /></label>
+          <br />
+          <label>Stock<br /><input value={stock} onChange={e => setStock(e.target.value)} /></label>
+          <br />
+          <label>SKU<br /><input value={sku} onChange={e => setSku(e.target.value)} /></label>
+          <br />
+          <label>Brand<br /><input value={brand} onChange={e => setBrand(e.target.value)} /></label>
+          <br />
+          <label>Category<br /><input value={category} onChange={e => setCategory(e.target.value)} /></label>
+          <br />
+          <label>Video URL<br /><input value={videoUrl} onChange={e => setVideoUrl(e.target.value)} /></label>
         </div>
 
-        <div className="col-right">
+        <div style={{ width: 420 }}>
           <h4>Existing Images</h4>
-          <div className="images-grid">
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
             {existingImages.length === 0 && <div>No existing images</div>}
             {existingImages.map((img, idx) => (
-              <div key={idx} className="image-card" style={{ opacity: img.keep ? 1 : 0.5 }}>
-                <img src={img.url || SVG_PLACEHOLDER} alt="" onError={safeOnError} />
-                <div style={{display:"flex", gap:8, marginTop:6}}>
-                  <label style={{fontSize:12}}>
+              <div key={idx} style={{ width: 120, textAlign: "center", opacity: img.keep ? 1 : 0.5 }}>
+                <img src={img.url || SVG_PLACEHOLDER} alt="" style={{ maxWidth: "100%", height: 100, objectFit: "contain", border: "1px solid #eee" }} onError={safeOnError} />
+                <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 6 }}>
+                  <label style={{ fontSize: 12 }}>
                     <input type="checkbox" checked={img.keep} onChange={() => toggleKeepExisting(idx)} /> Keep
                   </label>
                   <button type="button" onClick={() => removeExistingImage(idx)}>Remove</button>
@@ -250,37 +326,47 @@ export default function AdminProductEdit() {
             ))}
           </div>
 
-          <h4>Add Images</h4>
+          <h4 style={{ marginTop: 16 }}>Add Images</h4>
           <input type="file" multiple accept="image/*" onChange={handleFileChange} />
-          <div className="images-grid">
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
             {newPreviews.map((src, i) => (
-              <div key={i} className="image-card">
-                <img src={src} alt="" onError={safeOnError} />
-                <div><button type="button" onClick={() => removeNewPreview(i)}>Remove</button></div>
+              <div key={i} style={{ width: 120, textAlign: "center" }}>
+                <img src={src} alt="" style={{ maxWidth: "100%", height: 100, objectFit: "contain", border: "1px solid #eee" }} onError={safeOnError} />
+                <div style={{ marginTop: 6 }}>
+                  <button type="button" onClick={() => removeNewPreview(i)}>Remove</button>
+                </div>
               </div>
             ))}
           </div>
 
-          <label>Colors (comma-separated)<input value={colorsText} onChange={e => setColorsText(e.target.value)} placeholder="red, blue" /></label>
-          <div className="color-swatches">
+          <label style={{ display: "block", marginTop: 12 }}>Colors (comma-separated)<br />
+            <input value={colorsText} onChange={e => setColorsText(e.target.value)} placeholder="red, blue" />
+          </label>
+
+          <div style={{ marginTop: 8 }}>
             {stringToArray(colorsText).map((c, i) => (
-              <div key={i} className="swatch-item">
-                <div className="swatch" style={{ backgroundColor: c }} title={c} />
-                <span>{c}</span>
-              </div>
+              <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 8, marginRight: 8 }}>
+                <div style={{ width: 16, height: 16, backgroundColor: c, border: "1px solid #ccc" }} /> <small>{c}</small>
+              </span>
             ))}
           </div>
 
-          <label>Sizes (comma-separated)<input value={sizesText} onChange={e => setSizesText(e.target.value)} placeholder="S, M, L" /></label>
+          <label style={{ display: "block", marginTop: 12 }}>Sizes (comma-separated)<br />
+            <input value={sizesText} onChange={e => setSizesText(e.target.value)} placeholder="S, M, L" />
+          </label>
 
-          <label>Description<textarea value={description} onChange={e => setDescription(e.target.value)} /></label>
+          <label style={{ display: "block", marginTop: 12 }}>Description<br />
+            <textarea value={description} onChange={e => setDescription(e.target.value)} rows={6} style={{ width: "100%" }} />
+          </label>
 
-          <label className="checkbox-row"><input type="checkbox" checked={published} onChange={e => setPublished(e.target.checked)} /> Published</label>
+          <label style={{ display: "block", marginTop: 8 }}>
+            <input type="checkbox" checked={published} onChange={e => setPublished(e.target.checked)} /> Published
+          </label>
         </div>
 
-        <div style={{ width: "100%", marginTop: 12 }}>
-          <button type="submit">Save</button>
-          <button type="button" onClick={() => navigate("/admin/products")}>Done</button>
+        <div style={{ position: "absolute", left: 20, bottom: 20 }}>
+          <button type="submit" disabled={saving}>{saving ? "Saving…" : "Save"}</button>
+          <button type="button" onClick={() => navigate("/admin/products")} style={{ marginLeft: 8 }}>Cancel</button>
         </div>
       </form>
     </div>

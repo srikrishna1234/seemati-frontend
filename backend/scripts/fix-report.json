@@ -1,0 +1,29 @@
+{
+  "DRY": true,
+  "API_BASE": "https://api.seemati.in",
+  "updated": 0,
+  "details": {
+    "updated": [],
+    "skipped": [
+      {
+        "productId": "69108600a75f338d4673bef3"
+      },
+      {
+        "productId": "6910955d67f24fb1b45e1330"
+      },
+      {
+        "productId": "6919e181bf3192fd85273aa0"
+      },
+      {
+        "productId": "691afb6cdda6f0d14b5c65b6"
+      },
+      {
+        "productId": "691aff3edda6f0d14b5c65c0"
+      },
+      {
+        "productId": "691d6b477eaf40b962f7f459"
+      }
+    ],
+    "errors": []
+  }
+}
