@@ -15,7 +15,6 @@ function arrayToString(arr) {
   return String(arr);
 }
 
-// small inline SVG placeholder (data URI) — guaranteed to be an image
 const SVG_PLACEHOLDER = 'data:image/svg+xml;utf8,' + encodeURIComponent(
   `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
     <rect width="100%" height="100%" fill="#f3f3f3"/>
@@ -47,11 +46,17 @@ export default function AdminProductEdit() {
   const [newPreviews, setNewPreviews] = useState([]);
 
   useEffect(() => {
+    let mounted = true;
     async function load() {
       setLoading(true);
       try {
         const res = await axiosInstance.get(`/api/products/${id}`);
-        const p = res.data || {};
+        // Accept both { success: true, product: {...} } and raw product object
+        const data = res?.data;
+        const p = data?.product ?? data ?? {};
+
+        if (!mounted) return;
+
         setTitle(p.title ?? "");
         setSlug(p.slug ?? "");
         setPrice(p.price ?? "");
@@ -64,35 +69,64 @@ export default function AdminProductEdit() {
         setColorsText(Array.isArray(p.colors) ? arrayToString(p.colors) : (p.colors ?? "").toString());
         setSizesText(Array.isArray(p.sizes) ? arrayToString(p.sizes) : (p.sizes ?? "").toString());
         setDescription(p.description ?? "");
-        setPublished(Boolean(p.published));
-        const imgs = (p.images || []).map((img) => {
+        setPublished(Boolean(p.published || p.isPublished));
+
+        // Map images: support strings or objects with {url, path, alt}
+        const rawImages = p.images ?? p.image ?? [];
+        const imgs = (Array.isArray(rawImages) ? rawImages : [rawImages]).map((img) => {
           const raw = img;
-          const url = typeof img === "string" ? img : (img.url || img.path || String(img));
+          const url = typeof img === "string" ? img : (img?.url || img?.path || String(img));
           return { url, raw, keep: true };
         });
         setExistingImages(imgs);
       } catch (err) {
         console.error("Fetch product failed:", err);
+        // Show a clearer message for admins
         alert("Failed to fetch product — check console.");
       } finally {
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
     }
     load();
+    return () => { mounted = false; };
   }, [id]);
 
   // previews for new files
   useEffect(() => {
-    if (!newFiles || newFiles.length === 0) return setNewPreviews([]);
-    const arr = [];
+    if (!newFiles || newFiles.length === 0) {
+      setNewPreviews([]);
+      return;
+    }
+
+    let cancelled = false;
+    const readers = [];
+    const results = new Array(newFiles.length);
+
     newFiles.forEach((f, i) => {
       const r = new FileReader();
+      readers.push(r);
       r.onload = (e) => {
-        arr[i] = e.target.result;
-        if (arr.filter(Boolean).length === newFiles.length) setNewPreviews(arr);
+        results[i] = e.target.result;
+        // once all non-empty results collected, set state
+        if (!cancelled && results.filter(Boolean).length === newFiles.length) {
+          setNewPreviews(results.slice());
+        }
+      };
+      r.onerror = () => {
+        results[i] = SVG_PLACEHOLDER;
+        if (!cancelled && results.filter(Boolean).length === newFiles.length) {
+          setNewPreviews(results.slice());
+        }
       };
       r.readAsDataURL(f);
     });
+
+    return () => {
+      cancelled = true;
+      readers.forEach((rr) => {
+        try { rr.abort && rr.abort(); } catch (e) {}
+      });
+    };
   }, [newFiles]);
 
   function handleFileChange(e) {
@@ -123,19 +157,28 @@ export default function AdminProductEdit() {
   }
 
   async function uploadImagesIfAnyAndGetFinalImages() {
-    // if no new files -> send kept images
+    // keep current kept images (use raw when available)
     const keep = existingImages.filter(im => im.keep).map(im => im.raw ?? im.url);
-    if (!newFiles || newFiles.length === 0) return keep;
+
+    if (!newFiles || newFiles.length === 0) {
+      // normalize to array of strings/objects as expected by backend
+      return keep;
+    }
 
     const fd = new FormData();
     newFiles.forEach(f => fd.append("images", f));
     fd.append("keepImages", JSON.stringify(keep));
-    // send small meta if you want the upload route to update title etc
     fd.append("title", title ?? "");
     fd.append("slug", slug ?? "");
 
-    const res = await axiosInstance.put(`/api/products/${id}/upload`, fd);
-    return res.data.images || [];
+    // include headers only if axiosInstance needs it; axios will set boundary automatically
+    const res = await axiosInstance.put(`/api/products/${id}/upload`, fd, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+
+    // Accept either { images: [...] } or direct array
+    const data = res?.data;
+    return data?.images ?? data ?? [];
   }
 
   async function handleSave(e) {
@@ -163,11 +206,10 @@ export default function AdminProductEdit() {
 
   if (loading) return <div style={{ padding: 20 }}>Loading…</div>;
 
-  // helper: safe onError handler for images (prevents infinite loop)
   const safeOnError = (e) => {
     try {
       const img = e.target;
-      if (img.dataset.failed) return; // already failed once
+      if (img.dataset.failed) return;
       img.dataset.failed = "1";
       img.src = SVG_PLACEHOLDER;
     } catch (err) { /* no-op */ }

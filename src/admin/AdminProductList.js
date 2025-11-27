@@ -1,4 +1,4 @@
-// frontend/src/admin/AdminProductList.js
+// src/admin/AdminProductList.js
 import React, { useEffect, useState } from "react";
 import axios from "../api/axiosInstance";
 import { useNavigate } from "react-router-dom";
@@ -15,10 +15,10 @@ export default function AdminProductList() {
       try {
         setLoading(true);
         setError(null);
-        // Request backend under /api
         const res = await axios.get("/api/products?page=1&limit=100&fields=_id,title,slug,price,thumbnail,images");
-        const data = res.data;
-        const list = Array.isArray(data.products) ? data.products : data;
+        const data = res?.data;
+        // Accept either { products: [...] } or a raw array
+        const list = Array.isArray(data?.products) ? data.products : (Array.isArray(data) ? data : (data?.products ?? []));
         if (!mounted) return;
         setProducts(list);
       } catch (err) {
@@ -74,13 +74,13 @@ export default function AdminProductList() {
           </thead>
           <tbody>
             {products.map((p) => {
-              const id = p._id || p.id || p.productId;
+              const id = p._id || p.id || p.productId || p.slug;
               const imageUrl = p.thumbnail || (p.images && p.images[0] && (p.images[0].url || p.images[0])) || "";
               return (
                 <tr key={id}>
                   <td style={{ padding: 8, verticalAlign: "middle" }}>
                     {imageUrl ? (
-                      <img src={imageUrl} alt={p.title || "product"} style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 4 }} />
+                      <img src={imageUrl} alt={p.title || "product"} style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 4 }} onError={(e)=>{e.target.src='data:image/svg+xml;utf8,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="60" height="60"><rect width="100%" height="100%" fill="#f4f4f4"/></svg>')}} />
                     ) : (
                       <div style={{ width: 60, height: 60, background: "#f4f4f4", borderRadius: 4 }} />
                     )}
