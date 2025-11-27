@@ -28,9 +28,20 @@ app.use(cookieParser());
 
 /* ---------------------------------------------
    STATIC UPLOADS FOLDER (IMPORTANT)
-   This serves images like /uploads/abc123.jpg
+   Use dedicated middleware so we can set required headers
+   That helps avoid ERR_BLOCKED_BY_RESPONSE.NotSameOrigin
 ----------------------------------------------*/
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+try {
+  // Load the corrected middleware path
+  // File: backend/src/middleware/serveruploads.js
+  const uploadsMiddleware = require('./src/middleware/serveruploads.js');
+  app.use('/', uploadsMiddleware); // serves /uploads/:filename
+  console.log('[Uploads] Custom uploads middleware mounted at /uploads');
+} catch (err) {
+  // Fallback to express.static if middleware missing - but this will not set CORP header etc.
+  console.warn('[Uploads] Custom middleware missing or failed to load. Falling back to express.static.');
+  app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+}
 
 /* ---------------------------------------------
    CORS CONFIGURATION
