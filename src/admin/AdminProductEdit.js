@@ -15,12 +15,19 @@ function arrayToString(arr) {
   return String(arr);
 }
 
+// small inline SVG placeholder (data URI) — guaranteed to be an image
+const SVG_PLACEHOLDER = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
+    <rect width="100%" height="100%" fill="#f3f3f3"/>
+    <text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#bbb" font-size="16">No image</text>
+  </svg>`
+);
+
 export default function AdminProductEdit() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
 
-  // product fields
   const [title, setTitle] = useState("");
   const [slug, setSlug] = useState("");
   const [price, setPrice] = useState("");
@@ -35,9 +42,7 @@ export default function AdminProductEdit() {
   const [description, setDescription] = useState("");
   const [published, setPublished] = useState(false);
 
-  // images
-  // existingImages: { url, raw, keep: true/false }
-  const [existingImages, setExistingImages] = useState([]);
+  const [existingImages, setExistingImages] = useState([]); // {url, raw, keep}
   const [newFiles, setNewFiles] = useState([]);
   const [newPreviews, setNewPreviews] = useState([]);
 
@@ -47,7 +52,6 @@ export default function AdminProductEdit() {
       try {
         const res = await axiosInstance.get(`/api/products/${id}`);
         const p = res.data || {};
-
         setTitle(p.title ?? "");
         setSlug(p.slug ?? "");
         setPrice(p.price ?? "");
@@ -61,9 +65,7 @@ export default function AdminProductEdit() {
         setSizesText(Array.isArray(p.sizes) ? arrayToString(p.sizes) : (p.sizes ?? "").toString());
         setDescription(p.description ?? "");
         setPublished(Boolean(p.published));
-
         const imgs = (p.images || []).map((img) => {
-          // normalize to absolute url already done by backend routes
           const raw = img;
           const url = typeof img === "string" ? img : (img.url || img.path || String(img));
           return { url, raw, keep: true };
@@ -79,15 +81,15 @@ export default function AdminProductEdit() {
     load();
   }, [id]);
 
-  // preview new files
+  // previews for new files
   useEffect(() => {
     if (!newFiles || newFiles.length === 0) return setNewPreviews([]);
-    const previews = [];
-    newFiles.forEach((f, idx) => {
+    const arr = [];
+    newFiles.forEach((f, i) => {
       const r = new FileReader();
       r.onload = (e) => {
-        previews[idx] = e.target.result;
-        if (previews.filter(Boolean).length === newFiles.length) setNewPreviews(previews);
+        arr[i] = e.target.result;
+        if (arr.filter(Boolean).length === newFiles.length) setNewPreviews(arr);
       };
       r.readAsDataURL(f);
     });
@@ -98,53 +100,41 @@ export default function AdminProductEdit() {
   }
 
   function toggleKeepExisting(index) {
-    setExistingImages((arr) => {
-      const copy = [...arr];
-      copy[index] = { ...copy[index], keep: !copy[index].keep };
-      return copy;
+    setExistingImages((s) => {
+      const c = [...s];
+      c[index] = { ...c[index], keep: !c[index].keep };
+      return c;
     });
   }
-
   function removeExistingImage(index) {
-    // mark not kept, but keep list item so admin sees it (or we can remove)
-    setExistingImages((arr) => {
-      const copy = [...arr];
-      copy[index] = { ...copy[index], keep: false };
-      return copy;
+    setExistingImages((s) => {
+      const c = [...s];
+      c[index] = { ...c[index], keep: false };
+      return c;
     });
   }
-
-  function removeNewPreview(index) {
+  function removeNewPreview(i) {
     const a = [...newFiles];
     const b = [...newPreviews];
-    a.splice(index, 1);
-    b.splice(index, 1);
+    a.splice(i, 1);
+    b.splice(i, 1);
     setNewFiles(a);
     setNewPreviews(b);
   }
 
-  // Upload new images via multipart then update product JSON
   async function uploadImagesIfAnyAndGetFinalImages() {
-    // If no new files, just return kept existing image raw values
-    if (!newFiles || newFiles.length === 0) {
-      return existingImages.filter(i => i.keep).map(i => i.raw ?? i.url);
-    }
+    // if no new files -> send kept images
+    const keep = existingImages.filter(im => im.keep).map(im => im.raw ?? im.url);
+    if (!newFiles || newFiles.length === 0) return keep;
 
-    // Prepare FormData for upload route (productRoutes.cjs PUT /:id/upload expects "images" files
     const fd = new FormData();
-    newFiles.forEach((f) => fd.append("images", f));
-    // pass keepImages (existing image paths the admin wants to keep)
-    const keep = existingImages.filter(i => i.keep).map(i => i.raw ?? i.url);
+    newFiles.forEach(f => fd.append("images", f));
     fd.append("keepImages", JSON.stringify(keep));
-    // other fields (optional): title/slug etc — upload route updates product if provided
-    // send minimal meta to keep product consistent
+    // send small meta if you want the upload route to update title etc
     fd.append("title", title ?? "");
     fd.append("slug", slug ?? "");
 
-    const res = await axiosInstance.put(`/api/products/${id}/upload`, fd, {
-      headers: { "Content-Type": "multipart/form-data" }
-    });
-    // response returns product object with images absolute URLs
+    const res = await axiosInstance.put(`/api/products/${id}/upload`, fd);
     return res.data.images || [];
   }
 
@@ -152,41 +142,36 @@ export default function AdminProductEdit() {
     e.preventDefault();
     setLoading(true);
     try {
-      // first, ensure images are uploaded/kept as desired
       const finalImages = await uploadImagesIfAnyAndGetFinalImages();
-
-      // prepare payload — note backend allowed list is controlled by productRoutes.cjs
       const payload = {
-        title,
-        slug,
-        price,
-        mrp,
-        stock,
-        sku,
-        brand,
-        category,
-        videoUrl,
+        title, slug, price, mrp, stock, sku, brand, category, videoUrl,
         colors: stringToArray(colorsText),
         sizes: stringToArray(sizesText),
-        description,
-        published,
-        images: finalImages,
+        description, published,
+        images: finalImages
       };
-
-      // JSON update
       await axiosInstance.put(`/api/products/${id}`, payload);
-
-      alert("Product updated successfully.");
+      alert("Product updated");
       navigate("/admin/products");
     } catch (err) {
       console.error("Save failed:", err, err?.response?.data ?? "");
-      alert("Save failed — check console and network tab.");
+      alert("Save failed — check console");
     } finally {
       setLoading(false);
     }
   }
 
   if (loading) return <div style={{ padding: 20 }}>Loading…</div>;
+
+  // helper: safe onError handler for images (prevents infinite loop)
+  const safeOnError = (e) => {
+    try {
+      const img = e.target;
+      if (img.dataset.failed) return; // already failed once
+      img.dataset.failed = "1";
+      img.src = SVG_PLACEHOLDER;
+    } catch (err) { /* no-op */ }
+  };
 
   return (
     <div className="admin-edit-wrap">
@@ -195,97 +180,60 @@ export default function AdminProductEdit() {
 
       <form onSubmit={handleSave} className="admin-edit-form">
         <div className="col-left">
-          <label>Title
-            <input value={title} onChange={(e) => setTitle(e.target.value)} />
-          </label>
-
-          <label>Slug
-            <input value={slug} onChange={(e) => setSlug(e.target.value)} />
-          </label>
-
-          <label>Price
-            <input value={price} onChange={(e) => setPrice(e.target.value)} />
-          </label>
-
-          <label>MRP
-            <input value={mrp} onChange={(e) => setMrp(e.target.value)} />
-          </label>
-
-          <label>Stock
-            <input value={stock} onChange={(e) => setStock(e.target.value)} />
-          </label>
-
-          <label>SKU
-            <input value={sku} onChange={(e) => setSku(e.target.value)} />
-          </label>
-
-          <label>Brand
-            <input value={brand} onChange={(e) => setBrand(e.target.value)} />
-          </label>
-
-          <label>Category
-            <input value={category} onChange={(e) => setCategory(e.target.value)} />
-          </label>
-
-          <label>Video URL
-            <input value={videoUrl} onChange={(e) => setVideoUrl(e.target.value)} />
-          </label>
+          <label>Title<input value={title} onChange={e => setTitle(e.target.value)} /></label>
+          <label>Slug<input value={slug} onChange={e => setSlug(e.target.value)} /></label>
+          <label>Price<input value={price} onChange={e => setPrice(e.target.value)} /></label>
+          <label>MRP<input value={mrp} onChange={e => setMrp(e.target.value)} /></label>
+          <label>Stock<input value={stock} onChange={e => setStock(e.target.value)} /></label>
+          <label>SKU<input value={sku} onChange={e => setSku(e.target.value)} /></label>
+          <label>Brand<input value={brand} onChange={e => setBrand(e.target.value)} /></label>
+          <label>Category<input value={category} onChange={e => setCategory(e.target.value)} /></label>
+          <label>Video URL<input value={videoUrl} onChange={e => setVideoUrl(e.target.value)} /></label>
         </div>
 
         <div className="col-right">
-          <div className="images-section">
-            <h4>Existing Images</h4>
-            <div className="images-grid">
-              {existingImages.length === 0 && <div>No existing images</div>}
-              {existingImages.map((img, idx) => (
-                <div className="image-card" key={idx} style={{ opacity: img.keep ? 1 : 0.5 }}>
-                  <img src={img.url || "/placeholder.png"} alt={`existing-${idx}`} onError={(e)=>e.target.src="/placeholder.png"} />
-                  <div style={{display:"flex", alignItems:"center", gap:6, marginTop:6}}>
-                    <label style={{fontSize:12}}>
-                      <input type="checkbox" checked={img.keep} onChange={() => toggleKeepExisting(idx)} /> Keep
-                    </label>
-                    <button type="button" onClick={() => removeExistingImage(idx)}>Remove</button>
-                  </div>
+          <h4>Existing Images</h4>
+          <div className="images-grid">
+            {existingImages.length === 0 && <div>No existing images</div>}
+            {existingImages.map((img, idx) => (
+              <div key={idx} className="image-card" style={{ opacity: img.keep ? 1 : 0.5 }}>
+                <img src={img.url || SVG_PLACEHOLDER} alt="" onError={safeOnError} />
+                <div style={{display:"flex", gap:8, marginTop:6}}>
+                  <label style={{fontSize:12}}>
+                    <input type="checkbox" checked={img.keep} onChange={() => toggleKeepExisting(idx)} /> Keep
+                  </label>
+                  <button type="button" onClick={() => removeExistingImage(idx)}>Remove</button>
                 </div>
-              ))}
-            </div>
-
-            <h4>Add Images</h4>
-            <input type="file" multiple accept="image/*" onChange={handleFileChange} />
-            <div className="images-grid">
-              {newPreviews.map((p, i) => (
-                <div className="image-card" key={i}>
-                  <img src={p} alt={`preview-${i}`} />
-                  <button type="button" onClick={() => removeNewPreview(i)}>Remove</button>
-                </div>
-              ))}
-            </div>
+              </div>
+            ))}
           </div>
 
-          <label>Colors (comma-separated)
-            <input value={colorsText} onChange={(e) => setColorsText(e.target.value)} placeholder="red, blue" />
-          </label>
+          <h4>Add Images</h4>
+          <input type="file" multiple accept="image/*" onChange={handleFileChange} />
+          <div className="images-grid">
+            {newPreviews.map((src, i) => (
+              <div key={i} className="image-card">
+                <img src={src} alt="" onError={safeOnError} />
+                <div><button type="button" onClick={() => removeNewPreview(i)}>Remove</button></div>
+              </div>
+            ))}
+          </div>
 
+          <label>Colors (comma-separated)<input value={colorsText} onChange={e => setColorsText(e.target.value)} placeholder="red, blue" /></label>
           <div className="color-swatches">
             {stringToArray(colorsText).map((c, i) => (
-              <div className="swatch-item" key={i}>
+              <div key={i} className="swatch-item">
                 <div className="swatch" style={{ backgroundColor: c }} title={c} />
                 <span>{c}</span>
               </div>
             ))}
           </div>
 
-          <label>Sizes (comma-separated)
-            <input value={sizesText} onChange={(e) => setSizesText(e.target.value)} placeholder="S, M, L" />
-          </label>
+          <label>Sizes (comma-separated)<input value={sizesText} onChange={e => setSizesText(e.target.value)} placeholder="S, M, L" /></label>
 
-          <label>Description
-            <textarea value={description} onChange={(e) => setDescription(e.target.value)} />
-          </label>
+          <label>Description<textarea value={description} onChange={e => setDescription(e.target.value)} /></label>
 
-          <label className="checkbox-row">
-            <input type="checkbox" checked={published} onChange={(e) => setPublished(e.target.checked)} /> Published
-          </label>
+          <label className="checkbox-row"><input type="checkbox" checked={published} onChange={e => setPublished(e.target.checked)} /> Published</label>
         </div>
 
         <div style={{ width: "100%", marginTop: 12 }}>
