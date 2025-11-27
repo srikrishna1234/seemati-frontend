@@ -12,7 +12,6 @@ const fs = require('fs');
 // ------------------------------
 let Product;
 try {
-  // prefer lowercase file (your repo uses product.cjs), but accept either
   let productModule;
   try { productModule = require('../models/product.cjs'); } catch (e1) {}
   try { if (!productModule) productModule = require('../models/Product.cjs'); } catch (e2) {}
@@ -36,11 +35,50 @@ function looksLikeObjectId(str) {
   return typeof str === 'string' && /^[0-9a-fA-F]{24}$/.test(str);
 }
 
-// Helper to normalize images array for responses
-function normalizeImages(imgs) {
-  if (!imgs) return [];
-  if (!Array.isArray(imgs)) return [imgs];
-  return imgs;
+// Normalize images payload to array of strings (accept objects with url/path or JSON string)
+function normalizeImagesInput(raw) {
+  if (typeof raw === 'undefined' || raw === null) return [];
+
+  let arr = raw;
+
+  // If it's a JSON string, try parse
+  if (typeof arr === 'string') {
+    arr = arr.trim();
+    if (arr === '') return [];
+    try {
+      const parsed = JSON.parse(arr);
+      arr = parsed;
+    } catch (e) {
+      // not JSON; treat as single string url
+      return [arr];
+    }
+  }
+
+  if (!Array.isArray(arr)) {
+    // convert non-array to single-element array
+    arr = [arr];
+  }
+
+  // map each item to a string URL/path
+  const out = arr.map((it) => {
+    if (typeof it === 'string') return it;
+    if (it && typeof it === 'object') {
+      // common shapes: { url: '...' } or { path: '...' } or { raw: '...' }
+      if (it.url) return it.url;
+      if (it.path) return it.path;
+      if (it.raw && typeof it.raw === 'string') return it.raw;
+      // if nested object, try JSON stringify as fallback (rare)
+      try {
+        return JSON.stringify(it);
+      } catch (e) {
+        return String(it);
+      }
+    }
+    return String(it);
+  });
+
+  // Filter out empty strings and duplicates
+  return out.filter(Boolean);
 }
 
 // ------------------------------
@@ -98,29 +136,46 @@ router.get('/:idOrSlug', async (req, res) => {
 
 // ------------------------------
 // UPDATE PRODUCT by ID or slug (PUT /api/products/:idOrSlug)
-// Accepts JSON payload.
+// Accepts JSON payload. Normalizes images.
 // ------------------------------
 router.put('/:idOrSlug', async (req, res) => {
   try {
     const idOrSlug = req.params.idOrSlug;
     const payload = req.body || {};
 
-    // Normalize arrays
-    if (payload.colors && !Array.isArray(payload.colors)) {
-      payload.colors = Array.isArray(payload.colors) ? payload.colors : String(payload.colors).split(',').map(s => s.trim()).filter(Boolean);
-    }
-    if (payload.sizes && !Array.isArray(payload.sizes)) {
-      payload.sizes = Array.isArray(payload.sizes) ? payload.sizes : String(payload.sizes).split(',').map(s => s.trim()).filter(Boolean);
+    // Normalize images if present
+    let normalizedImages;
+    if (typeof payload.images !== 'undefined') {
+      normalizedImages = normalizeImagesInput(payload.images);
     }
 
-    // Build update object with only allowed fields
-    const allowed = ['title','slug','description','price','mrp','compareAtPrice','stock','sku','brand','category','sizes','colors','thumbnail','images','videoUrl','isPublished','published'];
+    // Normalize arrays for colors/sizes
+    const normalizeArrayField = (val) => {
+      if (typeof val === 'undefined' || val === null) return undefined;
+      if (Array.isArray(val)) return val;
+      if (typeof val === 'string') {
+        // comma separated
+        return val.split(',').map(s => s.trim()).filter(Boolean);
+      }
+      return [val];
+    };
+
+    const colors = normalizeArrayField(payload.colors);
+    const sizes = normalizeArrayField(payload.sizes);
+
+    // Build update object with allowed fields
+    const allowed = ['title','slug','description','price','mrp','compareAtPrice','stock','sku','brand','category','sizes','colors','thumbnail','videoUrl','isPublished','published'];
     const update = {};
     for (const k of allowed) {
       if (Object.prototype.hasOwnProperty.call(payload, k)) update[k] = payload[k];
     }
 
-    // Also accept `published` boolean -> map to isPublished for schemas that use that
+    // Attach normalized arrays if present
+    if (Array.isArray(colors)) update.colors = colors;
+    if (Array.isArray(sizes)) update.sizes = sizes;
+    if (Array.isArray(normalizedImages)) update.images = normalizedImages;
+
+    // Map published to isPublished if needed
     if (typeof payload.published !== 'undefined' && typeof update.isPublished === 'undefined') {
       update.isPublished = payload.published;
     }
@@ -145,9 +200,6 @@ router.put('/:idOrSlug', async (req, res) => {
 
 // ------------------------------
 // SIMPLE UPLOAD STUB: PUT /api/products/:id/upload
-// This is a minimal handler to accept FormData with images and keepImages.
-// If you already have a dedicated upload route elsewhere, replace/remove this.
-// It will save uploaded files to backend/uploads and return array of image paths.
 // ------------------------------
 const multerAvailable = (() => {
   try {
@@ -165,7 +217,6 @@ if (multerAvailable) {
   const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, uploadsDir),
     filename: (req, file, cb) => {
-      // safe filename preserving extension
       const ext = path.extname(file.originalname) || '';
       const name = `${Date.now()}-${Math.random().toString(36).slice(2,9)}${ext}`;
       cb(null, name);
@@ -175,21 +226,15 @@ if (multerAvailable) {
 
   router.put('/:idOrSlug/upload', upload.array('images', 12), async (req, res) => {
     try {
-      // keepImages comes as JSON string
       const keepImages = (() => {
-        try {
-          return req.body.keepImages ? JSON.parse(req.body.keepImages) : [];
-        } catch (e) { return []; }
+        try { return req.body.keepImages ? JSON.parse(req.body.keepImages) : []; } catch (e) { return []; }
       })();
 
-      // New files
       const files = Array.isArray(req.files) ? req.files : [];
       const filePaths = files.map(f => `/uploads/${f.filename}`);
 
-      // combine keep + new
       const all = ([]).concat(keepImages || [], filePaths);
 
-      // Respond with images array
       return res.json({ success: true, images: all });
     } catch (err) {
       console.error('PUT upload error:', err);
@@ -197,7 +242,6 @@ if (multerAvailable) {
     }
   });
 } else {
-  // If multer not installed, provide a fallback stub that returns keepImages unchanged
   router.put('/:idOrSlug/upload', async (req, res) => {
     try {
       const keepImages = req.body?.keepImages ? JSON.parse(req.body.keepImages) : [];
@@ -210,7 +254,7 @@ if (multerAvailable) {
 }
 
 // ------------------------------
-// DELETE product (optional)
+// DELETE product
 // ------------------------------
 router.delete('/:idOrSlug', async (req, res) => {
   try {
