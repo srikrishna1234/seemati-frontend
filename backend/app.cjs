@@ -8,6 +8,7 @@
 
 const express = require('express');
 const path = require('path');
+const fs = require('fs');
 const mongoose = require('mongoose');
 const helmet = require('helmet');
 const cors = require('cors');
@@ -19,7 +20,7 @@ require('dotenv').config();
 const app = express();
 
 // Configuration / env
-const PORT = process.env.PORT || process.env.PORT || 4000;
+const PORT = process.env.PORT || 4000;
 const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI;
 const FRONTEND_URL = process.env.FRONTEND_URL || process.env.FRONTEND_ORIGIN || process.env.FRONTEND_URLS || process.env.ALLOWED_ORIGINS || 'https://seemati.in';
 const ALLOW_CREDENTIALS = (process.env.CORS_ALLOW_CREDENTIALS || 'true') === 'true';
@@ -84,31 +85,39 @@ try {
   console.warn('uploadRoutes not mounted:', String(err));
 }
 
-// If you have other API route files, mount them here.
-// Example: product routes, auth routes (adjust paths if different)
+// Product routes (if present)
 try {
   const productRoutes = require('./src/routes/productRoutes.cjs');
   app.use('/api/products', productRoutes);
   console.log('Mounted productRoutes');
 } catch (err) {
-  // If your product routes file is located elsewhere or named differently this will fail harmlessly
   console.warn('productRoutes not found or not mounted (ok if you mount elsewhere):', String(err));
 }
 
-try {
-  const authRoutes = require('./src/routes/authRoutes.cjs');
-  app.use('/api/auth', authRoutes);
-  console.log('Mounted authRoutes');
-} catch (err) {
-  console.warn('authRoutes not mounted:', String(err));
+// Safe conditional mount for authRoutes (avoid noisy missing-module error)
+const authRoutesPath = path.join(__dirname, 'src', 'routes', 'authRoutes.cjs');
+if (fs.existsSync(authRoutesPath)) {
+  try {
+    const authRoutes = require('./src/routes/authRoutes.cjs');
+    app.use('/api/auth', authRoutes);
+    console.log('Mounted authRoutes');
+  } catch (err) {
+    console.warn('authRoutes found but failed to mount:', String(err));
+  }
+} else {
+  console.log('authRoutes file not present — skipping mount (ok).');
 }
 
 // If you previously served uploads statically in dev, DON'T rely on that in Render.
 // We use S3 for uploads; keep static serve only for local dev if necessary:
 if (process.env.NODE_ENV !== 'production') {
   const uploadsDir = path.join(__dirname, 'uploads');
-  app.use('/uploads', express.static(uploadsDir));
-  console.log('Static /uploads mounted for local dev only');
+  if (fs.existsSync(uploadsDir)) {
+    app.use('/uploads', express.static(uploadsDir));
+    console.log('Static /uploads mounted for local dev only');
+  } else {
+    console.log('Local uploads dir not found; static /uploads not mounted.');
+  }
 }
 
 // ---- Error handling
