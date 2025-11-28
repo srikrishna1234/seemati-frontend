@@ -1,19 +1,20 @@
 // backend/app.cjs
-// Full replacement app server (express) wiring.
+// Single-file replacement (safe)
 // - Connects to MongoDB using MONGO_URI
-// - Mounts API routes (uploadRoutes + optional existing routes)
-// - Configures CORS using FRONTEND_URL or FRONTEND_URLS env var
-// - Uses multer memory + S3 in uploadRoutes (separate file)
-// - Health endpoint
+// - Robust CORS (non-throwing, supports comma-separated FRONTEND_URL)
+// - Conditionally mounts optional routes (authRoutes) to avoid missing-module logs
+// - Mounts new uploadRoutes (S3-backed) if present
+// - Serves /uploads statically only for non-production local dev
+// - Basic health endpoint and error handling
 
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const mongoose = require('mongoose');
 const helmet = require('helmet');
-const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const morgan = require('morgan');
+const cors = require('cors');
 
 require('dotenv').config();
 
@@ -22,8 +23,8 @@ const app = express();
 // Configuration / env
 const PORT = process.env.PORT || 4000;
 const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI;
-const FRONTEND_URL = process.env.FRONTEND_URL || process.env.FRONTEND_ORIGIN || process.env.FRONTEND_URLS || process.env.ALLOWED_ORIGINS || 'https://seemati.in';
-const ALLOW_CREDENTIALS = (process.env.CORS_ALLOW_CREDENTIALS || 'true') === 'true';
+const RAW_FRONTEND = process.env.FRONTEND_URL || process.env.FRONTEND_ORIGIN || process.env.FRONTEND_URLS || process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URLS || 'https://seemati.in';
+const ALLOW_CREDENTIALS = (process.env.CORS_ALLOW_CREDENTIALS || 'true').toString().toLowerCase() === 'true';
 
 // ---- Basic middleware
 app.use(helmet());
@@ -32,33 +33,47 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
-// ---- CORS config (allow your frontend origin(s))
-const corsOptions = {
-  origin: function(origin, callback) {
-    // allow requests with no origin like mobile apps or curl
-    if (!origin) return callback(null, true);
+// ---- CORS config (safe, non-throwing)
+// Supports comma-separated list of allowed origins in RAW_FRONTEND.
+// If RAW_FRONTEND is exactly "*", allow all origins.
+(function setupCors() {
+  const raw = String(RAW_FRONTEND || '').trim();
+  const allowList = raw === '' ? [] : raw.split(',').map(s => s.trim()).filter(Boolean);
+  const allowAll = allowList.length === 1 && allowList[0] === '*';
 
-    // support comma-separated list of allowed origins in FRONTEND_URL
-    const allowList = (FRONTEND_URL || '').split(',').map(s => s.trim()).filter(Boolean);
-    if (allowList.length === 0) {
-      return callback(null, true);
-    }
-    if (allowList.includes(origin) || allowList.includes(new URL(origin).origin)) {
-      return callback(null, true);
-    }
-    callback(new Error('Not allowed by CORS'));
-  },
-  credentials: ALLOW_CREDENTIALS
-};
-app.use(cors(corsOptions));
+  const corsOptions = {
+    origin: function(origin, callback) {
+      // allow requests with no origin (like curl or server-to-server)
+      if (!origin) return callback(null, true);
+      if (allowAll) return callback(null, true);
 
-// Optional: expose a simple health endpoint
+      try {
+        const originOrigin = new URL(origin).origin;
+        if (allowList.includes(origin) || allowList.includes(originOrigin)) {
+          return callback(null, true);
+        }
+      } catch (e) {
+        if (allowList.includes(origin)) return callback(null, true);
+      }
+      // NOT allowed — return false (do not throw)
+      return callback(null, false);
+    },
+    credentials: ALLOW_CREDENTIALS,
+    optionsSuccessStatus: 200
+  };
+
+  app.use(cors(corsOptions));
+  app.options('*', cors(corsOptions));
+  console.log('CORS configured — allowed origins:', allowList.length ? allowList : '[none specified — default single origin used]');
+})();
+
+// Optional: health endpoint
 app.get('/_health', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
 });
 
 // ---- MongoDB connection
-(async function connectDB(){
+(async function connectDB() {
   if (!MONGO_URI) {
     console.error('MONGO_URI not set. Exiting.');
     process.exit(1);
@@ -75,41 +90,56 @@ app.get('/_health', (req, res) => {
   }
 })();
 
-// ---- Mount your API routes
-// Upload route (new S3-backed uploadRoute)
-try {
-  const uploadRoutes = require('./src/routes/uploadRoutes.cjs');
-  app.use('/', uploadRoutes);
-  console.log('Mounted uploadRoutes');
-} catch (err) {
-  console.warn('uploadRoutes not mounted:', String(err));
-}
+// ---- Mount API routes (safe / conditional mounting)
+// Upload route (S3-backed uploadRoutes.cjs) - mounted at the path defined inside that file (we expect /api/products/:id/upload)
+(() => {
+  try {
+    const uploadRoutesPath = path.join(__dirname, 'src', 'routes', 'uploadRoutes.cjs');
+    if (fs.existsSync(uploadRoutesPath)) {
+      const uploadRoutes = require('./src/routes/uploadRoutes.cjs');
+      app.use('/', uploadRoutes);
+      console.log('Mounted uploadRoutes');
+    } else {
+      console.log('uploadRoutes file not found — skipping uploadRoutes mount.');
+    }
+  } catch (err) {
+    console.warn('uploadRoutes failed to mount:', String(err));
+  }
+})();
 
-// Product routes (if present)
-try {
-  const productRoutes = require('./src/routes/productRoutes.cjs');
-  app.use('/api/products', productRoutes);
-  console.log('Mounted productRoutes');
-} catch (err) {
-  console.warn('productRoutes not found or not mounted (ok if you mount elsewhere):', String(err));
-}
+// Product routes (if present) - mounted under /api/products
+(() => {
+  try {
+    const productRoutesPath = path.join(__dirname, 'src', 'routes', 'productRoutes.cjs');
+    if (fs.existsSync(productRoutesPath)) {
+      const productRoutes = require('./src/routes/productRoutes.cjs');
+      app.use('/api/products', productRoutes);
+      console.log('Mounted productRoutes');
+    } else {
+      console.log('productRoutes file not found — skipping productRoutes mount.');
+    }
+  } catch (err) {
+    console.warn('productRoutes failed to mount:', String(err));
+  }
+})();
 
 // Safe conditional mount for authRoutes (avoid noisy missing-module error)
-const authRoutesPath = path.join(__dirname, 'src', 'routes', 'authRoutes.cjs');
-if (fs.existsSync(authRoutesPath)) {
+(() => {
   try {
-    const authRoutes = require('./src/routes/authRoutes.cjs');
-    app.use('/api/auth', authRoutes);
-    console.log('Mounted authRoutes');
+    const authRoutesPath = path.join(__dirname, 'src', 'routes', 'authRoutes.cjs');
+    if (fs.existsSync(authRoutesPath)) {
+      const authRoutes = require('./src/routes/authRoutes.cjs');
+      app.use('/api/auth', authRoutes);
+      console.log('Mounted authRoutes');
+    } else {
+      console.log('authRoutes file not present — skipping mount (ok).');
+    }
   } catch (err) {
     console.warn('authRoutes found but failed to mount:', String(err));
   }
-} else {
-  console.log('authRoutes file not present — skipping mount (ok).');
-}
+})();
 
-// If you previously served uploads statically in dev, DON'T rely on that in Render.
-// We use S3 for uploads; keep static serve only for local dev if necessary:
+// ---- Static uploads only for local dev (not for production)
 if (process.env.NODE_ENV !== 'production') {
   const uploadsDir = path.join(__dirname, 'uploads');
   if (fs.existsSync(uploadsDir)) {
@@ -122,12 +152,15 @@ if (process.env.NODE_ENV !== 'production') {
 
 // ---- Error handling
 app.use((err, req, res, next) => {
+  // Log full stack for server-side visibility
   console.error('Unhandled error:', err && err.stack ? err.stack : err);
   if (res.headersSent) return next(err);
-  res.status(500).json({ error: err.message || String(err) });
+  // For CORS rejections the cors middleware calls callback(null, false) - it does not throw.
+  // Here we send a JSON error so logs include stack but clients get a safe response.
+  res.status(500).json({ error: err && err.message ? err.message : String(err) });
 });
 
-// ---- Start server (listen)
+// ---- Start server
 app.listen(PORT, () => {
   console.log(`Server listening on port ${PORT} — env ${process.env.NODE_ENV || 'development'}`);
 });
