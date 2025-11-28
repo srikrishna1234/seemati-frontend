@@ -1,181 +1,126 @@
 // backend/app.cjs
-'use strict';
+// Full replacement app server (express) wiring.
+// - Connects to MongoDB using MONGO_URI
+// - Mounts API routes (uploadRoutes + optional existing routes)
+// - Configures CORS using FRONTEND_URL or FRONTEND_URLS env var
+// - Uses multer memory + S3 in uploadRoutes (separate file)
+// - Health endpoint
 
 const express = require('express');
+const path = require('path');
+const mongoose = require('mongoose');
+const helmet = require('helmet');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
-const helmet = require('helmet');
 const morgan = require('morgan');
-const dotenv = require('dotenv');
-const mongoose = require('mongoose');
-const path = require('path');
 
-dotenv.config();
+require('dotenv').config();
 
 const app = express();
 
-// Trust proxy in production
-if (process.env.NODE_ENV === 'production') {
-  app.set('trust proxy', 1);
-}
+// Configuration / env
+const PORT = process.env.PORT || process.env.PORT || 4000;
+const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI;
+const FRONTEND_URL = process.env.FRONTEND_URL || process.env.FRONTEND_ORIGIN || process.env.FRONTEND_URLS || process.env.ALLOWED_ORIGINS || 'https://seemati.in';
+const ALLOW_CREDENTIALS = (process.env.CORS_ALLOW_CREDENTIALS || 'true') === 'true';
 
-// Security + middleware
+// ---- Basic middleware
 app.use(helmet());
-app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
+app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
-/* ---------------------------------------------
-   STATIC UPLOADS FOLDER (IMPORTANT)
-   Use dedicated middleware so we can set required headers
-   That helps avoid ERR_BLOCKED_BY_RESPONSE.NotSameOrigin
-----------------------------------------------*/
-try {
-  // Load the corrected middleware path
-  // File: backend/src/middleware/serveruploads.js
-  const uploadsMiddleware = require('./src/middleware/serveruploads.js');
-  app.use('/', uploadsMiddleware); // serves /uploads/:filename
-  console.log('[Uploads] Custom uploads middleware mounted at /uploads');
-} catch (err) {
-  // Fallback to express.static if middleware missing - but this will not set CORP header etc.
-  console.warn('[Uploads] Custom middleware missing or failed to load. Falling back to express.static.');
-  app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-}
-
-/* ---------------------------------------------
-   CORS CONFIGURATION
-----------------------------------------------*/
-let rawOrigins = process.env.FRONTEND_URLS || process.env.FRONTEND_URL || '';
-
-if (rawOrigins.trim().toUpperCase().startsWith('FRONTEND_URLS=')) {
-  rawOrigins = rawOrigins.trim().substring('FRONTEND_URLS='.length);
-}
-
-const allowedOrigins = rawOrigins
-  .split(/[,\n]/)
-  .map((s) => (s || '').trim())
-  .filter(Boolean);
-
-// Always include production domains
-['https://seemati.in', 'https://www.seemati.in'].forEach((h) => {
-  if (!allowedOrigins.includes(h)) allowedOrigins.push(h);
-});
-
-console.log('[CORS] FRONTEND_URLS raw:', rawOrigins);
-console.log('[CORS] allowedOrigins:', allowedOrigins);
-
+// ---- CORS config (allow your frontend origin(s))
 const corsOptions = {
-  origin: function (origin, callback) {
+  origin: function(origin, callback) {
+    // allow requests with no origin like mobile apps or curl
     if (!origin) return callback(null, true);
 
-    if (allowedOrigins.indexOf(origin) !== -1) return callback(null, true);
-
-    if (process.env.NODE_ENV !== 'production' && origin.startsWith('http://localhost')) {
+    // support comma-separated list of allowed origins in FRONTEND_URL
+    const allowList = (FRONTEND_URL || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (allowList.length === 0) {
       return callback(null, true);
     }
-
-    try {
-      const u = new URL(origin);
-      if (u.hostname && u.hostname.endsWith('.vercel.app')) {
-        console.warn('[CORS] Allowing vercel preview:', origin);
-        return callback(null, true);
-      }
-    } catch (err) {}
-
-    console.error('ERROR: CORS blocked ->', origin);
-    return callback(new Error('CORS: Origin not allowed'), false);
+    if (allowList.includes(origin) || allowList.includes(new URL(origin).origin)) {
+      return callback(null, true);
+    }
+    callback(new Error('Not allowed by CORS'));
   },
-  credentials: true,
-  optionsSuccessStatus: 200,
+  credentials: ALLOW_CREDENTIALS
 };
-
 app.use(cors(corsOptions));
 
-/* ---------------------------------------------
-   BASIC HEALTH CHECK
-----------------------------------------------*/
-app.get('/', (req, res) =>
-  res.status(200).json({ ok: true, env: process.env.NODE_ENV || 'development' })
-);
-
-/* ---------------------------------------------
-   ERROR HANDLER (keep this before routers if needed)
-----------------------------------------------*/
-app.use((err, req, res, next) => {
-  console.error('ERROR:', err && err.message ? err.message : err);
-
-  if (err && err.message && err.message.includes('CORS')) {
-    return res.status(403).json({ error: 'CORS error: origin not allowed' });
-  }
-
-  res.status(err?.status || 500).json({
-    error: err?.message || 'Internal server error',
-  });
+// Optional: expose a simple health endpoint
+app.get('/_health', (req, res) => {
+  res.json({ ok: true, time: new Date().toISOString() });
 });
 
-/* ---------------------------------------------
-   MONGO CONNECTION + ROUTERS
-----------------------------------------------*/
-const MONGO_URI = process.env.MONGO_URI;
-if (!MONGO_URI) {
-  console.error('MONGO_URI missing in environment variables.');
-  process.exit(1);
-}
-
-const connectWithRetry = async (retries = 6, delayMs = 5000) => {
-  for (let i = 0; i < retries; i++) {
-    try {
-      console.log(`[Mongo] Connecting (attempt ${i + 1}/${retries})...`);
-      await mongoose.connect(MONGO_URI, {
-        useNewUrlParser: true,
-        useUnifiedTopology: true,
-        serverSelectionTimeoutMS: 10000,
-        socketTimeoutMS: 45000,
-      });
-      console.log('[Mongo] Connected successfully.');
-      return;
-    } catch (err) {
-      console.error('[Mongo] Error:', err.message || err);
-      if (i < retries - 1) {
-        console.log(`[Mongo] Retrying in ${delayMs}ms...`);
-        await new Promise((r) => setTimeout(r, delayMs));
-      } else {
-        throw err;
-      }
-    }
-  }
-};
-
-const startServer = async () => {
-  try {
-    await connectWithRetry();
-
-    // Load routers after DB connects
-    try {
-      const authRouter = require('./src/routes/auth.cjs');
-      const otpRouter = require('./src/routes/otpRoutes.cjs');
-      const productRouter = require('./src/routes/productRoutes.cjs');
-
-      if (authRouter) app.use('/api/auth', authRouter);
-      if (otpRouter) app.use('/api/otp', otpRouter);
-      if (productRouter) app.use('/api/products', productRouter);
-    } catch (e) {
-      console.error('[Router Load Error]:', e.message || e);
-    }
-
-    const PORT = process.env.PORT || process.env.SERVER_PORT || 10000;
-    app.listen(PORT, () => {
-      console.log(
-        `Backend running on port ${PORT} (ENV=${process.env.NODE_ENV || 'development'})`
-      );
-    });
-  } catch (err) {
-    console.error('[Startup] MongoDB connection failed. Error:', err);
+// ---- MongoDB connection
+(async function connectDB(){
+  if (!MONGO_URI) {
+    console.error('MONGO_URI not set. Exiting.');
     process.exit(1);
   }
-};
+  try {
+    await mongoose.connect(MONGO_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true
+    });
+    console.log('MongoDB connected');
+  } catch (err) {
+    console.error('MongoDB connection error:', err);
+    process.exit(1);
+  }
+})();
 
-startServer();
+// ---- Mount your API routes
+// Upload route (new S3-backed uploadRoute)
+try {
+  const uploadRoutes = require('./src/routes/uploadRoutes.cjs');
+  app.use('/', uploadRoutes);
+  console.log('Mounted uploadRoutes');
+} catch (err) {
+  console.warn('uploadRoutes not mounted:', String(err));
+}
+
+// If you have other API route files, mount them here.
+// Example: product routes, auth routes (adjust paths if different)
+try {
+  const productRoutes = require('./src/routes/productRoutes.cjs');
+  app.use('/api/products', productRoutes);
+  console.log('Mounted productRoutes');
+} catch (err) {
+  // If your product routes file is located elsewhere or named differently this will fail harmlessly
+  console.warn('productRoutes not found or not mounted (ok if you mount elsewhere):', String(err));
+}
+
+try {
+  const authRoutes = require('./src/routes/authRoutes.cjs');
+  app.use('/api/auth', authRoutes);
+  console.log('Mounted authRoutes');
+} catch (err) {
+  console.warn('authRoutes not mounted:', String(err));
+}
+
+// If you previously served uploads statically in dev, DON'T rely on that in Render.
+// We use S3 for uploads; keep static serve only for local dev if necessary:
+if (process.env.NODE_ENV !== 'production') {
+  const uploadsDir = path.join(__dirname, 'uploads');
+  app.use('/uploads', express.static(uploadsDir));
+  console.log('Static /uploads mounted for local dev only');
+}
+
+// ---- Error handling
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err && err.stack ? err.stack : err);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: err.message || String(err) });
+});
+
+// ---- Start server (listen)
+app.listen(PORT, () => {
+  console.log(`Server listening on port ${PORT} — env ${process.env.NODE_ENV || 'development'}`);
+});
 
 module.exports = app;
