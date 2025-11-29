@@ -1,8 +1,8 @@
 // backend/src/routes/productRoutes.cjs
-// Replacement to avoid CastError: accepts incoming images as objects or strings,
-// stores strings (old schema), while returning normalized objects to frontend.
-
+// Product routes with image normalization + DELETE handler
 const express = require('express');
+const path = require('path');
+const fs = require('fs');
 const Product = require('../models/product.cjs');
 const router = express.Router();
 
@@ -21,7 +21,7 @@ function normalizeImageEntryForResponse(entry) {
     };
   }
 
-  // Case 3: Local path string ("/uploads/...")
+  // Case 3: Local path string ("/uploads/..." or "uploads/...")
   if (typeof entry === 'string') {
     const clean = entry.startsWith('/') ? entry : `/${entry}`;
     return {
@@ -42,10 +42,8 @@ function prepareImagesForDb(imagesArr) {
       if (!img) return null;
       if (typeof img === 'string') return img;
       if (typeof img === 'object') {
-        // Prefer url field, then key, then JSON fallback
         if (img.url && typeof img.url === 'string') return img.url;
         if (img.key && typeof img.key === 'string') return img.key;
-        // last resort: attempt string coercion
         try { return String(img); } catch (_) { return null; }
       }
       return null;
@@ -65,7 +63,7 @@ function normalizeProductForResponse(product) {
   return p;
 }
 
-// GET /api/products  (simple)
+// GET /api/products  (list)
 router.get('/', async (req, res) => {
   try {
     const products = await Product.find({});
@@ -76,7 +74,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET single product
+// GET /api/products/:id (single)
 router.get('/:id', async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
@@ -88,12 +86,11 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// UPDATE product (PUT /api/products/:id)
+// PUT /api/products/:id (update)
 router.put('/:id', async (req, res) => {
   try {
     const update = { ...req.body };
 
-    // If frontend sent images as objects (or mixed), convert them to strings for DB
     if (update.images && Array.isArray(update.images)) {
       update.images = prepareImagesForDb(update.images);
     }
@@ -105,6 +102,49 @@ router.put('/:id', async (req, res) => {
     return res.json({ success: true, product: normalized });
   } catch (err) {
     console.error('[productRoutes] update error:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// DELETE /api/products/:id (delete product)
+// - Removes DB doc. Also attempts to remove local uploads (if stored under /uploads).
+// - If you use S3, replace local cleanup with S3 delete logic as needed.
+router.delete('/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const product = await Product.findById(id);
+    if (!product) return res.status(404).json({ success: false, message: 'Not found' });
+
+    // Optional: delete local files referenced in product.images when they point to /uploads
+    // (Only attempt if path appears local and server has access)
+    try {
+      if (Array.isArray(product.images)) {
+        product.images.forEach(entry => {
+          if (!entry) return;
+          // extract string path if object
+          const imgPath = (typeof entry === 'object' && entry.url) ? entry.url : (typeof entry === 'string' ? entry : null);
+          if (!imgPath) return;
+          // only attempt when looks like local upload: starts with '/uploads' or 'uploads'
+          if (imgPath.startsWith('/uploads') || imgPath.startsWith('uploads')) {
+            // convert to absolute path
+            const relative = imgPath.startsWith('/') ? imgPath.slice(1) : imgPath;
+            const absolute = path.join(__dirname, '..', '..', relative); // adjust if your uploads folder location differs
+            fs.unlink(absolute, err => {
+              if (err && err.code !== 'ENOENT') console.warn('Failed to remove local image file:', absolute, String(err));
+            });
+          }
+        });
+      }
+    } catch (cleanupErr) {
+      console.warn('Image cleanup step failed (non-fatal):', String(cleanupErr));
+    }
+
+    // Remove the product from DB
+    await Product.findByIdAndDelete(id);
+
+    return res.json({ success: true, message: 'Product deleted' });
+  } catch (err) {
+    console.error('[productRoutes] delete error:', err && err.stack ? err.stack : err);
     return res.status(500).json({ success: false, message: err.message });
   }
 });
