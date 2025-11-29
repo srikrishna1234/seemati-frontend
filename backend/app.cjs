@@ -6,6 +6,7 @@
 // - Mounts new uploadRoutes (S3-backed) if present
 // - Serves /uploads statically only for non-production local dev
 // - Basic health endpoint and error handling
+// - Adds backward-compatible /admin-api mounts for product & upload routes
 
 const express = require('express');
 const path = require('path');
@@ -91,40 +92,45 @@ app.get('/_health', (req, res) => {
 })();
 
 // ---- Mount API routes (safe / conditional mounting)
-// Upload route (S3-backed uploadRoutes.cjs) - mounted at the path defined inside that file (we expect /api/products/:id/upload)
-// Mount uploadRoutes (S3-backed) at /api/products so upload endpoint is:
-// PUT /api/products/:id/upload
+// This block mounts uploadRoutes and productRoutes under both:
+//   /api/products  (primary current API)
+//   /admin-api/products  (backwards-compatible shim used by admin UI)
 (() => {
   try {
     const uploadRoutesPath = path.join(__dirname, 'src', 'routes', 'uploadRoutes.cjs');
+    const productRoutesPath = path.join(__dirname, 'src', 'routes', 'productRoutes.cjs');
+
+    // uploadRoutes (if present)
     if (fs.existsSync(uploadRoutesPath)) {
       const uploadRoutes = require('./src/routes/uploadRoutes.cjs');
-      // Mount under /api/products so the route becomes:
-      // PUT /api/products/:id/upload
+
+      // Primary mount
       app.use('/api/products', uploadRoutes);
-      console.log('Mounted uploadRoutes');
+
+      // Backwards-compatible shim for older frontend paths that use /admin-api
+      app.use('/admin-api/products', uploadRoutes);
+
+      console.log('Mounted uploadRoutes at /api/products and /admin-api/products');
     } else {
       console.log('uploadRoutes file not found — skipping uploadRoutes mount.');
     }
-  } catch (err) {
-    console.warn('uploadRoutes failed to mount:', String(err));
-  }
-})();
 
-
-// Product routes (if present) - mounted under /api/products
-(() => {
-  try {
-    const productRoutesPath = path.join(__dirname, 'src', 'routes', 'productRoutes.cjs');
+    // productRoutes (if present)
     if (fs.existsSync(productRoutesPath)) {
       const productRoutes = require('./src/routes/productRoutes.cjs');
+
+      // Primary mount
       app.use('/api/products', productRoutes);
-      console.log('Mounted productRoutes');
+
+      // Backwards-compatible shim
+      app.use('/admin-api/products', productRoutes);
+
+      console.log('Mounted productRoutes at /api/products and /admin-api/products');
     } else {
       console.log('productRoutes file not found — skipping productRoutes mount.');
     }
   } catch (err) {
-    console.warn('productRoutes failed to mount:', String(err));
+    console.warn('Failed to mount product/upload routes:', String(err));
   }
 })();
 
