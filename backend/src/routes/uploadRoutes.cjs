@@ -1,92 +1,55 @@
 // backend/src/routes/uploadRoutes.cjs
-// Upload route (PUT /api/products/:id/upload)
-// Accepts multipart with multiple files (multer.any()), uploads each to S3 (no ACL),
-// saves URL strings to product.images, and returns array of { key, url }.
-// Also returns top-level key & url for backward compatibility.
+// Simple local upload handler for admin UI
+// - Accepts POST /upload (multipart form-data, field name: images[] or images)
+// - Stores files into backend/uploads/
+// - Returns JSON: { success:true, files: [{ url, key }] }
+// NOTE: This is a local-storage fallback. For production S3, replace with AWS SDK logic.
 
 const express = require('express');
+const path = require('path');
+const fs = require('fs');
 const multer = require('multer');
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
-const { randomUUID } = require('crypto');
 
 const router = express.Router();
-const Product = require('../models/product.cjs'); // correct relative path
 
-// Multer memory storage with reasonable limits
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: {
-    fileSize: 20 * 1024 * 1024, // 20 MB per file
-    files: 20 // adjust if needed
-  }
-});
-
-// S3 client
-const s3 = new S3Client({ region: process.env.AWS_REGION });
-
-// Build public S3 URL for uploaded key
-function s3ObjectUrl(bucket, region, key) {
-  return `https://${bucket}.s3.${region}.amazonaws.com/${key}`;
+// ensure uploads dir exists
+const uploadsDir = path.join(__dirname, '..', '..', 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  try { fs.mkdirSync(uploadsDir, { recursive: true }); } catch (e) { console.warn('Could not create uploads dir:', e); }
 }
 
-// PUT /api/products/:id/upload
-router.put('/:id/upload', upload.any(), async (req, res) => {
+// multer storage to uploads folder with timestamped filenames
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, uploadsDir);
+  },
+  filename: function (req, file, cb) {
+    // sanitize originalname a little
+    const safeName = file.originalname.replace(/\s+/g, '_').replace(/[^\w.-]/g, '');
+    const finalName = `${Date.now()}_${Math.round(Math.random()*1e6)}_${safeName}`;
+    cb(null, finalName);
+  }
+});
+const upload = multer({ storage });
+
+// POST /upload
+// Accept single or multiple files in field 'images' (or 'image')
+router.post('/upload', upload.array('images'), async (req, res) => {
   try {
-    const productId = req.params.id;
     const files = req.files || [];
+    const host = process.env.PUBLIC_API_ORIGIN || ''; // optional for full URL
+    // Build response files with url & key
+    const out = files.map(f => {
+      // url: return absolute path if PUBLIC_API_ORIGIN set, else return /uploads/...
+      const relative = `/uploads/${f.filename}`;
+      const url = host ? `${host}${relative}` : relative;
+      return { url, key: f.filename };
+    });
 
-    if (!files.length) {
-      return res.status(400).json({ error: 'No files uploaded' });
-    }
-
-    // Ensure product exists
-    const product = await Product.findById(productId);
-    if (!product) return res.status(404).json({ error: 'Product not found' });
-
-    const results = [];
-
-    // Upload each file sequentially
-    for (const file of files) {
-      // Build a safe unique key
-      const key = `products/${Date.now()}-${randomUUID()}-${file.originalname}`;
-
-      const putParams = {
-        Bucket: process.env.S3_BUCKET_NAME,
-        Key: key,
-        Body: file.buffer,
-        ContentType: file.mimetype
-        // DO NOT set ACL (Bucket owner enforced)
-      };
-
-      await s3.send(new PutObjectCommand(putParams));
-
-      const url = s3ObjectUrl(process.env.S3_BUCKET_NAME, process.env.AWS_REGION, key);
-
-      // Store URL string in DB (keeps existing schema as strings)
-      product.images = product.images || [];
-      product.images.push(url);
-
-      results.push({ key, url });
-    }
-
-    // Save product once after pushing all URLs
-    await product.save();
-
-    // Respond with structure that supports both old frontend and new
-    const first = results[0] || null;
-    const resp = {
-      uploaded: results
-    };
-    if (first) {
-      resp.key = first.key;
-      resp.url = first.url;
-    }
-
-    return res.json(resp);
+    return res.json({ success: true, files: out });
   } catch (err) {
-    console.error('[uploadRoutes] error:', err && err.stack ? err.stack : err);
-    const details = err && err.message ? err.message : String(err);
-    return res.status(500).json({ error: 'Upload failed', details });
+    console.error('[uploadRoutes] upload error:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ success: false, message: err && err.message ? err.message : 'Upload failed' });
   }
 });
 

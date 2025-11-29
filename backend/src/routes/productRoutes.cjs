@@ -1,10 +1,21 @@
 // backend/src/routes/productRoutes.cjs
-// Product routes with image normalization + CREATE + DELETE handler
+// Product routes with image normalization + CREATE + DELETE handler + slug auto-generation
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const Product = require('../models/product.cjs');
 const router = express.Router();
+
+// simple slugify
+function slugify(text = '') {
+  return String(text)
+    .trim()
+    .toLowerCase()
+    .replace(/[\s\_]+/g, '-')         // spaces/underscores -> dash
+    .replace(/[^\w\-]+/g, '')         // remove non-word chars (keep dash)
+    .replace(/\-\-+/g, '-')           // collapse dashes
+    .replace(/^-+|-+$/g, '');         // trim dashes
+}
 
 // Normalizer converts stored string entry -> { url, key }
 function normalizeImageEntryForResponse(entry) {
@@ -49,6 +60,11 @@ router.post('/', async (req, res) => {
   try {
     const payload = { ...req.body };
 
+    // if slug missing but title provided, auto-generate slug
+    if (!payload.slug && payload.title) {
+      payload.slug = slugify(payload.title);
+    }
+
     // Normalize any incoming images before saving
     if (payload.images && Array.isArray(payload.images)) {
       payload.images = prepareImagesForDb(payload.images);
@@ -59,7 +75,8 @@ router.post('/', async (req, res) => {
     return res.status(201).json({ success: true, product: normalized });
   } catch (err) {
     console.error('[productRoutes] create error:', err && err.stack ? err.stack : err);
-    return res.status(500).json({ success: false, message: err.message });
+    // Mongoose validation errors may include useful messages
+    return res.status(500).json({ success: false, message: err && err.message ? err.message : 'Create failed' });
   }
 });
 
@@ -92,6 +109,10 @@ router.put('/:id', async (req, res) => {
     const update = { ...req.body };
     if (update.images && Array.isArray(update.images)) {
       update.images = prepareImagesForDb(update.images);
+    }
+    // if updating title and slug not provided, regenerate slug
+    if (update.title && !update.slug) {
+      update.slug = slugify(update.title);
     }
     const updated = await Product.findByIdAndUpdate(req.params.id, update, { new: true, runValidators: true });
     if (!updated) return res.status(404).json({ success: false, message: 'Not found' });
