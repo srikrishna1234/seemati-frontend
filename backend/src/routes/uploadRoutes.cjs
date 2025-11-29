@@ -1,65 +1,77 @@
 // backend/src/routes/uploadRoutes.cjs
+// CommonJS route file for product image upload (PUT /api/products/:id/upload)
+// Replaces previous file that used ACL: 'public-read' which fails for "Bucket owner enforced".
+
 const express = require('express');
 const multer = require('multer');
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
-const path = require('path');
+const { randomUUID } = require('crypto');
 
 const router = express.Router();
 
-// Use memory storage so files do not touch instance disk
+// Adjust this path to your Product model if needed:
+const Product = require('../../models/Product'); // <-- ensure this path is correct
+
+// Multer: memory storage (we upload from memory to S3)
 const upload = multer({ storage: multer.memoryStorage() });
 
-// Configure S3 client using env vars
-const s3 = new S3Client({
-  region: process.env.AWS_REGION,
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
-  }
-});
+// Configure S3 client (reads region from env)
+const s3 = new S3Client({ region: process.env.AWS_REGION });
 
-function getS3Key(filename) {
-  // Put all product uploads under products/ prefix with timestamp to avoid collisions
-  const ts = Date.now();
-  const safe = filename.replace(/\s+/g, '-');
-  return `products/${ts}-${safe}`;
+// Helper to build public URL for object (if you use path-style or custom domain change accordingly)
+function s3ObjectUrl(bucket, region, key) {
+  // For standard AWS S3 URL
+  return `https://${bucket}.s3.${region}.amazonaws.com/${key}`;
 }
 
-function s3PublicUrl(key) {
-  // prefer S3_BASE_URL if provided
-  const base = process.env.S3_BASE_URL || `https://${process.env.S3_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com`;
-  return `${base}/${encodeURIComponent(key)}`;
-}
-
-// Route: PUT /api/products/:id/upload
-// Accepts form field "images" (multiple)
-router.put('/api/products/:id/upload', upload.array('images'), async (req, res) => {
+// PUT /api/products/:id/upload
+// Expects multipart form-data with field name "image"
+router.put('/:id/upload', upload.single('image'), async (req, res) => {
   try {
-    const files = req.files || [];
-    const bucket = process.env.S3_BUCKET_NAME;
-    if (!bucket) return res.status(500).json({ error: 'S3 bucket not configured' });
+    const productId = req.params.id;
 
-    const uploaded = [];
-
-    for (const f of files) {
-      const originalName = f.originalname || 'file';
-      const key = getS3Key(originalName);
-      const params = {
-        Bucket: bucket,
-        Key: key,
-        Body: f.buffer,
-        ContentType: f.mimetype || 'application/octet-stream',
-        ACL: 'public-read'
-      };
-      await s3.send(new PutObjectCommand(params));
-      uploaded.push(s3PublicUrl(key));
+    // Basic validation
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    // Respond with array of URLs
-    return res.json({ images: uploaded });
+    // Ensure product exists
+    const product = await Product.findById(productId);
+    if (!product) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    // Build S3 key
+    const key = `products/${Date.now()}-${randomUUID()}-${req.file.originalname}`;
+
+    // PutObjectCommand params - IMPORTANT: DO NOT set ACL here (Bucket owner enforced forbids ACL)
+    const putParams = {
+      Bucket: process.env.S3_BUCKET_NAME,
+      Key: key,
+      Body: req.file.buffer,
+      ContentType: req.file.mimetype,
+      // ACL: 'public-read'   <-- removed on purpose
+    };
+
+    // Upload to S3
+    await s3.send(new PutObjectCommand(putParams));
+
+    // Build URL (or use CloudFront domain if you have one)
+    const url = s3ObjectUrl(process.env.S3_BUCKET_NAME, process.env.AWS_REGION, key);
+
+    // Save key+url to product.images (adjust field name/schema to match your model)
+    product.images = product.images || [];
+    product.images.push({ key, url });
+    await product.save();
+
+    return res.json({ key, url });
   } catch (err) {
-    console.error('Upload error', err);
-    return res.status(500).json({ error: 'Upload failed', details: String(err) });
+    // Log full error for Render logs
+    console.error('[uploadRoutes] S3 upload error:', err && err.stack ? err.stack : err);
+
+    // If S3 returned a structured error, include message so front-end sees details
+    const details = err && err.message ? err.message : String(err);
+    return res.status(500).json({ error: 'Upload failed', details });
   }
 });
 
