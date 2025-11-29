@@ -1,7 +1,6 @@
 // backend/src/routes/uploadRoutes.cjs
-// CommonJS route file for product image upload (PUT /api/products/:id/upload)
-// This version uses the correct relative require path for Product model
-// and does NOT set ACL (works with "Bucket owner enforced").
+// Upload route (PUT /api/products/:id/upload)
+// Accepts any single file field (multer.any()), uploads to S3 (no ACL), saves {key,url} to product.
 
 const express = require('express');
 const multer = require('multer');
@@ -9,43 +8,57 @@ const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const { randomUUID } = require('crypto');
 
 const router = express.Router();
+const Product = require('../models/product.cjs'); // correct relative path
 
-// <-- CORRECT relative path to your Product model file
-const Product = require('../models/product.cjs'); // ensure lowercase, one ../ from routes -> models
+// Multer memory storage
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024 // 10 MB limit (adjust if you need)
+  }
+});
 
-// Multer: memory storage (we upload from memory to S3)
-const upload = multer({ storage: multer.memoryStorage() });
-
-// Configure S3 client (reads region from env)
+// S3 client
 const s3 = new S3Client({ region: process.env.AWS_REGION });
 
-// Helper to build public URL for object (if you use CloudFront change accordingly)
 function s3ObjectUrl(bucket, region, key) {
   return `https://${bucket}.s3.${region}.amazonaws.com/${key}`;
 }
 
 // PUT /api/products/:id/upload
-router.put('/:id/upload', upload.single('image'), async (req, res) => {
+// Accepts multipart/form-data with any file field. We take the first file only.
+router.put('/:id/upload', upload.any(), async (req, res) => {
   try {
     const productId = req.params.id;
 
-    if (!req.file) {
+    // Multer puts files in req.files when using .any()
+    const files = req.files || [];
+    if (!files.length) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    const product = await Product.findById(productId);
-    if (!product) {
-      return res.status(404).json({ error: 'Product not found' });
-    }
+    // Use only the first uploaded file
+    const file = files[0];
 
-    const key = `products/${Date.now()}-${randomUUID()}-${req.file.originalname}`;
+    // Optional: validate mimetype (uncomment if you want to restrict types)
+    // const allowed = ['image/jpeg','image/png','image/webp','image/svg+xml'];
+    // if (!allowed.includes(file.mimetype)) {
+    //   return res.status(400).json({ error: 'Invalid file type' });
+    // }
+
+    // Ensure product exists
+    const product = await Product.findById(productId);
+    if (!product) return res.status(404).json({ error: 'Product not found' });
+
+    // Build S3 key
+    const key = `products/${Date.now()}-${randomUUID()}-${file.originalname}`;
 
     const putParams = {
       Bucket: process.env.S3_BUCKET_NAME,
       Key: key,
-      Body: req.file.buffer,
-      ContentType: req.file.mimetype,
-      // DO NOT set ACL here (Bucket owner enforced)
+      Body: file.buffer,
+      ContentType: file.mimetype
+      // intentionally no ACL for Bucket owner enforced
     };
 
     await s3.send(new PutObjectCommand(putParams));
@@ -58,7 +71,8 @@ router.put('/:id/upload', upload.single('image'), async (req, res) => {
 
     return res.json({ key, url });
   } catch (err) {
-    console.error('[uploadRoutes] S3 upload error:', err && err.stack ? err.stack : err);
+    // Multer errors sometimes bubble here (e.g. fileSize), log clearly
+    console.error('[uploadRoutes] error:', err && err.stack ? err.stack : err);
     const details = err && err.message ? err.message : String(err);
     return res.status(500).json({ error: 'Upload failed', details });
   }
