@@ -4,28 +4,18 @@ import axiosInstance from "../api/axiosInstance"; // leave this alone
 import ShopProductCard from "./shopProductCard";
 
 /**
- * ShopProducts (safe minimal change)
- * - Uses axiosInstance for dev/local.
- * - When running on production host (seemati.in) it prefixes the public API host
- *   so this page doesn't accidentally call localhost.
+ * ShopProducts
+ * - Uses axiosInstance for dev/local and production.
+ * - getApiBasePrefix ensures we don't accidentally call localhost from the public site.
+ * - Defensive extraction for different API response shapes.
  */
 
 function getApiBasePrefix() {
-  // If an explicit environment override is set (REACT_APP_API_BASE) use it.
   if (process.env.REACT_APP_API_BASE) return process.env.REACT_APP_API_BASE.replace(/\/$/, "");
 
-  // If running locally (localhost, 127.0.0.1) prefer relative base and axiosInstance (which likely points to localhost).
   const host = typeof window !== "undefined" ? window.location.hostname : "";
-  if (host === "localhost" || host === "127.0.0.1") {
-    return ""; // keep relative - axiosInstance/base will handle it
-  }
-
-  // If we're on the public site (seemati.in), force the public API base to avoid hitting localhost
-  if (host === "seemati.in" || host.endsWith("seemati.in")) {
-    return "https://api.seemati.in";
-  }
-
-  // default: no prefix (use axiosInstance)
+  if (host === "localhost" || host === "127.0.0.1") return "";
+  if (host === "seemati.in" || host.endsWith("seemati.in")) return "https://api.seemati.in";
   return "";
 }
 
@@ -41,25 +31,51 @@ export default function ShopProducts({ products: initialProducts, limit = 48 }) 
     setLoading(true);
     setError(null);
 
-    const prefix = getApiBasePrefix(); // might be "" or "https://api.seemati.in"
+    const prefix = getApiBasePrefix(); // "" or "https://api.seemati.in"
     const url = prefix
       ? `${prefix}/api/products?page=1&limit=${limit}&fields=_id,title,slug,price,thumbnail,images`
       : `/api/products?page=1&limit=${limit}&fields=_id,title,slug,price,thumbnail,images`;
 
-    // Use axiosInstance for both paths — axiosInstance will accept absolute URL too.
     axiosInstance
       .get(url)
       .then((res) => {
         if (!mounted) return;
-        const data = res?.data?.data || res?.data || [];
-        setProducts(Array.isArray(data) ? data : data.docs || []);
+        // Defensive payload extraction:
+        // common shapes: res.data (array) OR res.data.data (array or object with docs/products) OR res.data.data.products OR res.data.data.docs
+        const top = res?.data ?? res;
+        console.log("ShopProducts - raw response top:", top);
+
+        let list = [];
+        if (Array.isArray(top)) {
+          list = top;
+        } else if (Array.isArray(top?.data)) {
+          list = top.data;
+        } else if (Array.isArray(top?.data?.products)) {
+          list = top.data.products;
+        } else if (Array.isArray(top?.data?.docs)) {
+          list = top.data.docs;
+        } else if (Array.isArray(top?.products)) {
+          list = top.products;
+        } else if (Array.isArray(top?.docs)) {
+          list = top.docs;
+        } else {
+          // fallback: maybe res.data contains an object that *is* the list
+          const maybeArray = top?.data ?? top;
+          list = Array.isArray(maybeArray) ? maybeArray : [];
+        }
+
+        console.log("ShopProducts - extracted list length:", list.length);
+        setProducts(list);
       })
       .catch((err) => {
         if (!mounted) return;
-        console.error("Failed to fetch products", err);
+        console.error("ShopProducts - Failed to fetch products", err);
         setError("Could not load products");
       })
-      .finally(() => mounted && setLoading(false));
+      .finally(() => {
+        if (!mounted) return;
+        setLoading(false);
+      });
 
     return () => {
       mounted = false;
@@ -74,7 +90,18 @@ export default function ShopProducts({ products: initialProducts, limit = 48 }) 
     <section>
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
         {products.map((p) => (
-          <ShopProductCard key={p._id} product={p} onClick={() => p.slug && (window.location.href = `/product/${p.slug}`)} />
+          <ShopProductCard
+            key={p._id || p.id || p.slug}
+            product={p}
+            onClick={() => {
+              if (p.slug) {
+                // keep same behavior you used earlier
+                window.location.href = `/product/${p.slug}`;
+              } else if (p._id) {
+                window.location.href = `/product/${p._id}`;
+              }
+            }}
+          />
         ))}
       </div>
     </section>
