@@ -1,88 +1,70 @@
-// frontend/src/shop/ShopProducts.jsx
+// src/shop/ShopProducts.jsx
 import React, { useEffect, useState } from "react";
-import axios from "../api/axiosInstance"; // your shared axiosInstance
-import { Link } from "react-router-dom";
+import axios from "axios";
+import ShopProductCard from "./shopProductCard";
 
-export default function ShopProducts() {
-  const [products, setProducts] = useState([]);
-  const [loading, setLoading] = useState(true);
+/**
+ * ShopProducts
+ * - Uses ShopProductCard (your existing file naming)
+ * - Accepts `products` prop (if you already have products loaded)
+ * - Otherwise fetches basic product fields from API
+ *
+ * Usage:
+ *  <ShopProducts />
+ *  or
+ *  <ShopProducts products={myProducts} />
+ */
+
+export default function ShopProducts({ products: initialProducts, limit = 48 }) {
+  const [products, setProducts] = useState(initialProducts || []);
+  const [loading, setLoading] = useState(!initialProducts);
   const [error, setError] = useState(null);
 
   useEffect(() => {
+    if (initialProducts) return;
+
     let mounted = true;
-    async function loadProducts() {
-      try {
-        setLoading(true);
-        setError(null);
+    setLoading(true);
+    setError(null);
 
-        // IMPORTANT: request backend at /api/products (backend mounts routes at /api)
-        const res = await axios.get("/api/products?page=1&limit=8&fields=title,price,mrp,compareAtPrice,slug,thumbnail,images,description");
-
-        // Backend returns { ok, page, limit, total, totalPages, products }
-        const data = res.data;
-        const list = Array.isArray(data.products) ? data.products : data;
-
+    axios
+      .get(`/api/products?page=1&limit=${limit}&fields=_id,title,slug,price,thumbnail,images`)
+      .then((res) => {
         if (!mounted) return;
+        const data = res?.data?.data || res?.data || [];
+        setProducts(Array.isArray(data) ? data : data.docs || []);
+      })
+      .catch((err) => {
+        if (!mounted) return;
+        console.error("Failed to fetch products", err);
+        setError("Could not load products");
+      })
+      .finally(() => mounted && setLoading(false));
 
-        // Normalize image URLs (replace localhost uploads with API domain)
-        const normalized = list.map((p) => {
-          const images = Array.isArray(p.images)
-            ? p.images.map((img) => {
-                let url = img && (img.url || img);
-                if (!url) return img;
-                // if image points to localhost in DB (dev leftover), rewrite to production host
-                if (typeof url === "string" && url.startsWith("http://localhost:")) {
-                  // replace with https://api.seemati.in/uploads/... (backend serves uploads at that path)
-                  url = url.replace(/^http:\/\/localhost:\d+/, "https://api.seemati.in");
-                }
-                return typeof img === "string" ? url : { ...(img || {}), url };
-              })
-            : [];
+    return () => {
+      mounted = false;
+    };
+  }, [initialProducts, limit]);
 
-        return { ...p, images };
-        });
-
-        setProducts(normalized);
-      } catch (err) {
-        console.error("loadProducts error", err);
-        setError(err);
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    }
-    loadProducts();
-    return () => (mounted = false);
-  }, []);
-
-  if (loading) return <div style={{ padding: 20 }}>Loading products…</div>;
-  if (error) return <div style={{ padding: 20, color: "red" }}>Failed to load products: {error.message || String(error)}</div>;
-  if (!products.length) return <div style={{ padding: 20 }}>No products found.</div>;
+  if (loading) return <div className="py-12 text-center">Loading products…</div>;
+  if (error) return <div className="py-12 text-center text-red-600">{error}</div>;
+  if (!products || products.length === 0) return <div className="py-12 text-center">No products found.</div>;
 
   return (
-    <div style={{ padding: 20 }}>
-      <h2>Products</h2>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))", gap: 16 }}>
-        {products.map((p) => {
-          const id = p._id || p.id || p.productId;
-          const firstImage = (p.images && p.images[0] && (p.images[0].url || p.images[0])) || "";
-          return (
-            <div key={id} style={{ border: "1px solid #eee", borderRadius: 8, padding: 12 }}>
-              <Link to={`/product/${p.slug || id}`} style={{ textDecoration: "none", color: "inherit" }}>
-                <div style={{ height: 180, display: "flex", alignItems: "center", justifyContent: "center", background: "#fafafa", marginBottom: 8 }}>
-                  {firstImage ? (
-                    <img src={firstImage} alt={p.title || "product"} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
-                  ) : (
-                    <div style={{ width: "80%", height: "80%", background: "#f4f4f4", borderRadius: 6 }} />
-                  )}
-                </div>
-                <div style={{ fontWeight: 600, marginBottom: 6 }}>{p.title || "Untitled"}</div>
-                <div style={{ color: "#666", marginBottom: 6 }}>{p.description ? (p.description.length > 80 ? p.description.slice(0, 80) + "…" : p.description) : ""}</div>
-                <div style={{ fontWeight: 700 }}>₹{p.price != null ? p.price : "—"}</div>
-              </Link>
-            </div>
-          );
-        })}
+    <section>
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+        {products.map((p) => (
+          <ShopProductCard
+            key={p._id}
+            product={p}
+            onClick={() => {
+              if (p.slug) {
+                window.location.href = `/product/${p.slug}`;
+              }
+            }}
+          />
+        ))}
       </div>
-    </div>
+    </section>
   );
 }
