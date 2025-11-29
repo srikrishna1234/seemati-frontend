@@ -1,38 +1,107 @@
 // src/shop/shopProductCard.jsx
-import React from "react";
+import React, { useRef } from "react";
 
 /**
  * shopProductCard.jsx
- * - Attempts to fix cross-origin/CSP blocked images by rewriting common API host to public site host.
- * - Logs final src and onError to aid debugging.
+ * - Handles thumbnail as string OR object (common shapes from different backends)
+ * - Tries multiple fields inside an object: url, src, location, path, key, publicUrl, filename
+ * - Rewrites api.seemati.in -> current host if needed (keeps protocol)
+ * - Logs raw thumbnail object once per product for debugging
  */
+
+function extractUrlFromPossibleObject(obj) {
+  if (!obj) return null;
+  if (typeof obj === "string") return obj;
+
+  // obj might be something like { url: "..."} or { src: "..." } or AWS S3 { key: "..."} or { location: "..." }
+  const candidates = [
+    "url",
+    "src",
+    "location",
+    "path",
+    "key",
+    "publicUrl",
+    "public_url",
+    "filename",
+    "file",
+    "secure_url",
+    "original",
+  ];
+
+  for (const k of candidates) {
+    const v = obj[k];
+    if (typeof v === "string" && v.length) return v;
+  }
+
+  // sometimes object is nested: { fields: { file: { url: "..." } } } -- try a couple deeper common patterns
+  try {
+    if (obj.fields && obj.fields.file && typeof obj.fields.file.url === "string") return obj.fields.file.url;
+    if (obj.file && obj.file.url) return obj.file.url;
+  } catch (e) {
+    // ignore
+  }
+
+  // As a last attempt, if object has toString that returns a meaningful url
+  try {
+    const s = obj.toString();
+    if (typeof s === "string" && s.startsWith("http")) return s;
+  } catch (e) {
+    // ignore
+  }
+
+  return null;
+}
 
 export default function ShopProductCard({ product, onClick }) {
   if (!product) return null;
 
+  const loggedRef = useRef(false); // ensure we log raw object once per mount
   const title = product.title ?? product.name ?? "Untitled product";
   const price = product.price ?? product.mrp ?? 0;
 
-  // Prefer thumbnail then images[0]
-  let thumbnail = product.thumbnail || (Array.isArray(product.images) && product.images[0]) || null;
+  // candidate from product.thumbnail (string or object) OR first item in product.images (string or object)
+  let rawThumb = product.thumbnail ?? null;
+  if (!rawThumb && Array.isArray(product.images) && product.images.length > 0) {
+    rawThumb = product.images[0];
+  }
 
-  // If thumbnail is an absolute URL from the API host, try to rewrite it to the public origin.
-  // This is a pragmatic workaround for CSP/img-src restrictions when images are served from api.seemati.in.
-  try {
-    if (typeof thumbnail === "string" && thumbnail.startsWith("http")) {
-      const url = new URL(thumbnail);
-      // If API host is used, replace with public host so CSP 'self' passes
-      if (url.hostname === "api.seemati.in") {
-        // replace host with public site host
-        url.hostname = window.location.hostname || "seemati.in";
-        // if protocol mismatch (rare), keep https
-        url.protocol = window.location.protocol || "https:";
-        thumbnail = url.toString();
-      }
+  // debug log rawThumb object once
+  if (rawThumb && typeof rawThumb === "object" && !loggedRef.current) {
+    // eslint-disable-next-line no-console
+    console.log("shopProductCard - raw thumbnail object for", product._id || product.slug || title, rawThumb);
+    loggedRef.current = true;
+  }
+
+  // extract string url if rawThumb is an object
+  let thumbnailStr = extractUrlFromPossibleObject(rawThumb);
+
+  // If still no string, it's possible images are stored as { url: { ... } } or similar - fallback to JSON-stringify as last resort (but likely invalid)
+  if (!thumbnailStr && typeof rawThumb === "object") {
+    thumbnailStr = null; // don't use JSON string as URL
+  }
+
+  // If thumbnailStr is relative (starts with '/'), convert to absolute with current host & protocol
+  if (thumbnailStr && thumbnailStr.startsWith("/")) {
+    try {
+      const u = new URL(window.location.origin);
+      thumbnailStr = `${u.origin}${thumbnailStr}`;
+    } catch (e) {
+      // ignore
     }
-  } catch (e) {
-    // ignore URL parse errors
-    console.warn("shopProductCard: URL parse failed for thumbnail", thumbnail, e);
+  }
+
+  // If the image URL refers to api.seemati.in, rewrite hostname to current host to avoid CSP issues (keeps protocol)
+  if (thumbnailStr) {
+    try {
+      const parsed = new URL(thumbnailStr);
+      if (parsed.hostname === "api.seemati.in") {
+        parsed.hostname = window.location.hostname || "seemati.in";
+        // keep protocol as-is (usually https:)
+        thumbnailStr = parsed.toString();
+      }
+    } catch (e) {
+      // not a valid absolute URL, ignore
+    }
   }
 
   const placeholder =
@@ -41,10 +110,11 @@ export default function ShopProductCard({ product, onClick }) {
       `<svg xmlns='http://www.w3.org/2000/svg' width='600' height='400'><rect width='100%' height='100%' fill='%23f4f4f4'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' fill='%23888' font-family='Arial' font-size='18'>No Image</text></svg>`
     );
 
-  const imgSrc = thumbnail || placeholder;
+  const imgSrc = thumbnailStr || placeholder;
 
-  // debugging log - remove later once confirmed working
-  console.log("shopProductCard - image src for", product._id || product.slug || title, "=>", imgSrc);
+  // debug: log final src to console
+  // eslint-disable-next-line no-console
+  console.log("shopProductCard - final image src for", product._id || product.slug || title, "=>", imgSrc);
 
   const cardStyle = {
     width: "100%",
@@ -96,6 +166,8 @@ export default function ShopProductCard({ product, onClick }) {
           alt={title}
           style={imgStyle}
           onError={(e) => {
+            // log real failing src
+            // eslint-disable-next-line no-console
             console.error("shopProductCard - image failed to load for", product._id || product.slug || title, "src=", e.currentTarget.src);
             const placeholderSrc = placeholder;
             if (e.currentTarget.src !== placeholderSrc) e.currentTarget.src = placeholderSrc;
