@@ -2,6 +2,7 @@
 // Upload route (PUT /api/products/:id/upload)
 // Accepts multipart with multiple files (multer.any()), uploads each to S3 (no ACL),
 // saves URL strings to product.images, and returns array of { key, url }.
+// Also returns top-level key & url for backward compatibility.
 
 const express = require('express');
 const multer = require('multer');
@@ -16,7 +17,7 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
     fileSize: 20 * 1024 * 1024, // 20 MB per file
-    files: 10 // avoid very large numbers; adjust if necessary
+    files: 20 // adjust if needed
   }
 });
 
@@ -44,7 +45,7 @@ router.put('/:id/upload', upload.any(), async (req, res) => {
 
     const results = [];
 
-    // Upload each file sequentially (you can parallelize if desired)
+    // Upload each file sequentially
     for (const file of files) {
       // Build a safe unique key
       const key = `products/${Date.now()}-${randomUUID()}-${file.originalname}`;
@@ -71,8 +72,17 @@ router.put('/:id/upload', upload.any(), async (req, res) => {
     // Save product once after pushing all URLs
     await product.save();
 
-    // Return array of uploaded file info
-    return res.json({ uploaded: results });
+    // Respond with structure that supports both old frontend and new
+    const first = results[0] || null;
+    const resp = {
+      uploaded: results
+    };
+    if (first) {
+      resp.key = first.key;
+      resp.url = first.url;
+    }
+
+    return res.json(resp);
   } catch (err) {
     console.error('[uploadRoutes] error:', err && err.stack ? err.stack : err);
     const details = err && err.message ? err.message : String(err);
