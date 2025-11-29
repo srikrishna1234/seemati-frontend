@@ -3,9 +3,8 @@ import React from "react";
 
 /**
  * shopProductCard.jsx
- * - constrained widths and heights to avoid giant images
- * - image uses object-fit: cover
- * - centers content
+ * - Attempts to fix cross-origin/CSP blocked images by rewriting common API host to public site host.
+ * - Logs final src and onError to aid debugging.
  */
 
 export default function ShopProductCard({ product, onClick }) {
@@ -15,7 +14,27 @@ export default function ShopProductCard({ product, onClick }) {
   const price = product.price ?? product.mrp ?? 0;
 
   // Prefer thumbnail then images[0]
-  const thumbnail = product.thumbnail || (Array.isArray(product.images) && product.images[0]) || null;
+  let thumbnail = product.thumbnail || (Array.isArray(product.images) && product.images[0]) || null;
+
+  // If thumbnail is an absolute URL from the API host, try to rewrite it to the public origin.
+  // This is a pragmatic workaround for CSP/img-src restrictions when images are served from api.seemati.in.
+  try {
+    if (typeof thumbnail === "string" && thumbnail.startsWith("http")) {
+      const url = new URL(thumbnail);
+      // If API host is used, replace with public host so CSP 'self' passes
+      if (url.hostname === "api.seemati.in") {
+        // replace host with public site host
+        url.hostname = window.location.hostname || "seemati.in";
+        // if protocol mismatch (rare), keep https
+        url.protocol = window.location.protocol || "https:";
+        thumbnail = url.toString();
+      }
+    }
+  } catch (e) {
+    // ignore URL parse errors
+    console.warn("shopProductCard: URL parse failed for thumbnail", thumbnail, e);
+  }
+
   const placeholder =
     "data:image/svg+xml;charset=UTF-8," +
     encodeURIComponent(
@@ -24,10 +43,12 @@ export default function ShopProductCard({ product, onClick }) {
 
   const imgSrc = thumbnail || placeholder;
 
-  // Card constraints
+  // debugging log - remove later once confirmed working
+  console.log("shopProductCard - image src for", product._id || product.slug || title, "=>", imgSrc);
+
   const cardStyle = {
     width: "100%",
-    maxWidth: 260, // keep cards narrow
+    maxWidth: 260,
     borderRadius: 8,
     overflow: "hidden",
     background: "#fff",
@@ -40,8 +61,8 @@ export default function ShopProductCard({ product, onClick }) {
 
   const imageWrapStyle = {
     width: "100%",
-    height: 220, // fixed visible height so huge images do not expand the page
-    background: "#eee",
+    height: 220,
+    background: "#000",
     display: "block",
     overflow: "hidden"
   };
@@ -75,6 +96,7 @@ export default function ShopProductCard({ product, onClick }) {
           alt={title}
           style={imgStyle}
           onError={(e) => {
+            console.error("shopProductCard - image failed to load for", product._id || product.slug || title, "src=", e.currentTarget.src);
             const placeholderSrc = placeholder;
             if (e.currentTarget.src !== placeholderSrc) e.currentTarget.src = placeholderSrc;
           }}
