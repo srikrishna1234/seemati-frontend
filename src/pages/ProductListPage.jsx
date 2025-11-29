@@ -1,6 +1,6 @@
 // src/pages/ProductListPage.jsx
 import React, { useEffect, useRef, useState } from "react";
-import ShopProductCard from "../shop/ShopProductCard";
+import ShopProductCard from "../shop/shopProductCard";
 import axios from "../api/axiosInstance";
 
 /**
@@ -142,3 +142,4 @@ export default function ProductListPage({ limit = 8 }) {
     </div>
   );
 }
+

@@ -1,2 +1,3 @@
 // src/components/ProductCard.jsx
-export { default } from "../shop/ShopProductCard";
+export { default } from "../shop/shopProductCard";
+
