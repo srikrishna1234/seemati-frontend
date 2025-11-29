@@ -1,142 +1,71 @@
-// src/shop/ShopProductCard.jsx
+// src/shop/shopProductCard.jsx
 import React from "react";
-import { Link } from "react-router-dom";
+import PropTypes from "prop-types";
 
 /**
- * Helper: resolve an image value (string or object) to an absolute URL.
- * Mirrors logic used elsewhere so we are consistent.
+ * ShopProductCard
+ * - For projects that keep the original filename shopProductCard.jsx
+ * - Sets width & height attributes to avoid layout shift
+ * - Uses loading="lazy" and decoding="async"
+ * - Uses object-cover for consistent crops
+ *
+ * Props:
+ *  - product: { _id, title, slug, price, thumbnail, images }
+ *  - onClick: optional click handler
  */
-function resolveImage(i) {
-  const apiBase =
-    process.env.REACT_APP_API_BASE_URL ||
-    process.env.REACT_APP_API_URL ||
-    "https://seemati-backend.onrender.com";
 
-  if (!i) return null;
+export default function ShopProductCard({ product, onClick }) {
+  const thumb = product.thumbnail || (product.images && product.images[0]) || "";
+  const altText = product.title ? `${product.title} — Seemati` : "product image";
 
-  // string case
-  if (typeof i === "string") {
-    const s = i.trim();
-    if (!s) return null;
-    if (/^https?:\/\//i.test(s)) {
-      // rewrite localhost host to apiBase
-      if (/https?:\/\/(localhost|127\.0\.0\.1)/i.test(s)) {
-        return s.replace(/^https?:\/\/[^/]+/i, apiBase);
-      }
-      return s;
-    }
-    if (s.startsWith("//")) {
-      return window.location.protocol + s;
-    }
-    // relative path or bare filename
-    if (s.startsWith("/")) return `${apiBase}${s}`;
-    return `${apiBase}/uploads/${s}`;
-  }
-
-  // object case: { url, filename, path }
-  if (typeof i === "object") {
-    const u = i.url || i.path || i.filename || i.file || null;
-    if (!u) return null;
-    return resolveImage(String(u));
-  }
-
-  return null;
-}
-
-/**
- * Normalize product to ensure we can render the thumbnail easily.
- * Returns an object { src, alt } where src may be null (use placeholder).
- */
-function getCardImage(product) {
-  if (!product) return { src: null, alt: "" };
-
-  // Priority: thumbnail -> image -> images[0] -> images[0].url -> fallback
-  const candidates = [];
-
-  if (product.thumbnail) candidates.push(product.thumbnail);
-  if (product.image) candidates.push(product.image);
-  if (product.imageUrl) candidates.push(product.imageUrl);
-  if (product.images && Array.isArray(product.images)) {
-    // push each element in images
-    for (const it of product.images) {
-      if (!it) continue;
-      // if image item is a string, push string
-      if (typeof it === "string") candidates.push(it);
-      else if (it.url) candidates.push(it.url);
-      else if (it.filename) candidates.push(it.filename);
-      else if (it.path) candidates.push(it.path);
-    }
-  }
-
-  // also handle older fields
-  if (product.file) candidates.push(product.file);
-  if (product.img) candidates.push(product.img);
-
-  // resolve the first valid candidate
-  for (const c of candidates) {
-    const src = resolveImage(c);
-    if (src) return { src, alt: product.title || product.name || "" };
-  }
-
-  return { src: null, alt: product.title || product.name || "" };
-}
-
-const PLACEHOLDER = "/images/placeholder.png";
-
-/**
- * ShopProductCard: safe, minimal card used in grid views.
- * Keeps markup light and uses the normalized src from getCardImage.
- */
-export default function ShopProductCard({ product }) {
-  const { src, alt } = getCardImage(product);
-
-  const imageSrc = src || PLACEHOLDER;
+  // Thumbnail display size - change if you want different size
+  const displayWidth = 240; // px
+  const displayHeight = 240; // px
 
   return (
-    <div
-      style={{
-        borderRadius: 8,
-        overflow: "hidden",
-        border: "1px solid #f3f4f6",
-        background: "#fff",
-        display: "flex",
-        flexDirection: "column",
-      }}
+    <article
+      className="group bg-white rounded-2xl shadow-sm p-3 hover:shadow-md transition-shadow cursor-pointer"
+      onClick={onClick}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => (e.key === "Enter" && onClick && onClick())}
     >
-      <div style={{ minHeight: 180, display: "flex", alignItems: "center", justifyContent: "center", background: "#fafafa" }}>
+      <div className="w-full flex items-center justify-center overflow-hidden">
         <img
-          src={imageSrc}
-          alt={alt}
-          style={{ maxWidth: "100%", maxHeight: 180, objectFit: "contain", display: "block" }}
-          onError={(e) => {
-            try {
-              if (e && e.target) e.target.src = PLACEHOLDER;
-            } catch (err) {}
-          }}
+          src={thumb}
+          alt={altText}
+          loading="lazy"
+          decoding="async"
+          width={displayWidth}
+          height={displayHeight}
+          className="w-[240px] h-[240px] object-cover rounded-xl block"
         />
       </div>
 
-      <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-        <div style={{ fontWeight: 700, fontSize: 16 }}>{product.title || product.name || "Untitled"}</div>
-        {product.description ? <div style={{ color: "#6b7280", fontSize: 13 }}>{String(product.description).slice(0, 80)}</div> : null}
-
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8 }}>
-          <div>
-            <div style={{ fontSize: 12, color: "#6b7280", textDecoration: product.mrp > product.price ? "line-through" : "none" }}>
-              MRP ₹{(Number(product.mrp ?? product.compareAtPrice ?? product.price ?? 0)).toFixed(2)}
-            </div>
-            <div style={{ fontWeight: 800, color: "#0b5cff" }}>₹{(Number(product.price ?? 0)).toFixed(2)}</div>
-          </div>
-
-          <div style={{ display: "flex", gap: 8 }}>
-            <Link to={`/product/${product.slug || product._id || product.id}`} style={{ textDecoration: "none" }}>
-              <button style={{ padding: "8px 12px", background: "#f59e0b", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}>
-                View
-              </button>
-            </Link>
-          </div>
+      <div className="mt-3">
+        <h3 className="text-sm font-medium line-clamp-2">{product.title}</h3>
+        <div className="mt-1 flex items-center justify-between">
+          <span className="text-lg font-semibold">
+            {/* keep price formatting safe if price is string or number */}
+            {typeof product.price === "number" ? `₹${product.price.toFixed(2)}` : `₹${product.price}`}
+          </span>
+          {product.images && product.images.length > 1 && (
+            <span className="text-xs bg-gray-100 px-2 py-1 rounded-full">{product.images.length} pics</span>
+          )}
         </div>
       </div>
-    </div>
+    </article>
   );
 }
+
+ShopProductCard.propTypes = {
+  product: PropTypes.shape({
+    _id: PropTypes.string,
+    title: PropTypes.string,
+    slug: PropTypes.string,
+    price: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+    thumbnail: PropTypes.string,
+    images: PropTypes.arrayOf(PropTypes.string),
+  }).isRequired,
+  onClick: PropTypes.func,
+};
