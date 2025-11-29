@@ -1,11 +1,11 @@
 // src/shop/ShopProducts.jsx
 import React, { useEffect, useState } from "react";
 import axios from "axios";
-import ShopProductCard from "./shopProductCard";
+import ShopProductCard from "./shopProductCard"; // matches your file name exactly (lowercase s)
 
 /**
  * ShopProducts
- * - Uses ShopProductCard (your existing file naming)
+ * - Uses ShopProductCard (ensure shopProductCard.jsx exists with exact casing)
  * - Accepts `products` prop (if you already have products loaded)
  * - Otherwise fetches basic product fields from API
  *
