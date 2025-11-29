@@ -92,12 +92,16 @@ app.get('/_health', (req, res) => {
 
 // ---- Mount API routes (safe / conditional mounting)
 // Upload route (S3-backed uploadRoutes.cjs) - mounted at the path defined inside that file (we expect /api/products/:id/upload)
+// Mount uploadRoutes (S3-backed) at /api/products so upload endpoint is:
+// PUT /api/products/:id/upload
 (() => {
   try {
     const uploadRoutesPath = path.join(__dirname, 'src', 'routes', 'uploadRoutes.cjs');
     if (fs.existsSync(uploadRoutesPath)) {
       const uploadRoutes = require('./src/routes/uploadRoutes.cjs');
-      app.use('/', uploadRoutes);
+      // Mount under /api/products so the route becomes:
+      // PUT /api/products/:id/upload
+      app.use('/api/products', uploadRoutes);
       console.log('Mounted uploadRoutes');
     } else {
       console.log('uploadRoutes file not found — skipping uploadRoutes mount.');
@@ -106,6 +110,7 @@ app.get('/_health', (req, res) => {
     console.warn('uploadRoutes failed to mount:', String(err));
   }
 })();
+
 
 // Product routes (if present) - mounted under /api/products
 (() => {
