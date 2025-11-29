@@ -1,374 +1,370 @@
 // src/admin/AdminProductEdit.js
-import React, { useEffect, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
-import axiosInstance from "../api/axiosInstance";
-import "./AdminProductEdit.css";
-
-/*
-  AdminProductEdit replacement
-  - Uploads new files BEFORE saving the product
-  - Uses returned URLs from the backend upload endpoint
-  - Preserves existing images that are 'kept'
-  - Normalizes images to an array of URLs before saving
-*/
-
-const SVG_PLACEHOLDER = 'data:image/svg+xml;utf8,' + encodeURIComponent(
-  `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300">
-    <rect width="100%" height="100%" fill="#f3f3f3"/>
-    <text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#bbb" font-size="18">No image</text>
-  </svg>`
-);
-
-function stringToArray(str) {
-  if (!str) return [];
-  if (Array.isArray(str)) return str;
-  return String(str).split(",").map(s => s.trim()).filter(Boolean);
-}
-function arrayToString(arr) {
-  if (!arr) return "";
-  if (Array.isArray(arr)) return arr.join(", ");
-  return String(arr);
-}
-
-// Helper: return upload endpoint for this product id
-function uploadEndpoint(id) {
-  // If you changed your backend route, update this function accordingly
-  return `/api/products/${id}/upload`;
-}
+import React, { useEffect, useState, useRef } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import axiosInstance from '../api/axiosInstance'; // adjust if your path is different
 
 export default function AdminProductEdit() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const fileInputRef = useRef(null);
 
+  // Product fields
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [product, setProduct] = useState({
+    title: '',
+    slug: '',
+    price: '',
+    mrp: '',
+    stock: '',
+    sku: '',
+    brand: '',
+    category: '',
+    videoUrl: '',
+    colors: '',
+    sizes: '',
+    description: '',
+    isPublished: false
+  });
 
-  // basic product fields
-  const [title, setTitle] = useState("");
-  const [slug, setSlug] = useState("");
-  const [price, setPrice] = useState("");
-  const [mrp, setMrp] = useState("");
-  const [stock, setStock] = useState("");
-  const [sku, setSku] = useState("");
-  const [brand, setBrand] = useState("");
-  const [category, setCategory] = useState("");
-  const [videoUrl, setVideoUrl] = useState("");
-  const [colorsText, setColorsText] = useState("");
-  const [sizesText, setSizesText] = useState("");
-  const [description, setDescription] = useState("");
-  const [published, setPublished] = useState(false);
+  // existingImages: array of URL strings currently saved in DB
+  const [existingImages, setExistingImages] = useState([]); // e.g. ['https://...png', ...]
+  // keep map for existing images (true = keep, false = remove)
+  const [keepMap, setKeepMap] = useState({});
 
-  // images
-  // existingImages: array of { url: string, raw: originalDbValue, keep: boolean }
-  const [existingImages, setExistingImages] = useState([]);
-  // newFiles: File[]
-  const [newFiles, setNewFiles] = useState([]);
-  // previews for newFiles as data urls
-  const [newPreviews, setNewPreviews] = useState([]);
+  // previews for newly selected files (File objects + preview URL)
+  const [selectedFiles, setSelectedFiles] = useState([]); // [{ file, previewUrl }]
 
-  // Load product on mount
   useEffect(() => {
-    let mounted = true;
     async function load() {
-      setLoading(true);
       try {
-        const res = await axiosInstance.get(`/api/products/${id}`);
-        const data = res?.data;
-        // server may return { product: {...} } or product directly
-        const p = data?.product ?? data ?? {};
-        if (!mounted) return;
+        setLoading(true);
+        const resp = await axiosInstance.get(`/api/products/${id}`);
+        if (resp.data && resp.data.product) {
+          const p = resp.data.product;
+          setProduct({
+            title: p.title || '',
+            slug: p.slug || '',
+            price: p.price || '',
+            mrp: p.mrp || '',
+            stock: p.stock || '',
+            sku: p.sku || '',
+            brand: p.brand || '',
+            category: p.category || '',
+            videoUrl: p.videoUrl || '',
+            colors: Array.isArray(p.colors) ? p.colors.join(', ') : (p.colors || ''),
+            sizes: Array.isArray(p.sizes) ? p.sizes.join(', ') : (p.sizes || ''),
+            description: p.description || '',
+            isPublished: !!p.isPublished
+          });
 
-        setTitle(p.title ?? "");
-        setSlug(p.slug ?? "");
-        setPrice(p.price ?? "");
-        setMrp(p.mrp ?? "");
-        setStock(p.stock ?? "");
-        setSku(p.sku ?? "");
-        setBrand(p.brand ?? "");
-        setCategory(p.category ?? "");
-        setVideoUrl(p.videoUrl ?? p.video ?? "");
-        setColorsText(Array.isArray(p.colors) ? arrayToString(p.colors) : (p.colors ?? "").toString());
-        setSizesText(Array.isArray(p.sizes) ? arrayToString(p.sizes) : (p.sizes ?? "").toString());
-        setDescription(p.description ?? "");
-        setPublished(Boolean(p.published || p.isPublished));
+          // Normalize images: some responses use arrays of strings, some use objects
+          const imgs = Array.isArray(p.images)
+            ? p.images.map(it => (typeof it === 'string' ? it : (it.url || it)))
+            : [];
+          setExistingImages(imgs);
 
-        // Normalize images from DB: accept strings or objects
-        const rawImages = p.images ?? p.image ?? [];
-        const arr = Array.isArray(rawImages) ? rawImages : (rawImages ? [rawImages] : []);
-        const imgs = arr.map(i => {
-          if (!i) return { url: SVG_PLACEHOLDER, raw: i, keep: true };
-          if (typeof i === "string") return { url: i, raw: i, keep: true };
-          if (typeof i === "object") {
-            // object might be {url:..., alt:...} or {path:...}
-            const url = i.url ?? i.path ?? (i.src ?? JSON.stringify(i));
-            return { url, raw: i, keep: true };
-          }
-          return { url: String(i), raw: i, keep: true };
-        });
-        setExistingImages(imgs);
+          // mark all existing images to keep by default
+          const map = {};
+          imgs.forEach(url => (map[url] = true));
+          setKeepMap(map);
+        } else {
+          alert('Failed to load product.');
+        }
       } catch (err) {
-        console.error("Fetch product failed:", err);
-        alert("Failed to fetch product — check console.");
+        console.error('Failed to fetch product', err);
+        alert('Error loading product. See console.');
       } finally {
-        if (mounted) setLoading(false);
+        setLoading(false);
       }
     }
     load();
-    return () => { mounted = false; };
+    // cleanup previews on unmount
+    return () => {
+      selectedFiles.forEach(s => s.previewUrl && URL.revokeObjectURL(s.previewUrl));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  // Create data-url previews for newFiles
-  useEffect(() => {
-    if (!newFiles || newFiles.length === 0) {
-      setNewPreviews([]);
-      return;
+  // Handle input changes
+  function handleChange(e) {
+    const { name, value, type, checked } = e.target;
+    if (name === 'isPublished') {
+      setProduct(prev => ({ ...prev, isPublished: !!checked }));
+    } else {
+      setProduct(prev => ({ ...prev, [name]: value }));
     }
-    let cancelled = false;
-    const readers = [];
-    const results = new Array(newFiles.length);
+  }
 
-    newFiles.forEach((f, i) => {
-      const r = new FileReader();
-      readers.push(r);
-      r.onload = (e) => {
-        results[i] = e.target.result;
-        if (!cancelled && results.filter(Boolean).length === newFiles.length) {
-          setNewPreviews(results.slice());
-        }
-      };
-      r.onerror = () => {
-        results[i] = SVG_PLACEHOLDER;
-        if (!cancelled && results.filter(Boolean).length === newFiles.length) {
-          setNewPreviews(results.slice());
-        }
-      };
-      r.readAsDataURL(f);
-    });
-
-    return () => {
-      cancelled = true;
-      readers.forEach(rr => { try { rr.abort && rr.abort(); } catch (e) {} });
-    };
-  }, [newFiles]);
-
-  // file change handler (select files)
-  function handleFileChange(e) {
+  // File selection -> create previews
+  function onFilesSelected(e) {
     const files = Array.from(e.target.files || []);
-    setNewFiles(files);
+    if (!files.length) return;
+
+    const newSelected = files.map(f => ({
+      file: f,
+      previewUrl: URL.createObjectURL(f)
+    }));
+
+    // append to existing selectedFiles
+    setSelectedFiles(prev => {
+      // release old preview URLs we are removing? we keep prev
+      return [...prev, ...newSelected];
+    });
+
+    // reset input so the same file can be re-selected if user wants
+    if (fileInputRef.current) fileInputRef.current.value = '';
   }
 
-  // toggle keep flag for existing image
-  function toggleKeepExisting(index) {
-    setExistingImages(s => {
-      const c = [...s];
-      c[index] = { ...c[index], keep: !c[index].keep };
-      return c;
+  // Remove preview (before upload)
+  function removeSelectedPreview(index) {
+    setSelectedFiles(prev => {
+      const copy = [...prev];
+      const removed = copy.splice(index, 1)[0];
+      if (removed && removed.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+      return copy;
     });
-  }
-  function removeExistingImage(index) {
-    setExistingImages(s => {
-      const c = [...s];
-      c[index] = { ...c[index], keep: false };
-      return c;
-    });
-  }
-  function removeNewPreview(i) {
-    const a = [...newFiles];
-    const b = [...newPreviews];
-    a.splice(i, 1);
-    b.splice(i, 1);
-    setNewFiles(a);
-    setNewPreviews(b);
   }
 
-  // safe img onError handler to show placeholder once
-  const safeOnError = (e) => {
+  // Toggle keep/remove for existing image URL
+  function toggleKeep(url) {
+    setKeepMap(prev => ({ ...prev, [url]: !prev[url] }));
+  }
+
+  // Helper to upload files (if any) to backend; returns array of uploaded URLs
+  async function uploadFilesIfAny() {
+    if (!selectedFiles.length) return [];
+    const formData = new FormData();
+    // append each file with same field name; backend accepts any field and handles multiple files
+    selectedFiles.forEach(s => formData.append('files', s.file)); // name doesn't matter due to multer.any()
+
     try {
-      const img = e.target;
-      if (img.dataset.failed) return;
-      img.dataset.failed = "1";
-      img.src = SVG_PLACEHOLDER;
-    } catch (err) {}
-  };
+      const resp = await axiosInstance.put(`/api/products/${id}/upload`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
 
-  // Core: upload new files (if any) and return array of uploaded URLs
-  async function uploadNewFilesAndReturnUrls() {
-    if (!newFiles || newFiles.length === 0) return [];
+      // backend returns: { uploaded: [ {key,url}, ... ], key, url } OR legacy { key, url }
+      const data = resp && resp.data ? resp.data : {};
+      let uploadedArray = [];
+      if (Array.isArray(data.uploaded) && data.uploaded.length) {
+        uploadedArray = data.uploaded;
+      } else if (data.key && data.url) {
+        uploadedArray = [{ key: data.key, url: data.url }];
+      } else {
+        // defensive: try resp.data directly if array
+        if (Array.isArray(data)) {
+          uploadedArray = data;
+        }
+      }
 
-    const fd = new FormData();
-    newFiles.forEach(f => fd.append("images", f));
+      // extract urls
+      const urls = uploadedArray.map(u => (u && u.url) ? u.url : (typeof u === 'string' ? u : null)).filter(Boolean);
 
-    // the backend endpoint you already used earlier in your existing file:
-    const endpoint = uploadEndpoint(id);
+      return urls;
+    } catch (err) {
+      console.error('Upload failed', err);
+      throw new Error('Upload request failed');
+    }
+  }
 
-    // Use PUT as in your existing code; change to POST if your API expects POST
-    const res = await axiosInstance.put(endpoint, fd, {
-      headers: { "Content-Type": "multipart/form-data" },
-      maxContentLength: Infinity,
-      maxBodyLength: Infinity
+  // Build final images array (keep existing ones that are checked + newly uploaded)
+  function buildFinalImageList(uploadedUrls) {
+    const kept = existingImages.filter(url => keepMap[url]);
+    // avoid duplicates: include kept first then uploaded that are not already present
+    const final = [...kept];
+    uploadedUrls.forEach(u => {
+      if (!final.includes(u)) final.push(u);
     });
-
-    // expect response like { images: [...] } or { files: [ { url } ] } or array
-    const data = res?.data ?? {};
-    // several backends return array directly
-    if (Array.isArray(data)) {
-      // array of strings or objects
-      return data.map(i => (typeof i === "string" ? i : (i.url || i.path || i.filename || ""))).filter(Boolean);
-    }
-    if (Array.isArray(data.images)) {
-      return data.images.map(i => (typeof i === "string" ? i : (i.url || i.path || i.filename))).filter(Boolean);
-    }
-    if (Array.isArray(data.files)) {
-      return data.files.map(f => (f.url || f.filename || f.path)).filter(Boolean);
-    }
-    // fallback: try data.url or data.image
-    if (data.url) return [data.url];
-    return [];
+    return final;
   }
 
-  // Build final images list: kept existing images (strings) + uploaded urls
-  function keptExistingAsUrls() {
-    return existingImages
-      .filter(i => i.keep)
-      .map(i => {
-        const raw = i.raw;
-        if (!raw) return i.url || SVG_PLACEHOLDER;
-        if (typeof raw === "string") return raw;
-        if (typeof raw === "object") return raw.url ?? raw.path ?? i.url;
-        return String(raw);
-      })
-      .filter(Boolean);
-  }
-
+  // Save handler: upload selected files (if any), then PUT product with images array
   async function handleSave(e) {
     e.preventDefault();
     setSaving(true);
 
     try {
-      // First, upload new images (if any). If upload endpoint fails, do not overwrite DB images.
-      let uploaded = [];
-      if (newFiles && newFiles.length > 0) {
-        uploaded = await uploadNewFilesAndReturnUrls();
-        if (!uploaded || uploaded.length === 0) {
-          // If the backend didn't return urls, abort and show error
-          throw new Error("Upload failed or returned no URLs. Check the upload endpoint response.");
+      // 1) upload files if selected
+      let uploadedUrls = [];
+      if (selectedFiles.length) {
+        uploadedUrls = await uploadFilesIfAny();
+        if (!uploadedUrls.length) {
+          alert('Upload failed or returned no URLs. Check the upload endpoint response.');
+          setSaving(false);
+          return;
         }
       }
 
-      const finalImages = [...keptExistingAsUrls(), ...uploaded];
+      // 2) build images array: kept existing + uploaded
+      const images = buildFinalImageList(uploadedUrls);
 
-      // Build payload (normalize arrays)
-      const payload = {
-        title, slug, price, mrp, stock, sku, brand, category, videoUrl,
-        colors: stringToArray(colorsText),
-        sizes: stringToArray(sizesText),
-        description, published,
-        images: finalImages
+      // 3) prepare body: convert colors/sizes to arrays, and include images as array of strings
+      const body = {
+        title: product.title,
+        slug: product.slug,
+        price: Number(product.price) || 0,
+        mrp: Number(product.mrp) || 0,
+        stock: Number(product.stock) || 0,
+        sku: product.sku,
+        brand: product.brand,
+        category: product.category,
+        videoUrl: product.videoUrl,
+        description: product.description,
+        isPublished: !!product.isPublished,
+        colors: product.colors ? product.colors.split(',').map(s => s.trim()).filter(Boolean) : [],
+        sizes: product.sizes ? product.sizes.split(',').map(s => s.trim()).filter(Boolean) : [],
+        images // array of string URLs
       };
 
-      // Save product (PUT)
-      await axiosInstance.put(`/api/products/${id}`, payload);
+      // 4) PUT updated product
+      const resp = await axiosInstance.put(`/api/products/${id}`, body);
+      if (resp && resp.data && resp.data.success) {
+        // cleanup previews memory
+        selectedFiles.forEach(s => s.previewUrl && URL.revokeObjectURL(s.previewUrl));
+        setSelectedFiles([]);
+        // Update UI with returned product (if provided)
+        const updatedProduct = resp.data.product || resp.data;
+        if (updatedProduct) {
+          const imgs = Array.isArray(updatedProduct.images)
+            ? updatedProduct.images.map(it => (typeof it === 'string' ? it : (it.url || it)))
+            : [];
+          setExistingImages(imgs);
+          const map = {};
+          imgs.forEach(url => (map[url] = true));
+          setKeepMap(map);
+        }
 
-      // on success navigate back to product list
-      alert("Product updated");
-      navigate("/admin/products");
+        alert('Product updated');
+        // Optionally navigate back:
+        // navigate('/admin/products');
+      } else {
+        console.error('Save failed', resp);
+        alert('Save failed. Check server response.');
+      }
     } catch (err) {
-      console.error("Save failed:", err, err?.response?.data ?? "");
-      const msg = err?.response?.data?.error ?? err.message ?? "Save/upload failed";
-      alert("Error: " + msg);
+      console.error('Save error', err);
+      alert(err.message || 'Save failed');
     } finally {
       setSaving(false);
     }
   }
 
-  if (loading) return <div style={{ padding: 20 }}>Loading…</div>;
+  if (loading) return <div>Loading...</div>;
 
   return (
-    <div className="admin-edit-wrap">
-      <h1>Edit product — {title}</h1>
-      <button onClick={() => navigate("/admin/products")}>Back to products</button>
+    <div style={{ display: 'flex', gap: 40 }}>
+      <form onSubmit={handleSave} style={{ width: '40%' }}>
+        <button type="button" onClick={() => navigate('/admin/products')}>Back to products</button>
 
-      <form onSubmit={handleSave} className="admin-edit-form" style={{ display: "flex", gap: 16 }}>
-        <div style={{ flex: 1 }}>
-          <label>Title<br /><input value={title} onChange={e => setTitle(e.target.value)} /></label>
-          <br />
-          <label>Slug<br /><input value={slug} onChange={e => setSlug(e.target.value)} /></label>
-          <br />
-          <label>Price<br /><input value={price} onChange={e => setPrice(e.target.value)} /></label>
-          <br />
-          <label>MRP<br /><input value={mrp} onChange={e => setMrp(e.target.value)} /></label>
-          <br />
-          <label>Stock<br /><input value={stock} onChange={e => setStock(e.target.value)} /></label>
-          <br />
-          <label>SKU<br /><input value={sku} onChange={e => setSku(e.target.value)} /></label>
-          <br />
-          <label>Brand<br /><input value={brand} onChange={e => setBrand(e.target.value)} /></label>
-          <br />
-          <label>Category<br /><input value={category} onChange={e => setCategory(e.target.value)} /></label>
-          <br />
-          <label>Video URL<br /><input value={videoUrl} onChange={e => setVideoUrl(e.target.value)} /></label>
+        <div>
+          <label>Title</label><br />
+          <input name="title" value={product.title} onChange={handleChange} />
         </div>
 
-        <div style={{ width: 420 }}>
-          <h4>Existing Images</h4>
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-            {existingImages.length === 0 && <div>No existing images</div>}
-            {existingImages.map((img, idx) => (
-              <div key={idx} style={{ width: 120, textAlign: "center", opacity: img.keep ? 1 : 0.5 }}>
-                <img src={img.url || SVG_PLACEHOLDER} alt="" style={{ maxWidth: "100%", height: 100, objectFit: "contain", border: "1px solid #eee" }} onError={safeOnError} />
-                <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 6 }}>
-                  <label style={{ fontSize: 12 }}>
-                    <input type="checkbox" checked={img.keep} onChange={() => toggleKeepExisting(idx)} /> Keep
-                  </label>
-                  <button type="button" onClick={() => removeExistingImage(idx)}>Remove</button>
-                </div>
-              </div>
-            ))}
-          </div>
+        <div>
+          <label>Slug</label><br />
+          <input name="slug" value={product.slug} onChange={handleChange} />
+        </div>
 
-          <h4 style={{ marginTop: 16 }}>Add Images</h4>
-          <input type="file" multiple accept="image/*" onChange={handleFileChange} />
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
-            {newPreviews.map((src, i) => (
-              <div key={i} style={{ width: 120, textAlign: "center" }}>
-                <img src={src} alt="" style={{ maxWidth: "100%", height: 100, objectFit: "contain", border: "1px solid #eee" }} onError={safeOnError} />
-                <div style={{ marginTop: 6 }}>
-                  <button type="button" onClick={() => removeNewPreview(i)}>Remove</button>
-                </div>
-              </div>
-            ))}
-          </div>
+        <div>
+          <label>Price</label><br />
+          <input name="price" value={product.price} onChange={handleChange} />
+        </div>
 
-          <label style={{ display: "block", marginTop: 12 }}>Colors (comma-separated)<br />
-            <input value={colorsText} onChange={e => setColorsText(e.target.value)} placeholder="red, blue" />
-          </label>
+        <div>
+          <label>MRP</label><br />
+          <input name="mrp" value={product.mrp} onChange={handleChange} />
+        </div>
 
-          <div style={{ marginTop: 8 }}>
-            {stringToArray(colorsText).map((c, i) => (
-              <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 8, marginRight: 8 }}>
-                <div style={{ width: 16, height: 16, backgroundColor: c, border: "1px solid #ccc" }} /> <small>{c}</small>
-              </span>
-            ))}
-          </div>
+        <div>
+          <label>Stock</label><br />
+          <input name="stock" value={product.stock} onChange={handleChange} />
+        </div>
 
-          <label style={{ display: "block", marginTop: 12 }}>Sizes (comma-separated)<br />
-            <input value={sizesText} onChange={e => setSizesText(e.target.value)} placeholder="S, M, L" />
-          </label>
+        <div>
+          <label>SKU</label><br />
+          <input name="sku" value={product.sku} onChange={handleChange} />
+        </div>
 
-          <label style={{ display: "block", marginTop: 12 }}>Description<br />
-            <textarea value={description} onChange={e => setDescription(e.target.value)} rows={6} style={{ width: "100%" }} />
-          </label>
+        <div>
+          <label>Brand</label><br />
+          <input name="brand" value={product.brand} onChange={handleChange} />
+        </div>
 
-          <label style={{ display: "block", marginTop: 8 }}>
-            <input type="checkbox" checked={published} onChange={e => setPublished(e.target.checked)} /> Published
+        <div>
+          <label>Category</label><br />
+          <input name="category" value={product.category} onChange={handleChange} />
+        </div>
+
+        <div>
+          <label>Video URL</label><br />
+          <input name="videoUrl" value={product.videoUrl} onChange={handleChange} />
+        </div>
+
+        <div>
+          <label>Colors (comma-separated)</label><br />
+          <input name="colors" value={product.colors} onChange={handleChange} />
+        </div>
+
+        <div>
+          <label>Sizes (comma-separated)</label><br />
+          <input name="sizes" value={product.sizes} onChange={handleChange} />
+        </div>
+
+        <div>
+          <label>Description</label><br />
+          <textarea name="description" value={product.description} onChange={handleChange} rows={6} />
+        </div>
+
+        <div>
+          <label>
+            <input name="isPublished" type="checkbox" checked={product.isPublished} onChange={handleChange} /> Published
           </label>
         </div>
 
-        <div style={{ position: "absolute", left: 20, bottom: 20 }}>
-          <button type="submit" disabled={saving}>{saving ? "Saving…" : "Save"}</button>
-          <button type="button" onClick={() => navigate("/admin/products")} style={{ marginLeft: 8 }}>Cancel</button>
+        <div style={{ marginTop: 8 }}>
+          <button type="submit" disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>
+          <button type="button" onClick={() => navigate('/admin/products')}>Cancel</button>
         </div>
       </form>
+
+      <div style={{ width: '40%' }}>
+        <h3>Existing Images</h3>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          {existingImages.map((url, idx) => (
+            <div key={url} style={{ textAlign: 'center', width: 120 }}>
+              <img src={url} alt={`img-${idx}`} style={{ width: 100, height: 100, objectFit: 'cover' }} />
+              <div>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={!!keepMap[url]}
+                    onChange={() => toggleKeep(url)}
+                  /> Keep
+                </label>
+              </div>
+              <div>
+                <button type="button" onClick={() => { setKeepMap(prev => ({ ...prev, [url]: false })); }}>Remove</button>
+              </div>
+            </div>
+          ))}
+          {existingImages.length === 0 && <div>No existing images</div>}
+        </div>
+
+        <h3 style={{ marginTop: 16 }}>Add Images</h3>
+        <input ref={fileInputRef} type="file" multiple onChange={onFilesSelected} />
+        <div style={{ marginTop: 8, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          {selectedFiles.map((s, i) => (
+            <div key={s.previewUrl + i} style={{ textAlign: 'center', width: 120 }}>
+              <img src={s.previewUrl} alt={`preview-${i}`} style={{ width: 100, height: 100, objectFit: 'cover' }} />
+              <div>
+                <button type="button" onClick={() => removeSelectedPreview(i)}>Remove</button>
+              </div>
+            </div>
+          ))}
+          {selectedFiles.length === 0 && <div>No files chosen</div>}
+        </div>
+      </div>
     </div>
   );
 }
