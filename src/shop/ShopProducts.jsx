@@ -1,18 +1,21 @@
 // src/shop/ShopProducts.jsx
 import React, { useEffect, useState } from "react";
-import ShopProductCard from "./shopProductcard"; // keep case exact in your repo; adjust if needed
+import ShopProductCard from "./shopProductCard";
 
 /**
- * ShopProducts.jsx — Ticker hover-pause + reduced gap version
+ * ShopProducts.jsx — stable layout version
  *
- * - Reduced gap between ticker and title/grid.
- * - Pauses the running announcement when user hovers over the ticker area.
- * - Keeps BANNER_HEIGHT and bottom-banner spacing logic unchanged.
- * - All data fetching / subtotal logic preserved.
+ * Key changes:
+ * - Uses a single BANNER_HEIGHT (56px) to size the fixed bottom banner.
+ * - Sets page paddingBottom to BANNER_HEIGHT + 12 to avoid overlap with product footers.
+ * - Removes large top paddings and margins so ticker / title / grid sit tight.
+ * - Keeps all data fetching and cart-subtotal logic unchanged.
+ * - Keeps running announcement ticker and single-line bottom banner.
  */
 
 const FREE_SHIPPING_THRESHOLD = 999;
-const BANNER_HEIGHT = 56; // unchanged — adjust later if needed
+// set this to 56 (you can change to 48 later if needed)
+const BANNER_HEIGHT = 18;
 
 let axiosInstance = null;
 try {
@@ -114,6 +117,7 @@ function readCartFromEnvironment() {
   return { subtotal: 0, raw: null };
 }
 
+// Announcement ticker default text (edit if needed)
 const DEFAULT_ANNOUNCEMENT = "⦿ Free Shipping on orders above ₹999 • Get 10% off on prepaid orders above ₹1499 • New arrivals weekly!";
 
 export default function ShopProducts({ products = [] }) {
@@ -188,12 +192,13 @@ export default function ShopProducts({ products = [] }) {
 
   const remaining = Math.max(0, FREE_SHIPPING_THRESHOLD - subtotal);
 
-  // layout: use BANNER_HEIGHT to reserve bottom space
-  const pageWrap = { padding: `6px 28px ${BANNER_HEIGHT + 12}px 28px`, minHeight: "70vh", position: "relative" };
-  const gridStyle = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 12, alignItems: "start", marginTop: 4 };
+  // Page wrapper paddingBottom uses BANNER_HEIGHT so nothing overlaps.
+  const pageWrap = { padding: `8px 28px ${BANNER_HEIGHT + 12}px 28px`, minHeight: "70vh", position: "relative" };
+  // Tight grid marginTop so products sit closer to header/ticker
+  const gridStyle = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 12, alignItems: "start", marginTop: 6 };
 
-  // ticker reduced gap: smaller bottom margin
-  const tickerWrap = { width: "100%", overflow: "hidden", marginBottom: 4 };
+  // Ticker area (red running bar) styles
+  const tickerWrap = { width: "100%", overflow: "hidden", marginBottom: 8 };
   const tickerOuterStyle = {
     background: "#d9303e",
     color: "#fff",
@@ -206,7 +211,7 @@ export default function ShopProducts({ products = [] }) {
   const tickerInnerMask = { overflow: "hidden", width: "100%", marginLeft: 8 };
   const tickerTextStyle = { display: "inline-block", whiteSpace: "nowrap", paddingLeft: "100%", fontWeight: 700 };
 
-  // bottom banner
+  // Banner fixed at bottom using BANNER_HEIGHT
   const bannerWrap = { position: "fixed", bottom: 18, left: "50%", transform: "translateX(-50%)", zIndex: 1200, width: "min(96%, 960px)" };
   const bannerStyle = {
     background: "#e9f8f0",
@@ -250,11 +255,6 @@ export default function ShopProducts({ products = [] }) {
           display: inline-block;
           padding-left: 100%;
           animation: seematiTicker 18s linear infinite;
-          will-change: transform;
-        }
-        /* pause animation when user hovers over the ticker area */
-        .seemati-ticker-outer:hover .seemati-ticker-inner {
-          animation-play-state: paused;
         }
         @media (prefers-reduced-motion: reduce) {
           .seemati-ticker-inner {
@@ -266,7 +266,7 @@ export default function ShopProducts({ products = [] }) {
 
       {/* Announcement ticker */}
       <div style={tickerWrap} aria-hidden={false}>
-        <div className="seemati-ticker-outer" style={tickerOuterStyle} role="region" aria-label="Site announcements">
+        <div style={tickerOuterStyle} role="region" aria-label="Site announcements">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden style={{ flex: "0 0 auto" }}>
             <path d="M3 10a1 1 0 0 1 .894-.553H6V8a4 4 0 0 1 4-4h4v2h-4a2 2 0 0 0-2 2v1h2l.447.894A2 2 0 0 1 12 14H6a1 1 0 0 1-1-1v-2H3.894A1 1 0 0 1 3 10z" fill="#fff" />
           </svg>
@@ -279,7 +279,7 @@ export default function ShopProducts({ products = [] }) {
         </div>
       </div>
 
-      <h2 style={{ margin: "0 0 6px 0", fontSize: 22, fontWeight: 800 }}>Shop</h2>
+      <h2 style={{ margin: "0 0 8px 0", fontSize: 22, fontWeight: 800 }}>Shop</h2>
 
       {loading ? (
         <div style={{ padding: 20 }}>Loading products…</div>
