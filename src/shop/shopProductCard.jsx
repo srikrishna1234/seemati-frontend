@@ -4,38 +4,25 @@ import { Link } from "react-router-dom";
 
 /**
  * shopProductCard.jsx
- * - All hooks declared after synchronous derivations so the hook order is stable.
- * - Image preloader to avoid flicker.
- * - Wishlist persistence and event dispatch.
+ * - Image preloader + stable placeholder as container background to avoid flicker.
+ * - Wishlist persistence and event dispatch (same as before).
+ * - Hooks order stable.
  */
-
-/* ---------- helpers ---------- */
 
 function extractUrlFromPossibleObject(obj) {
   if (!obj) return null;
   if (typeof obj === "string") return obj;
-  const candidates = [
-    "url","src","secure_url","location","path","filePath","file_path","key","filename","publicUrl","public_url","original","file","uri",
-  ];
+  const candidates = ["url","src","secure_url","location","path","filePath","file_path","key","filename","publicUrl","public_url","original","file","uri"];
   for (const k of candidates) {
     try {
       const v = obj[k];
       if (typeof v === "string" && v.trim()) return v.trim();
     } catch (e) {}
   }
-  try {
-    if (obj.fields && obj.fields.file && typeof obj.fields.file.url === "string") return obj.fields.file.url;
-    if (obj.file && obj.file.url) return obj.file.url;
-    if (obj.attributes && obj.attributes.url) return obj.attributes.url;
-  } catch (e) {}
-  try {
-    if (typeof obj.toJSON === "function") {
-      const j = obj.toJSON();
-      if (typeof j === "string" && j.startsWith("http")) return j;
-    }
-    const s = obj.toString();
-    if (typeof s === "string" && s.startsWith("http")) return s;
-  } catch (e) {}
+  try { if (obj.fields && obj.fields.file && typeof obj.fields.file.url === "string") return obj.fields.file.url; } catch (e) {}
+  try { if (obj.file && obj.file.url) return obj.file.url; } catch (e) {}
+  try { if (obj.attributes && obj.attributes.url) return obj.attributes.url; } catch (e) {}
+  try { const s = obj.toString(); if (typeof s === "string" && s.startsWith("http")) return s; } catch (e) {}
   return null;
 }
 
@@ -44,22 +31,14 @@ function absoluteifyAndRewrite(urlCandidate) {
   const origin = (typeof window !== "undefined" && window.location && window.location.origin) ? window.location.origin : "https://seemati.in";
   try {
     const parsed = new URL(urlCandidate, origin);
-    if (parsed.hostname === "api.seemati.in" && typeof window !== "undefined") {
-      parsed.hostname = window.location.hostname || parsed.hostname;
-    }
+    if (parsed.hostname === "api.seemati.in" && typeof window !== "undefined") parsed.hostname = window.location.hostname || parsed.hostname;
     return parsed.toString();
   } catch (e) {}
   if (typeof urlCandidate === "string") {
     if (urlCandidate.startsWith("//")) return `${(typeof window !== "undefined" ? window.location.protocol : "https:")}${urlCandidate}`;
     if (urlCandidate.startsWith("/")) return `${origin}${urlCandidate}`;
   }
-  const prefixesToTry = [
-    "https://api.seemati.in/uploads/",
-    "https://seemati.in/uploads/",
-    "https://cdn.seemati.in/",
-    "https://api.seemati.in/",
-    `${origin}/uploads/`,
-  ];
+  const prefixesToTry = ["https://api.seemati.in/uploads/","https://seemati.in/uploads/","https://cdn.seemati.in/","https://api.seemati.in/",`${origin}/uploads/`];
   for (const p of prefixesToTry) {
     try {
       const candidate = `${p}${urlCandidate}`;
@@ -71,7 +50,6 @@ function absoluteifyAndRewrite(urlCandidate) {
   return null;
 }
 
-/* wishlist storage helpers */
 function readWishlistFromStorage() {
   try {
     if (typeof window === "undefined" || !window.localStorage) return [];
@@ -79,9 +57,7 @@ function readWishlistFromStorage() {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
-  } catch (e) {
-    return [];
-  }
+  } catch (e) { return []; }
 }
 
 function saveWishlistToStorage(arr) {
@@ -93,12 +69,10 @@ function saveWishlistToStorage(arr) {
   } catch (e) {}
 }
 
-/* ---------- component ---------- */
-
 export default function ShopProductCard({ product, onClick, onToggleWishlist }) {
   const zoomRef = useRef(null);
 
-  // --- synchronous derivation: compute everything that hooks might use BEFORE hooks ---
+  // synchronous derivations first
   const productId = product && (product._id ?? product.id ?? product.slug) ? String(product._id ?? product.id ?? product.slug) : null;
   const title = product ? (product.title ?? product.name ?? "Untitled product") : "Untitled product";
   const price = product ? Number(product.price ?? product.mrp ?? 0) : 0;
@@ -107,8 +81,6 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
   // pick raw thumb safely
   let rawThumb = product?.thumbnail ?? null;
   if (!rawThumb && Array.isArray(product?.images) && product.images.length > 0) rawThumb = product.images[0];
-
-  // log raw objects once if present
   if (rawThumb && typeof rawThumb === "object" && !zoomRef.current?.__logged) {
     // eslint-disable-next-line no-console
     console.log("shopProductCard - raw thumbnail object for", product?._id || product?.slug || title);
@@ -122,33 +94,28 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
 
   const placeholder =
     "data:image/svg+xml;charset=UTF-8," +
-    encodeURIComponent(
-      `<svg xmlns='http://www.w3.org/2000/svg' width='600' height='400'><rect width='100%' height='100%' fill='%23f4f4f4'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' fill='%23888' font-family='Arial' font-size='18'>No Image</text></svg>`
-    );
+    encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='600' height='400'><rect width='100%' height='100%' fill='%23f4f4f4'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' fill='%23888' font-family='Arial' font-size='18'>No Image</text></svg>`);
 
-  // --- HOOKS: declared after synchronous derivation so their order never changes ---
-  const [isWishlist, setIsWishlist] = useState(() => {
-    try {
-      return productId ? readWishlistFromStorage().map(String).includes(String(productId)) : false;
-    } catch (e) { return false; }
-  });
-  const [imgSrc, setImgSrc] = useState(placeholder);
+  // hooks (stable order)
+  const [isWishlist, setIsWishlist] = useState(() => productId ? readWishlistFromStorage().map(String).includes(String(productId)) : false);
+  const [imgSrc, setImgSrc] = useState(null); // this will be finalUrl only after load
   const [imgLoaded, setImgLoaded] = useState(false);
 
-  // sync wishlist when productId changes
+  // sync wishlist
   useEffect(() => {
     if (!productId) { setIsWishlist(false); return; }
     const list = readWishlistFromStorage();
     setIsWishlist(list.map(String).includes(String(productId)));
   }, [productId]);
 
-  // image preloader: depends on finalUrl
+  // image preloader: load finalUrl but keep stable placeholder visible behind it
   useEffect(() => {
     let cancelled = false;
     setImgLoaded(false);
-    setImgSrc(placeholder);
+    setImgSrc(null);
 
     if (!finalUrl) {
+      setImgSrc(null);
       setImgLoaded(true);
       return () => { cancelled = true; };
     }
@@ -158,18 +125,17 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
       if (!cancelled) { setImgSrc(finalUrl); setImgLoaded(true); }
     };
     img.onerror = () => {
-      if (!cancelled) { setImgSrc(placeholder); setImgLoaded(true); }
+      if (!cancelled) { setImgSrc(null); setImgLoaded(true); }
     };
     img.src = finalUrl;
 
-    const t = setTimeout(() => { if (!cancelled && !imgLoaded) setImgSrc(placeholder); }, 2500);
-    return () => { cancelled = true; clearTimeout(t); };
-  }, [finalUrl]); // safe: finalUrl computed synchronously above
+    const timer = setTimeout(() => { if (!cancelled && !imgLoaded) setImgSrc(null); }, 2500);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [finalUrl]); // re-run when finalUrl changes
 
-  // EARLY RETURN: allowed now because hooks already declared
+  // early return allowed after hooks
   if (!product) return null;
 
-  // compute save % and rupee saving
   let savePercent = null;
   let saveRupees = null;
   if (typeof mrp === "number" && mrp > 0 && !Number.isNaN(price)) {
@@ -179,62 +145,29 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
     saveRupees = Math.max(0, diff);
   }
 
-  /* ---------- inline styles (kept same) ---------- */
-  const cardStyle = {
-    width: "100%",
-    maxWidth: 260,
-    borderRadius: 10,
-    overflow: "hidden",
-    background: "#fff",
-    boxShadow: "0 6px 18px rgba(0,0,0,0.04)",
-    cursor: onClick ? "pointer" : "default",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "stretch",
-    margin: "12px",
-    marginBottom: 18,
-  };
+  // styles: container uses placeholder as background so layout remains stable and no blank flash
+  const cardStyle = { width: "100%", maxWidth: 260, borderRadius: 10, overflow: "hidden", background: "#fff", boxShadow: "0 6px 18px rgba(0,0,0,0.04)", cursor: onClick ? "pointer" : "default", display: "flex", flexDirection: "column", alignItems: "stretch", margin: "12px", marginBottom: 18 };
 
   const imageWrapStyle = {
-    width: "100%",
-    height: 240,
-    background: "#fff",
-    display: "flex",
-    alignItems: "flex-start",
-    justifyContent: "center",
-    position: "relative",
-    overflow: "hidden",
-    paddingTop: 8,
+    width: "100%", height: 240, background: "#fff", display: "flex", alignItems: "flex-start", justifyContent: "center", position: "relative", overflow: "hidden", paddingTop: 8,
+    backgroundImage: `url("${placeholder}")`, backgroundRepeat: "no-repeat", backgroundPosition: "center", backgroundSize: "contain"
   };
 
   const zoomImgStyle = {
-    width: "100%",
-    height: "100%",
-    objectFit: "contain",
-    transformOrigin: "center center",
-    transition: "transform 180ms ease-out, opacity 180ms ease-out",
-    display: "block",
-    willChange: "transform, opacity",
-    opacity: imgLoaded ? 1 : 0.01,
+    width: "100%", height: "100%", objectFit: "contain", transformOrigin: "center center", transition: "transform 180ms ease-out, opacity 140ms ease-out", display: "block", willChange: "transform, opacity",
+    opacity: imgSrc ? 1 : 0, position: "relative", zIndex: 1,
   };
 
   const bodyStyle = { padding: "10px 12px", textAlign: "center" };
   const footerSplitStyle = { display: "flex", flexDirection: "column", gap: 10, padding: "10px 12px" };
+
   const viewRowStyle = { display: "flex", justifyContent: "center", alignItems: "center" };
   const actionsRowStyle = { display: "flex", gap: 8, justifyContent: "center", alignItems: "center", flexWrap: "wrap" };
 
-  const viewBtnStyle = {
-    minWidth: 84, display: "inline-block", padding: "8px 14px", borderRadius: 10, background: "#6a0dad", color: "#fff",
-    textDecoration: "none", fontWeight: 700, fontSize: 13, textAlign: "center",
-  };
+  const viewBtnStyle = { minWidth: 84, display: "inline-block", padding: "8px 14px", borderRadius: 10, background: "#6a0dad", color: "#fff", textDecoration: "none", fontWeight: 700, fontSize: 13, textAlign: "center" };
 
-  const smallBtnStyle = {
-    minWidth: 96, display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 8,
-    background: "#fff", border: "1px solid rgba(0,0,0,0.08)", color: "#111", fontWeight: 700, fontSize: 13,
-    textDecoration: "none", justifyContent: "center",
-  };
+  const smallBtnStyle = { minWidth: 96, display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 8, background: "#fff", border: "1px solid rgba(0,0,0,0.08)", color: "#111", fontWeight: 700, fontSize: 13, textDecoration: "none", justifyContent: "center" };
 
-  /* ---------- handlers ---------- */
   function handleWishlistClick(e) {
     e.preventDefault(); e.stopPropagation();
     const id = (product && (product._id ?? product.id ?? product.slug)) ?? null;
@@ -242,7 +175,7 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
     const list = readWishlistFromStorage().map(String);
     const sid = String(id);
     const exists = list.includes(sid);
-    const nextList = exists ? list.filter((x) => x !== sid) : [sid, ...list];
+    const nextList = exists ? list.filter(x => x !== sid) : [sid, ...list];
     saveWishlistToStorage(nextList);
     setIsWishlist(!exists);
     if (typeof onToggleWishlist === "function") {
@@ -251,42 +184,22 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
   }
 
   function handleMouseMove(e) {
-    const el = zoomRef.current;
-    if (!el) return;
+    const el = zoomRef.current; if (!el) return;
     const rect = el.getBoundingClientRect();
     const x = ((e.clientX - rect.left) / rect.width) * 100;
     const y = ((e.clientY - rect.top) / rect.height) * 100;
-    const img = el.querySelector("img");
-    if (img) img.style.transformOrigin = `${x}% ${y}%`;
+    const img = el.querySelector("img"); if (img) img.style.transformOrigin = `${x}% ${y}%`;
   }
-
-  function handleMouseEnter() {
-    const el = zoomRef.current;
-    if (!el) return;
-    const img = el.querySelector("img");
-    if (img) img.style.transform = "scale(1.6)";
-  }
-
-  function handleMouseLeave() {
-    const el = zoomRef.current;
-    if (!el) return;
-    const img = el.querySelector("img");
-    if (img) { img.style.transform = "scale(1)"; img.style.transformOrigin = "center center"; }
-  }
+  function handleMouseEnter() { const el = zoomRef.current; if (!el) return; const img = el.querySelector("img"); if (img) img.style.transform = "scale(1.6)"; }
+  function handleMouseLeave() { const el = zoomRef.current; if (!el) return; const img = el.querySelector("img"); if (img) { img.style.transform = "scale(1)"; img.style.transformOrigin = "center center"; } }
 
   const idOrSlug = product.slug || product._id || "";
 
   return (
-    <article
-      className="product-card"
-      style={cardStyle}
-      onClick={onClick}
-      role={onClick ? "button" : undefined}
-      tabIndex={onClick ? 0 : undefined}
-      onKeyDown={(e) => { if (onClick && (e.key === "Enter" || e.key === " ")) onClick(); }}
-    >
+    <article className="product-card" style={cardStyle} onClick={onClick} role={onClick ? "button" : undefined} tabIndex={onClick ? 0 : undefined} onKeyDown={(e) => { if (onClick && (e.key === "Enter" || e.key === " ")) onClick(); }}>
       <div style={imageWrapStyle} ref={(r) => (zoomRef.current = r)} onMouseMove={handleMouseMove} onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave}>
-        <img src={imgSrc || placeholder} alt={title} style={zoomImgStyle} onError={(e) => { if (e.currentTarget && e.currentTarget.src !== placeholder) e.currentTarget.src = placeholder; }} />
+        {/* img src is only assigned when loaded (imgSrc) — placeholder stays as background */}
+        <img src={imgSrc || undefined} alt={title} style={zoomImgStyle} onError={(e) => { if (e.currentTarget && e.currentTarget.src) e.currentTarget.src = ""; }} />
       </div>
 
       <div style={bodyStyle}>
@@ -317,9 +230,7 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
       </div>
 
       <div style={footerSplitStyle}>
-        <div style={viewRowStyle}>
-          <Link to={`/product/${idOrSlug}`} style={viewBtnStyle} aria-label={`View ${title}`}>View</Link>
-        </div>
+        <div style={viewRowStyle}><Link to={`/product/${idOrSlug}`} style={viewBtnStyle} aria-label={`View ${title}`}>View</Link></div>
 
         <div style={actionsRowStyle}>
           <button onClick={handleWishlistClick} aria-pressed={isWishlist} title={isWishlist ? "Remove from wishlist" : "Add to wishlist"} style={smallBtnStyle}>
@@ -328,8 +239,7 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
           </button>
 
           <Link to={`/product/${idOrSlug}`} style={smallBtnStyle} title="Explore more">
-            <span style={{ fontSize: 14 }}>🔍</span>
-            <span style={{ fontWeight: 700 }}>Explore</span>
+            <span style={{ fontSize: 14 }}>🔍</span><span style={{ fontWeight: 700 }}>Explore</span>
           </Link>
         </div>
       </div>
