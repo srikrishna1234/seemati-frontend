@@ -6,7 +6,8 @@ import ShopProductCard from "./shopProductCard";
  * Safe ShopProducts.jsx (updated)
  * - Adds bottom padding so the fixed free-shipping banner doesn't overlap product card footers.
  * - Keeps defensive cart reading and product fetching.
- * - ONLY CHANGE: compact single-line free-shipping banner with reduced height (no wrapping).
+ * - ONLY UI changes: reduced top gap (lift products), and added a running announcement ticker
+ *   directly below the site header (red bar, continuous scroll) — no other logic changes.
  */
 
 const FREE_SHIPPING_THRESHOLD = 999;
@@ -111,6 +112,9 @@ function readCartFromEnvironment() {
   return { subtotal: 0, raw: null };
 }
 
+/* Announcement ticker defaults — you can change this text in future by editing the string below */
+const DEFAULT_ANNOUNCEMENT = "⦿ Free Shipping on orders above ₹999 • Get 10% off on prepaid orders above ₹1499 • New arrivals added weekly!";
+
 export default function ShopProducts({ products = [] }) {
   const [localProducts, setLocalProducts] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -183,12 +187,19 @@ export default function ShopProducts({ products = [] }) {
 
   const remaining = Math.max(0, FREE_SHIPPING_THRESHOLD - subtotal);
 
-  // NOTE: increased paddingBottom so banner (fixed) doesn't overlap product card footers.
-  const pageWrap = { padding: "24px 28px", paddingBottom: "160px", minHeight: "70vh", position: "relative" };
-  const gridStyle = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 12, alignItems: "start", marginTop: 12 };
+  // ---------- LIFT PRODUCTS: reduced top padding & smaller grid marginTop ----------
+  // reduced top padding so product grid sits a bit higher under header (no overlap)
+  const pageWrap = { padding: "12px 28px 160px 28px", minHeight: "70vh", position: "relative" };
+  // smaller marginTop so the grid moves up — adjust if you want it closer/further
+  const gridStyle = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 12, alignItems: "start", marginTop: 8 };
+
+  // Announcement ticker bar wrap (will appear under the site header, above the Shop title)
+  const tickerWrap = { width: "100%", overflow: "hidden", marginBottom: 12 };
+
+  // Banner (free shipping) wrap stays fixed at bottom
   const bannerWrap = { position: "fixed", bottom: 18, left: "50%", transform: "translateX(-50%)", zIndex: 1200, width: "min(96%, 960px)" };
 
-  // ---------- ONLY BANNER STYLES CHANGED BELOW (single-line compact)
+  // Banner: kept compact single-line from earlier
   const bannerStyle = {
     background: "#e9f8f0",
     borderRadius: 28,
@@ -219,10 +230,67 @@ export default function ShopProducts({ products = [] }) {
     gap: 10,
     whiteSpace: "nowrap",
   };
-  // ---------- END BANNER STYLE CHANGES
 
+  // Announcement ticker styles (uses inline <style> keyframes below)
+  const tickerOuterStyle = {
+    background: "#d9303e", // red bar
+    color: "#fff",
+    padding: "6px 12px",
+    borderRadius: 6,
+    display: "flex",
+    alignItems: "center",
+    height: 34,
+  };
+  const tickerInnerMask = {
+    overflow: "hidden",
+    width: "100%",
+    marginLeft: 8,
+  };
+  const tickerTextStyle = {
+    display: "inline-block",
+    whiteSpace: "nowrap",
+    paddingLeft: "100%", // start off-screen on the right
+    fontWeight: 700,
+  };
+
+  // Note: simple accessible ticker using CSS animation. If you want different text speed, adjust '12s' below.
   return (
     <div style={pageWrap}>
+      {/* Inline keyframes and helper classes for the ticker animation */}
+      <style>{`
+        @keyframes seematiTicker {
+          0% { transform: translateX(0%); }
+          100% { transform: translateX(-100%); }
+        }
+        .seemati-ticker-inner {
+          display: inline-block;
+          padding-left: 100%;
+          animation: seematiTicker 18s linear infinite;
+        }
+        /* reduces animation motion on prefers-reduced-motion */
+        @media (prefers-reduced-motion: reduce) {
+          .seemati-ticker-inner {
+            animation: none;
+            padding-left: 0;
+          }
+        }
+      `}</style>
+
+      {/* Announcement ticker: sits under header (Shop title will follow) */}
+      <div style={tickerWrap} aria-hidden={false}>
+        <div style={tickerOuterStyle} role="region" aria-label="Site announcements">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden style={{ flex: "0 0 auto" }}>
+            <path d="M3 10a1 1 0 0 1 .894-.553H6V8a4 4 0 0 1 4-4h4v2h-4a2 2 0 0 0-2 2v1h2l.447.894A2 2 0 0 1 12 14H6a1 1 0 0 1-1-1v-2H3.894A1 1 0 0 1 3 10z" fill="#fff" />
+          </svg>
+
+          <div style={tickerInnerMask}>
+            <div className="seemati-ticker-inner" style={tickerTextStyle}>
+              {DEFAULT_ANNOUNCEMENT} &nbsp; • &nbsp; {DEFAULT_ANNOUNCEMENT}
+            </div>
+          </div>
+        </div>
+      </div>
+
       <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800 }}>Shop</h2>
 
       {loading ? (
