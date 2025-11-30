@@ -6,6 +6,7 @@ import ShopProductCard from "./shopProductCard";
  * Safe ShopProducts.jsx (updated)
  * - Adds bottom padding so the fixed free-shipping banner doesn't overlap product card footers.
  * - Keeps defensive cart reading and product fetching.
+ * - ONLY CHANGE: compact single-line free-shipping banner with reduced height (no wrapping).
  */
 
 const FREE_SHIPPING_THRESHOLD = 999;
@@ -186,9 +187,39 @@ export default function ShopProducts({ products = [] }) {
   const pageWrap = { padding: "24px 28px", paddingBottom: "160px", minHeight: "70vh", position: "relative" };
   const gridStyle = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 12, alignItems: "start", marginTop: 12 };
   const bannerWrap = { position: "fixed", bottom: 18, left: "50%", transform: "translateX(-50%)", zIndex: 1200, width: "min(96%, 960px)" };
-  const bannerStyle = { background: "#e9f8f0", borderRadius: 28, padding: "12px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", boxShadow: "0 6px 20px rgba(0,0,0,0.06)", gap: 12 };
-  const leftStyle = { display: "flex", alignItems: "center", gap: 12, fontWeight: 700, color: "#0a7b4f" };
-  const rightStyle = { display: "flex", alignItems: "center", gap: 10 };
+
+  // ---------- ONLY BANNER STYLES CHANGED BELOW (single-line compact)
+  const bannerStyle = {
+    background: "#e9f8f0",
+    borderRadius: 28,
+    padding: "6px 14px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    boxShadow: "0 6px 20px rgba(0,0,0,0.06)",
+    gap: 12,
+    whiteSpace: "nowrap",
+    height: 48,
+    overflow: "hidden",
+  };
+  const leftStyle = {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    fontWeight: 700,
+    color: "#0a7b4f",
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  };
+  const rightStyle = {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    whiteSpace: "nowrap",
+  };
+  // ---------- END BANNER STYLE CHANGES
 
   return (
     <div style={pageWrap}>
@@ -209,42 +240,40 @@ export default function ShopProducts({ products = [] }) {
       <div style={bannerWrap} role="status" aria-live="polite">
         <div style={bannerStyle}>
           <div style={leftStyle}>
+            <span style={{ fontSize: 18, flex: "0 0 auto" }}>{subtotal >= FREE_SHIPPING_THRESHOLD ? "🎉" : "🚚"}</span>
+
             {subtotal >= FREE_SHIPPING_THRESHOLD ? (
-              <>
-                <span style={{ fontSize: 18 }}>🎉</span>
-                <div>
-                  <div style={{ fontSize: 15 }}>Congrats — you are eligible for free shipping</div>
-                  <div style={{ fontSize: 13, color: "#2f6f52", fontWeight: 700 }}>Subtotal ₹{subtotal.toFixed(2)}</div>
-                </div>
-              </>
+              <span style={{ fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                Congrats — eligible • Subtotal ₹{subtotal.toFixed(2)}
+              </span>
             ) : (
-              <>
-                <span style={{ fontSize: 18 }}>🚚</span>
-                <div>
-                  <div style={{ fontSize: 15 }}>Free shipping above ₹{FREE_SHIPPING_THRESHOLD}</div>
-                  <div style={{ fontSize: 13, color: "#2f6f52", fontWeight: 700 }}>
-                    Subtotal ₹{subtotal.toFixed(2)}{" "}
-                    <span style={{ fontWeight: 600, color: "#0a5cff" }}>
-                      • Add ₹{remaining.toFixed(2)} more to get free shipping
-                    </span>
-                  </div>
-                </div>
-              </>
+              <span style={{ fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                Free shipping above ₹{FREE_SHIPPING_THRESHOLD} • Subtotal ₹{subtotal.toFixed(2)} • Add ₹{remaining.toFixed(2)}
+              </span>
             )}
           </div>
 
           <div style={rightStyle}>
             {subtotal >= FREE_SHIPPING_THRESHOLD ? (
-              <button style={{ background: "#13a65f", color: "#fff", border: "none", padding: "8px 14px", borderRadius: 8, fontWeight: 800 }} onClick={() => window.location.href = "/cart"}>
+              <button
+                style={{ background: "#13a65f", color: "#fff", border: "none", padding: "6px 10px", borderRadius: 8, fontWeight: 800 }}
+                onClick={() => (window.location.href = "/cart")}
+              >
                 Celebrate
               </button>
             ) : (
-              <button style={{ background: "#6a0dad", color: "#fff", border: "none", padding: "8px 14px", borderRadius: 8, fontWeight: 800 }} onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
+              <button
+                style={{ background: "#6a0dad", color: "#fff", border: "none", padding: "6px 10px", borderRadius: 8, fontWeight: 800 }}
+                onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+              >
                 Continue shopping
               </button>
             )}
 
-            <button onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })} style={{ background: "transparent", border: "none", color: "#333", fontWeight: 700, textDecoration: "underline", cursor: "pointer" }}>
+            <button
+              onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+              style={{ background: "transparent", border: "none", color: "#333", fontWeight: 700, textDecoration: "underline", cursor: "pointer", padding: "4px 6px" }}
+            >
               Dismiss ✕
             </button>
           </div>
