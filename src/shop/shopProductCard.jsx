@@ -4,34 +4,30 @@ import { Link } from "react-router-dom";
 
 /**
  * shopProductCard.jsx
- * - Uses an Image preloader so we only set <img src> after onload.
- * - Keeps a stable placeholder to avoid layout shifts & flicker.
- * - Dispatches wishlist event 'wishlistUpdated' for header to pick up changes.
+ * - All hooks declared after synchronous derivations so the hook order is stable.
+ * - Image preloader to avoid flicker.
+ * - Wishlist persistence and event dispatch.
  */
 
-/* ---------- helpers (kept robust) ---------- */
+/* ---------- helpers ---------- */
 
 function extractUrlFromPossibleObject(obj) {
   if (!obj) return null;
   if (typeof obj === "string") return obj;
-
   const candidates = [
     "url","src","secure_url","location","path","filePath","file_path","key","filename","publicUrl","public_url","original","file","uri",
   ];
-
   for (const k of candidates) {
     try {
       const v = obj[k];
       if (typeof v === "string" && v.trim()) return v.trim();
     } catch (e) {}
   }
-
   try {
     if (obj.fields && obj.fields.file && typeof obj.fields.file.url === "string") return obj.fields.file.url;
     if (obj.file && obj.file.url) return obj.file.url;
     if (obj.attributes && obj.attributes.url) return obj.attributes.url;
   } catch (e) {}
-
   try {
     if (typeof obj.toJSON === "function") {
       const j = obj.toJSON();
@@ -40,19 +36,15 @@ function extractUrlFromPossibleObject(obj) {
     const s = obj.toString();
     if (typeof s === "string" && s.startsWith("http")) return s;
   } catch (e) {}
-
   return null;
 }
 
 function absoluteifyAndRewrite(urlCandidate) {
   if (!urlCandidate) return null;
-  // safe origin fallback when window is undefined (build-time)
   const origin = (typeof window !== "undefined" && window.location && window.location.origin) ? window.location.origin : "https://seemati.in";
   try {
-    // use URL with base origin so relative strings won't throw
     const parsed = new URL(urlCandidate, origin);
     if (parsed.hostname === "api.seemati.in" && typeof window !== "undefined") {
-      // prefer current host when running in browser
       parsed.hostname = window.location.hostname || parsed.hostname;
     }
     return parsed.toString();
@@ -79,16 +71,14 @@ function absoluteifyAndRewrite(urlCandidate) {
   return null;
 }
 
-/* ---------- wishlist helpers ---------- */
-
+/* wishlist storage helpers */
 function readWishlistFromStorage() {
   try {
     if (typeof window === "undefined" || !window.localStorage) return [];
     const raw = localStorage.getItem("wishlist");
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed;
-    return [];
+    return Array.isArray(parsed) ? parsed : [];
   } catch (e) {
     return [];
   }
@@ -98,56 +88,37 @@ function saveWishlistToStorage(arr) {
   try {
     if (typeof window === "undefined" || !window.localStorage) return;
     localStorage.setItem("wishlist", JSON.stringify(arr));
-    // dispatch event for other parts of the app (header) to update counts
-    try {
-      const ev = new CustomEvent("wishlistUpdated", { detail: { count: arr.length, ids: arr.slice() } });
-      window.dispatchEvent(ev);
-    } catch (e) {}
-  } catch (e) {
-    // ignore
-  }
+    try { window.dispatchEvent(new CustomEvent("wishlistUpdated", { detail: { count: arr.length, ids: arr.slice() } })); } catch (e) {}
+    try { window.dispatchEvent(new CustomEvent("seemati:wishlist-updated", { detail: { count: arr.length, ids: arr.slice() } })); } catch (e) {}
+  } catch (e) {}
 }
 
 /* ---------- component ---------- */
 
 export default function ShopProductCard({ product, onClick, onToggleWishlist }) {
   const zoomRef = useRef(null);
-  const [isWishlist, setIsWishlist] = useState(false);
 
-  // image preloader states
-  const [imgSrc, setImgSrc] = useState(null);
-  const [imgLoaded, setImgLoaded] = useState(false);
+  // --- synchronous derivation: compute everything that hooks might use BEFORE hooks ---
+  const productId = product && (product._id ?? product.id ?? product.slug) ? String(product._id ?? product.id ?? product.slug) : null;
+  const title = product ? (product.title ?? product.name ?? "Untitled product") : "Untitled product";
+  const price = product ? Number(product.price ?? product.mrp ?? 0) : 0;
+  const mrp = product ? (typeof product.mrp !== "undefined" ? Number(product.mrp) : undefined) : undefined;
 
-  useEffect(() => {
-    const list = readWishlistFromStorage();
-    const id = (product && (product._id ?? product.id ?? product.slug)) ?? null;
-    if (!id) return;
-    setIsWishlist(list.map(String).includes(String(id)));
-  }, [product]);
+  // pick raw thumb safely
+  let rawThumb = product?.thumbnail ?? null;
+  if (!rawThumb && Array.isArray(product?.images) && product.images.length > 0) rawThumb = product.images[0];
 
-  if (!product) return null;
-
-  const title = product.title ?? product.name ?? "Untitled product";
-  const price = Number(product.price ?? product.mrp ?? 0);
-  const mrp = typeof product.mrp !== "undefined" ? Number(product.mrp) : undefined;
-
-  // image pick
-  let rawThumb = product.thumbnail ?? null;
-  if (!rawThumb && Array.isArray(product.images) && product.images.length > 0) rawThumb = product.images[0];
-
-  if (rawThumb && typeof rawThumb === "object") {
-    if (!zoomRef.current?.__logged) {
-      // eslint-disable-next-line no-console
-      console.log("shopProductCard - raw thumbnail object for", product._id || product.slug || title);
-      zoomRef.current = zoomRef.current || {};
-      zoomRef.current.__logged = true;
-    }
+  // log raw objects once if present
+  if (rawThumb && typeof rawThumb === "object" && !zoomRef.current?.__logged) {
+    // eslint-disable-next-line no-console
+    console.log("shopProductCard - raw thumbnail object for", product?._id || product?.slug || title);
+    zoomRef.current = zoomRef.current || {};
+    zoomRef.current.__logged = true;
   }
 
   let extracted = extractUrlFromPossibleObject(rawThumb);
   if (extracted && typeof extracted === "string" && extracted.includes("[object")) extracted = null;
-  let finalUrl = absoluteifyAndRewrite(extracted);
-  if (!finalUrl && typeof rawThumb === "string") finalUrl = absoluteifyAndRewrite(rawThumb);
+  const finalUrl = absoluteifyAndRewrite(extracted || (typeof rawThumb === "string" ? rawThumb : null));
 
   const placeholder =
     "data:image/svg+xml;charset=UTF-8," +
@@ -155,41 +126,50 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
       `<svg xmlns='http://www.w3.org/2000/svg' width='600' height='400'><rect width='100%' height='100%' fill='%23f4f4f4'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' fill='%23888' font-family='Arial' font-size='18'>No Image</text></svg>`
     );
 
-  // preload image to avoid flicker and set only after successful load
+  // --- HOOKS: declared after synchronous derivation so their order never changes ---
+  const [isWishlist, setIsWishlist] = useState(() => {
+    try {
+      return productId ? readWishlistFromStorage().map(String).includes(String(productId)) : false;
+    } catch (e) { return false; }
+  });
+  const [imgSrc, setImgSrc] = useState(placeholder);
+  const [imgLoaded, setImgLoaded] = useState(false);
+
+  // sync wishlist when productId changes
+  useEffect(() => {
+    if (!productId) { setIsWishlist(false); return; }
+    const list = readWishlistFromStorage();
+    setIsWishlist(list.map(String).includes(String(productId)));
+  }, [productId]);
+
+  // image preloader: depends on finalUrl
   useEffect(() => {
     let cancelled = false;
     setImgLoaded(false);
     setImgSrc(placeholder);
 
     if (!finalUrl) {
-      setImgSrc(placeholder);
       setImgLoaded(true);
       return () => { cancelled = true; };
     }
 
     const img = new Image();
     img.onload = () => {
-      if (!cancelled) {
-        setImgSrc(finalUrl);
-        setImgLoaded(true);
-      }
+      if (!cancelled) { setImgSrc(finalUrl); setImgLoaded(true); }
     };
     img.onerror = () => {
-      if (!cancelled) {
-        setImgSrc(placeholder);
-        setImgLoaded(true);
-      }
+      if (!cancelled) { setImgSrc(placeholder); setImgLoaded(true); }
     };
-    // start load
     img.src = finalUrl;
 
-    // safety: if load takes too long still show placeholder after 2.5s
     const t = setTimeout(() => { if (!cancelled && !imgLoaded) setImgSrc(placeholder); }, 2500);
     return () => { cancelled = true; clearTimeout(t); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [finalUrl]);
+  }, [finalUrl]); // safe: finalUrl computed synchronously above
 
-  // save % and rupee saving
+  // EARLY RETURN: allowed now because hooks already declared
+  if (!product) return null;
+
+  // compute save % and rupee saving
   let savePercent = null;
   let saveRupees = null;
   if (typeof mrp === "number" && mrp > 0 && !Number.isNaN(price)) {
@@ -199,7 +179,7 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
     saveRupees = Math.max(0, diff);
   }
 
-  /* ---------- inline styles (small lift & spacing) ---------- */
+  /* ---------- inline styles (kept same) ---------- */
   const cardStyle = {
     width: "100%",
     maxWidth: 260,
@@ -238,55 +218,25 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
     opacity: imgLoaded ? 1 : 0.01,
   };
 
-  const bodyStyle = {
-    padding: "10px 12px",
-    textAlign: "center",
-  };
-
-  const footerSplitStyle = {
-    display: "flex",
-    flexDirection: "column",
-    gap: 10,
-    padding: "10px 12px",
-  };
-
+  const bodyStyle = { padding: "10px 12px", textAlign: "center" };
+  const footerSplitStyle = { display: "flex", flexDirection: "column", gap: 10, padding: "10px 12px" };
   const viewRowStyle = { display: "flex", justifyContent: "center", alignItems: "center" };
   const actionsRowStyle = { display: "flex", gap: 8, justifyContent: "center", alignItems: "center", flexWrap: "wrap" };
 
   const viewBtnStyle = {
-    minWidth: 84,
-    display: "inline-block",
-    padding: "8px 14px",
-    borderRadius: 10,
-    background: "#6a0dad",
-    color: "#fff",
-    textDecoration: "none",
-    fontWeight: 700,
-    fontSize: 13,
-    textAlign: "center",
+    minWidth: 84, display: "inline-block", padding: "8px 14px", borderRadius: 10, background: "#6a0dad", color: "#fff",
+    textDecoration: "none", fontWeight: 700, fontSize: 13, textAlign: "center",
   };
 
   const smallBtnStyle = {
-    minWidth: 96,
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 8,
-    padding: "6px 10px",
-    borderRadius: 8,
-    background: "#fff",
-    border: "1px solid rgba(0,0,0,0.08)",
-    color: "#111",
-    fontWeight: 700,
-    fontSize: 13,
-    textDecoration: "none",
-    justifyContent: "center",
+    minWidth: 96, display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 8,
+    background: "#fff", border: "1px solid rgba(0,0,0,0.08)", color: "#111", fontWeight: 700, fontSize: 13,
+    textDecoration: "none", justifyContent: "center",
   };
 
   /* ---------- handlers ---------- */
-
   function handleWishlistClick(e) {
-    e.preventDefault();
-    e.stopPropagation();
+    e.preventDefault(); e.stopPropagation();
     const id = (product && (product._id ?? product.id ?? product.slug)) ?? null;
     if (!id) return;
     const list = readWishlistFromStorage().map(String);
@@ -321,10 +271,7 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
     const el = zoomRef.current;
     if (!el) return;
     const img = el.querySelector("img");
-    if (img) {
-      img.style.transform = "scale(1)";
-      img.style.transformOrigin = "center center";
-    }
+    if (img) { img.style.transform = "scale(1)"; img.style.transformOrigin = "center center"; }
   }
 
   const idOrSlug = product.slug || product._id || "";
@@ -338,22 +285,8 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
       tabIndex={onClick ? 0 : undefined}
       onKeyDown={(e) => { if (onClick && (e.key === "Enter" || e.key === " ")) onClick(); }}
     >
-      <div
-        style={imageWrapStyle}
-        ref={(r) => (zoomRef.current = r)}
-        onMouseMove={handleMouseMove}
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={handleMouseLeave}
-      >
-        <img
-          src={imgSrc || placeholder}
-          alt={title}
-          style={zoomImgStyle}
-          onError={(e) => {
-            // fallback to placeholder if anything wrong
-            if (e.currentTarget && e.currentTarget.src !== placeholder) e.currentTarget.src = placeholder;
-          }}
-        />
+      <div style={imageWrapStyle} ref={(r) => (zoomRef.current = r)} onMouseMove={handleMouseMove} onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave}>
+        <img src={imgSrc || placeholder} alt={title} style={zoomImgStyle} onError={(e) => { if (e.currentTarget && e.currentTarget.src !== placeholder) e.currentTarget.src = placeholder; }} />
       </div>
 
       <div style={bodyStyle}>
@@ -366,7 +299,6 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
                 <span style={{ fontWeight: 600 }}>MRP:</span>
                 <span style={{ textDecoration: "line-through", color: "#555" }}>₹{mrp.toFixed(2)}</span>
               </div>
-
               <div style={{ fontWeight: 800, fontSize: 16, color: "#0a5cff" }}>₹{price.toFixed(2)}</div>
             </div>
           ) : (
@@ -386,9 +318,7 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
 
       <div style={footerSplitStyle}>
         <div style={viewRowStyle}>
-          <Link to={`/product/${idOrSlug}`} style={viewBtnStyle} aria-label={`View ${title}`}>
-            View
-          </Link>
+          <Link to={`/product/${idOrSlug}`} style={viewBtnStyle} aria-label={`View ${title}`}>View</Link>
         </div>
 
         <div style={actionsRowStyle}>
