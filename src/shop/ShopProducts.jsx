@@ -3,23 +3,16 @@ import React, { useEffect, useState } from "react";
 import ShopProductCard from "./shopProductCard";
 
 /**
- * ShopProducts (safe + fetch)
- * - Does NOT use react-redux hooks (avoids Provider crash).
- * - Reads cart subtotal defensively (window/localStorage).
- * - If no `products` prop passed, fetches products from backend using axiosInstance if available or fetch().
- * - Renders responsive grid + bottom banner for free shipping.
+ * Safe ShopProducts.jsx (updated)
+ * - Adds bottom padding so the fixed free-shipping banner doesn't overlap product card footers.
+ * - Keeps defensive cart reading and product fetching.
  */
 
 const FREE_SHIPPING_THRESHOLD = 999;
 
-// try to import your axios instance (if present). If import fails at build time, fallback will be used.
 let axiosInstance = null;
 try {
-  // eslint-disable-next-line import/no-extraneous-dependencies,global-require
-  // This will resolve if you have src/api/axiosInstance.js
-  // If you don't, fallback to fetch below.
-  // Keep as dynamic require to avoid bundler errors in odd setups.
-  // (If your bundler disallows require here, replace with `import axios from "../api/axiosInstance";` at top.)
+  // dynamic require to avoid bundler errors if file missing
   // eslint-disable-next-line global-require
   axiosInstance = require("../api/axiosInstance").default;
 } catch (e) {
@@ -37,13 +30,11 @@ function safeParseJson(str) {
 function tryComputeSubtotal(cartLike) {
   if (!cartLike) return null;
   if (typeof cartLike === "number") return Number(cartLike);
-
   const subtotalCandidates = ["subtotal", "total", "cartTotal", "grandTotal"];
   for (const k of subtotalCandidates) {
     if (typeof cartLike[k] === "number") return cartLike[k];
     if (typeof cartLike[k] === "string" && !Number.isNaN(Number(cartLike[k]))) return Number(cartLike[k]);
   }
-
   const items = cartLike.items ?? cartLike.cartItems ?? cartLike.lineItems ?? null;
   if (Array.isArray(items) && items.length) {
     let sum = 0;
@@ -56,7 +47,6 @@ function tryComputeSubtotal(cartLike) {
     }
     return sum;
   }
-
   if (Array.isArray(cartLike) && cartLike.length) {
     let sum2 = 0;
     for (const it of cartLike) {
@@ -68,7 +58,6 @@ function tryComputeSubtotal(cartLike) {
     }
     return sum2;
   }
-
   return null;
 }
 
@@ -127,14 +116,12 @@ export default function ShopProducts({ products = [] }) {
   const [fetchError, setFetchError] = useState(null);
   const [subtotal, setSubtotal] = useState(0);
 
-  // read cart defensively (banner)
   useEffect(() => {
     function update() {
       const c = readCartFromEnvironment();
       setSubtotal(Number.isFinite(c.subtotal) ? c.subtotal : 0);
     }
     update();
-    // update when storage events happen (other tabs)
     function onStorage(e) {
       const keysWeCare = ["cart", "persist:root", "redux_state"];
       if (!e.key || keysWeCare.includes(e.key)) update();
@@ -147,21 +134,16 @@ export default function ShopProducts({ products = [] }) {
     };
   }, []);
 
-  // Fetch products only if no products prop provided
   useEffect(() => {
     let cancelled = false;
     async function fetchProducts() {
-      if (Array.isArray(products) && products.length > 0) return; // caller provided products
+      if (Array.isArray(products) && products.length > 0) return;
       setLoading(true);
       setFetchError(null);
       try {
-        let resp;
         if (axiosInstance) {
-          // try to match your backend's endpoint - adjust if needed
-          resp = await axiosInstance.get("/api/products?limit=100");
-          // axios returns data property
+          const resp = await axiosInstance.get("/api/products?limit=100");
           const data = resp?.data ?? resp;
-          // if data has .docs or .products shape, try common patterns
           let items = null;
           if (Array.isArray(data)) items = data;
           else if (Array.isArray(data.docs)) items = data.docs;
@@ -190,20 +172,18 @@ export default function ShopProducts({ products = [] }) {
         if (!cancelled) setLoading(false);
       }
     }
-
     fetchProducts();
     return () => {
       cancelled = true;
     };
-  }, [/* run once */]);
+  }, []); // run once
 
   const productsToShow = (Array.isArray(products) && products.length > 0) ? products : (Array.isArray(localProducts) ? localProducts : []);
 
-  // free-shipping
   const remaining = Math.max(0, FREE_SHIPPING_THRESHOLD - subtotal);
 
-  // styles (kept small)
-  const pageWrap = { padding: "24px 28px", minHeight: "70vh", position: "relative" };
+  // NOTE: increased paddingBottom so banner (fixed) doesn't overlap product card footers.
+  const pageWrap = { padding: "24px 28px", paddingBottom: "160px", minHeight: "70vh", position: "relative" };
   const gridStyle = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 12, alignItems: "start", marginTop: 12 };
   const bannerWrap = { position: "fixed", bottom: 18, left: "50%", transform: "translateX(-50%)", zIndex: 1200, width: "min(96%, 960px)" };
   const bannerStyle = { background: "#e9f8f0", borderRadius: 28, padding: "12px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", boxShadow: "0 6px 20px rgba(0,0,0,0.06)", gap: 12 };

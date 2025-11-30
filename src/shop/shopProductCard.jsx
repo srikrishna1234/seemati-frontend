@@ -1,13 +1,12 @@
 // src/shop/shopProductCard.jsx
-import React, { useRef, useState } from "react";
+import React, { useRef, useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 
 /**
- * shopProductCard.jsx
- * - View button centered below price.
- * - "You save" moved left below price and shows percentage + rupee value.
- * - MRP label visible and dark grey.
- * - Keeps zoom-on-hover + wishlist + explore.
+ * shopProductCard.jsx (updated)
+ * - Slightly lifts the image (reduced gap) so visual center sits higher.
+ * - Wishlist persistence via localStorage and firing window 'wishlistUpdated' event.
+ * - Keeps View centered and actions below. Defensive and self-contained.
  */
 
 /* ---------- helpers (kept robust) ---------- */
@@ -17,20 +16,7 @@ function extractUrlFromPossibleObject(obj) {
   if (typeof obj === "string") return obj;
 
   const candidates = [
-    "url",
-    "src",
-    "secure_url",
-    "location",
-    "path",
-    "filePath",
-    "file_path",
-    "key",
-    "filename",
-    "publicUrl",
-    "public_url",
-    "original",
-    "file",
-    "uri",
+    "url","src","secure_url","location","path","filePath","file_path","key","filename","publicUrl","public_url","original","file","uri",
   ];
 
   for (const k of candidates) {
@@ -58,38 +44,50 @@ function extractUrlFromPossibleObject(obj) {
 
 function absoluteifyAndRewrite(urlCandidate) {
   if (!urlCandidate) return null;
-
   try {
     const parsed = new URL(urlCandidate);
-    if (parsed.hostname === "api.seemati.in") {
-      parsed.hostname = window.location.hostname || "seemati.in";
-    }
+    if (parsed.hostname === "api.seemati.in") parsed.hostname = window.location.hostname || "seemati.in";
     return parsed.toString();
   } catch (e) {}
-
   if (urlCandidate.startsWith("//")) return `${window.location.protocol}${urlCandidate}`;
   if (urlCandidate.startsWith("/")) return `${window.location.origin}${urlCandidate}`;
-
   const prefixesToTry = [
-    "https://api.seemati.in/uploads/",
-    "https://seemati.in/uploads/",
-    "https://cdn.seemati.in/",
-    "https://api.seemati.in/",
-    `${window.location.origin}/uploads/`,
+    "https://api.seemati.in/uploads/","https://seemati.in/uploads/","https://cdn.seemati.in/","https://api.seemati.in/",`${window.location.origin}/uploads/`,
   ];
-
   for (const p of prefixesToTry) {
     const candidate = `${p}${urlCandidate}`;
     try {
       const parsed = new URL(candidate);
-      if (parsed.hostname === "api.seemati.in") {
-        parsed.hostname = window.location.hostname || "seemati.in";
-      }
+      if (parsed.hostname === "api.seemati.in") parsed.hostname = window.location.hostname || "seemati.in";
       return parsed.toString();
     } catch (e) {}
   }
-
   return null;
+}
+
+/* ---------- wishlist helpers ---------- */
+
+function readWishlistFromStorage() {
+  try {
+    const raw = localStorage.getItem("wishlist");
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed;
+    return [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveWishlistToStorage(arr) {
+  try {
+    localStorage.setItem("wishlist", JSON.stringify(arr));
+    // dispatch event for other parts of the app (header) to update counts
+    const ev = new CustomEvent("wishlistUpdated", { detail: { count: arr.length } });
+    window.dispatchEvent(ev);
+  } catch (e) {
+    // ignore
+  }
 }
 
 /* ---------- component ---------- */
@@ -97,6 +95,13 @@ function absoluteifyAndRewrite(urlCandidate) {
 export default function ShopProductCard({ product, onClick, onToggleWishlist }) {
   const zoomRef = useRef(null);
   const [isWishlist, setIsWishlist] = useState(false);
+
+  useEffect(() => {
+    const list = readWishlistFromStorage();
+    const id = (product && (product._id ?? product.id ?? product.slug)) ?? null;
+    if (!id) return;
+    setIsWishlist(list.includes(String(id)));
+  }, [product]);
 
   if (!product) return null;
 
@@ -140,7 +145,7 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
     saveRupees = Math.max(0, diff);
   }
 
-  /* ---------- inline styles ---------- */
+  /* ---------- inline styles (small lift & spacing) ---------- */
   const cardStyle = {
     width: "100%",
     maxWidth: 260,
@@ -153,17 +158,20 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
     flexDirection: "column",
     alignItems: "stretch",
     margin: "12px",
+    marginBottom: 18, // ensure small spacing
   };
 
+  // reduce image container vertical space so the image sits slightly higher
   const imageWrapStyle = {
     width: "100%",
-    height: 260,
+    height: 240, // slightly reduced from 260 to lift visual
     background: "#fff",
     display: "flex",
-    alignItems: "center",
+    alignItems: "flex-start", // put image a bit higher
     justifyContent: "center",
     position: "relative",
     overflow: "hidden",
+    paddingTop: 8,
   };
 
   const zoomImgStyle = {
@@ -181,7 +189,6 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
     textAlign: "center",
   };
 
-  // footer layout: view button sits centered in its row; other actions below it
   const footerSplitStyle = {
     display: "flex",
     flexDirection: "column",
@@ -191,7 +198,7 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
 
   const viewRowStyle = {
     display: "flex",
-    justifyContent: "center", // center the View button
+    justifyContent: "center",
     alignItems: "center",
   };
 
@@ -237,15 +244,23 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
   function handleWishlistClick(e) {
     e.preventDefault();
     e.stopPropagation();
-    const next = !isWishlist;
-    setIsWishlist(next);
+    const id = (product && (product._id ?? product.id ?? product.slug)) ?? null;
+    if (!id) return;
+    const list = readWishlistFromStorage().map(String);
+    const sid = String(id);
+    const exists = list.includes(sid);
+    let nextList;
+    if (exists) {
+      nextList = list.filter((x) => x !== sid);
+    } else {
+      nextList = [sid, ...list];
+    }
+    saveWishlistToStorage(nextList);
+    setIsWishlist(!exists);
     if (typeof onToggleWishlist === "function") {
       try {
-        onToggleWishlist(product, next);
+        onToggleWishlist(product, !exists);
       } catch (err) {}
-    } else {
-      // eslint-disable-next-line no-console
-      console.log("Wishlist toggled for", product._id || product.slug || title, "=>", next);
     }
   }
 
@@ -329,7 +344,6 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
           )}
         </div>
 
-        {/* SAVE badge moved left beneath price area (visual left: use alignLeft container) */}
         <div style={{ marginTop: 8, display: "flex", justifyContent: "flex-start" }}>
           {savePercent !== null && (
             <div style={{ color: "#0a9b4a", fontWeight: 700, fontSize: 12, background: "#e6fbf0", padding: "6px 10px", borderRadius: 8 }}>
