@@ -1,21 +1,14 @@
 // src/shop/ShopProducts.jsx
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState } from "react";
 import ShopProductCard from "./shopProductCard";
 
 /**
- * ShopProducts.jsx — improved (full replacement)
- *
- * Fixes applied:
- *  - Prevents UI flicker by initializing products to [] (avoids null -> array jumps)
- *  - Less aggressive cart polling (5s) and stricter change detection
- *  - Delays banner initial show by 300ms to avoid flash during mount/deploy
- *  - Leaves a min-height for the grid so loading state doesn't shift page
- *  - Keeps dismiss state persistent in localStorage
- *  - Lightweight image preloading (first image of first 30 products)
+ * Safe ShopProducts.jsx (updated)
+ * - Adds bottom padding so the fixed free-shipping banner doesn't overlap product card footers.
+ * - Keeps defensive cart reading and product fetching.
  */
 
 const FREE_SHIPPING_THRESHOLD = 999;
-const DISMISS_LS_KEY = "seemati:freeShippingDismiss";
 
 let axiosInstance = null;
 try {
@@ -93,7 +86,7 @@ function readCartFromEnvironment() {
         const subtotal = tryComputeSubtotal(cart);
         if (typeof subtotal === "number") return { subtotal, raw: cart };
       }
-    } catch (e) { /* ignore */ }
+    } catch (e) {}
   }
 
   const lsKeys = ["cart", "persist:root", "redux_state", "reduxState", "app_state"];
@@ -105,93 +98,46 @@ function readCartFromEnvironment() {
       const maybe = extractCartFromParsed(parsed);
       const subtotal = tryComputeSubtotal(maybe);
       if (typeof subtotal === "number") return { subtotal, raw: maybe };
-    } catch (e) { /* ignore */ }
+    } catch (e) {}
   }
 
   try {
     const maybeStore = window?.__STORE__ ?? window?.appState ?? window?.APP_STATE;
     const subtotal = tryComputeSubtotal(maybeStore);
     if (typeof subtotal === "number") return { subtotal, raw: maybeStore };
-  } catch (e) { /* ignore */ }
+  } catch (e) {}
 
   return { subtotal: 0, raw: null };
 }
 
 export default function ShopProducts({ products = [] }) {
-  // initialize to [] to avoid null -> array jumps (less layout shift)
-  const [localProducts, setLocalProducts] = useState(Array.isArray(products) && products.length ? products : []);
-  const [loading, setLoading] = useState(Array.isArray(products) && products.length ? false : true);
+  const [localProducts, setLocalProducts] = useState(null);
+  const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState(null);
   const [subtotal, setSubtotal] = useState(0);
-  const [dismissed, setDismissed] = useState(() => {
-    try {
-      return localStorage.getItem(DISMISS_LS_KEY) === "1";
-    } catch (e) {
-      return false;
-    }
-  });
-  // small delay to avoid banner flashing immediately during mount/deploy
-  const [bannerVisibleAfterDelay, setBannerVisibleAfterDelay] = useState(false);
 
-  const lastCartRef = useRef(null);
-  const pollRef = useRef(null);
-
-  // conservative cart read: initial + storage events + slow poll
   useEffect(() => {
-    // initial read
-    const initial = readCartFromEnvironment();
-    lastCartRef.current = Number.isFinite(initial.subtotal) ? Number(initial.subtotal) : 0;
-    setSubtotal(lastCartRef.current);
-
-    function onStorage(e) {
-      // only respond to probable cart/wishlist keys (keeps re-renders low)
-      const watched = ["cart", "persist:root", "redux_state", "wishlist", "favorites"];
-      if (!e.key || watched.includes(e.key)) {
-        const c = readCartFromEnvironment();
-        const newSubtotal = Number.isFinite(c.subtotal) ? Number(c.subtotal) : 0;
-        // update only on meaningful change
-        if (Math.abs((lastCartRef.current ?? 0) - newSubtotal) > 0.005) {
-          lastCartRef.current = newSubtotal;
-          setSubtotal(newSubtotal);
-        }
-        // notify listeners
-        try {
-          window.dispatchEvent(new CustomEvent("seemati:storage-sync", { detail: { key: e.key } }));
-        } catch (err) { /* ignore */ }
-      }
-    }
-
-    window.addEventListener("storage", onStorage);
-
-    // slow poll as a fallback (5s)
-    pollRef.current = setInterval(() => {
+    function update() {
       const c = readCartFromEnvironment();
-      const newSubtotal = Number.isFinite(c.subtotal) ? Number(c.subtotal) : 0;
-      if (Math.abs((lastCartRef.current ?? 0) - newSubtotal) > 0.005) {
-        lastCartRef.current = newSubtotal;
-        setSubtotal(newSubtotal);
-      }
-    }, 5000);
-
-    // small delay before showing banner to avoid flash on load
-    const bannerTimer = setTimeout(() => setBannerVisibleAfterDelay(true), 300);
-
+      setSubtotal(Number.isFinite(c.subtotal) ? c.subtotal : 0);
+    }
+    update();
+    function onStorage(e) {
+      const keysWeCare = ["cart", "persist:root", "redux_state"];
+      if (!e.key || keysWeCare.includes(e.key)) update();
+    }
+    window.addEventListener("storage", onStorage);
+    const poll = setInterval(update, 1500);
     return () => {
       window.removeEventListener("storage", onStorage);
-      if (pollRef.current) clearInterval(pollRef.current);
-      clearTimeout(bannerTimer);
+      clearInterval(poll);
     };
   }, []);
 
-  // fetch products once (if not passed via props)
   useEffect(() => {
     let cancelled = false;
     async function fetchProducts() {
-      if (Array.isArray(products) && products.length > 0) {
-        setLocalProducts(products);
-        setLoading(false);
-        return;
-      }
+      if (Array.isArray(products) && products.length > 0) return;
       setLoading(true);
       setFetchError(null);
       try {
@@ -227,79 +173,22 @@ export default function ShopProducts({ products = [] }) {
       }
     }
     fetchProducts();
-    return () => { cancelled = true; };
-  }, [products]);
-
-  // lightweight image preload for first N products (doesn't affect layout)
-  useEffect(() => {
-    const list = Array.isArray(products) && products.length > 0 ? products : Array.isArray(localProducts) ? localProducts : [];
-    if (!list || list.length === 0) return;
-    const toPreload = list.slice(0, 30).map((p) => {
-      if (Array.isArray(p.images) && p.images.length) return p.images[0];
-      if (Array.isArray(p.imgs) && p.imgs.length) return p.imgs[0];
-      if (p.image) return p.image;
-      if (p.thumbnail) return p.thumbnail;
-      if (p.imageUrl) return p.imageUrl;
-      if (p.src) return p.src;
-      return null;
-    }).filter(Boolean);
-
-    for (const src of toPreload) {
-      try {
-        const img = new Image();
-        img.src = src;
-      } catch (e) { /* ignore */ }
-    }
-  }, [localProducts, products]);
+    return () => {
+      cancelled = true;
+    };
+  }, []); // run once
 
   const productsToShow = (Array.isArray(products) && products.length > 0) ? products : (Array.isArray(localProducts) ? localProducts : []);
 
   const remaining = Math.max(0, FREE_SHIPPING_THRESHOLD - subtotal);
 
-  // styles (inline so easy to tweak)
-  const pageWrap = { padding: "24px 28px", paddingBottom: "140px", minHeight: "70vh", position: "relative" };
-  const gridStyle = {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))",
-    gap: 12,
-    alignItems: "start",
-    marginTop: 12,
-    // reserve vertical space while loading to reduce layout shift
-    minHeight: loading ? 300 : undefined,
-  };
+  // NOTE: increased paddingBottom so banner (fixed) doesn't overlap product card footers.
+  const pageWrap = { padding: "24px 28px", paddingBottom: "160px", minHeight: "70vh", position: "relative" };
+  const gridStyle = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 12, alignItems: "start", marginTop: 12 };
   const bannerWrap = { position: "fixed", bottom: 18, left: "50%", transform: "translateX(-50%)", zIndex: 1200, width: "min(96%, 960px)" };
-  const bannerStyle = {
-    background: "#e9f8f0",
-    borderRadius: 28,
-    padding: "8px 12px",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    boxShadow: "0 6px 20px rgba(0,0,0,0.06)",
-    gap: 12,
-    maxHeight: 56,
-    overflow: "hidden",
-  };
-  const leftStyle = { display: "flex", alignItems: "center", gap: 12, fontWeight: 700, color: "#0a7b4f", whiteSpace: "nowrap", minWidth: 0 };
-  const leftTextWrap = { display: "flex", flexDirection: "column", minWidth: 0, overflow: "hidden" };
-  const mainLineStyle = { fontSize: 14, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" };
-  const subLineStyle = { fontSize: 12, color: "#2f6f52", fontWeight: 700, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" };
-  const rightStyle = { display: "flex", alignItems: "center", gap: 8, whiteSpace: "nowrap" };
-
-  function handleDismiss() {
-    try {
-      localStorage.setItem(DISMISS_LS_KEY, "1");
-    } catch (e) { /* ignore */ }
-    setDismissed(true);
-  }
-
-  function handleCelebrateOrContinue() {
-    if (subtotal >= FREE_SHIPPING_THRESHOLD) {
-      window.location.href = "/cart";
-    } else {
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    }
-  }
+  const bannerStyle = { background: "#e9f8f0", borderRadius: 28, padding: "12px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", boxShadow: "0 6px 20px rgba(0,0,0,0.06)", gap: 12 };
+  const leftStyle = { display: "flex", alignItems: "center", gap: 12, fontWeight: 700, color: "#0a7b4f" };
+  const rightStyle = { display: "flex", alignItems: "center", gap: 10 };
 
   return (
     <div style={pageWrap}>
@@ -313,72 +202,54 @@ export default function ShopProducts({ products = [] }) {
         <div style={{ padding: 20 }}>No products found.</div>
       ) : (
         <div style={gridStyle}>
-          {productsToShow.map((p) => (
-            <ShopProductCard key={p._id ?? p.slug ?? p.id} product={p} />
-          ))}
+          {productsToShow.map((p) => <ShopProductCard key={p._id ?? p.slug ?? p.id} product={p} />)}
         </div>
       )}
 
-      {/* Banner — only display after short delay and not dismissed */}
-      {!dismissed && bannerVisibleAfterDelay && (
-        <div style={bannerWrap} role="status" aria-live="polite" aria-atomic="true">
-          <div style={bannerStyle}>
-            <div style={leftStyle}>
-              <span style={{ fontSize: 16 }} aria-hidden>{subtotal >= FREE_SHIPPING_THRESHOLD ? "🎉" : "🚚"}</span>
-              <div style={leftTextWrap}>
-                {subtotal >= FREE_SHIPPING_THRESHOLD ? (
-                  <>
-                    <div style={mainLineStyle}>Congrats — you are eligible for free shipping</div>
-                    <div style={subLineStyle}>Subtotal ₹{Number(subtotal).toFixed(2)}</div>
-                  </>
-                ) : (
-                  <>
-                    <div style={mainLineStyle}>Free shipping above ₹{FREE_SHIPPING_THRESHOLD}</div>
-                    <div style={subLineStyle}>
-                      Subtotal ₹{Number(subtotal).toFixed(2)}{" "}
-                      <span style={{ fontWeight: 600, color: "#0a5cff" }}>• Add ₹{remaining.toFixed(2)} more to get free shipping</span>
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
+      <div style={bannerWrap} role="status" aria-live="polite">
+        <div style={bannerStyle}>
+          <div style={leftStyle}>
+            {subtotal >= FREE_SHIPPING_THRESHOLD ? (
+              <>
+                <span style={{ fontSize: 18 }}>🎉</span>
+                <div>
+                  <div style={{ fontSize: 15 }}>Congrats — you are eligible for free shipping</div>
+                  <div style={{ fontSize: 13, color: "#2f6f52", fontWeight: 700 }}>Subtotal ₹{subtotal.toFixed(2)}</div>
+                </div>
+              </>
+            ) : (
+              <>
+                <span style={{ fontSize: 18 }}>🚚</span>
+                <div>
+                  <div style={{ fontSize: 15 }}>Free shipping above ₹{FREE_SHIPPING_THRESHOLD}</div>
+                  <div style={{ fontSize: 13, color: "#2f6f52", fontWeight: 700 }}>
+                    Subtotal ₹{subtotal.toFixed(2)}{" "}
+                    <span style={{ fontWeight: 600, color: "#0a5cff" }}>
+                      • Add ₹{remaining.toFixed(2)} more to get free shipping
+                    </span>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
 
-            <div style={rightStyle}>
-              <button
-                onClick={handleCelebrateOrContinue}
-                style={{
-                  background: subtotal >= FREE_SHIPPING_THRESHOLD ? "#13a65f" : "#6a0dad",
-                  color: "#fff",
-                  border: "none",
-                  padding: "8px 12px",
-                  borderRadius: 8,
-                  fontWeight: 800,
-                  cursor: "pointer",
-                }}
-                aria-label={subtotal >= FREE_SHIPPING_THRESHOLD ? "Go to cart" : "Continue shopping"}
-              >
-                {subtotal >= FREE_SHIPPING_THRESHOLD ? "Celebrate" : "Continue shopping"}
+          <div style={rightStyle}>
+            {subtotal >= FREE_SHIPPING_THRESHOLD ? (
+              <button style={{ background: "#13a65f", color: "#fff", border: "none", padding: "8px 14px", borderRadius: 8, fontWeight: 800 }} onClick={() => window.location.href = "/cart"}>
+                Celebrate
               </button>
+            ) : (
+              <button style={{ background: "#6a0dad", color: "#fff", border: "none", padding: "8px 14px", borderRadius: 8, fontWeight: 800 }} onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
+                Continue shopping
+              </button>
+            )}
 
-              <button
-                onClick={handleDismiss}
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  color: "#333",
-                  fontWeight: 700,
-                  textDecoration: "underline",
-                  cursor: "pointer",
-                  padding: "6px 8px",
-                }}
-                aria-label="Dismiss free shipping message"
-              >
-                Dismiss ✕
-              </button>
-            </div>
+            <button onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })} style={{ background: "transparent", border: "none", color: "#333", fontWeight: 700, textDecoration: "underline", cursor: "pointer" }}>
+              Dismiss ✕
+            </button>
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
