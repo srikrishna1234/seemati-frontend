@@ -1,13 +1,15 @@
 // src/shop/shopProductCard.jsx
 import React, { useRef } from "react";
+import { Link } from "react-router-dom";
 
 /**
- * shopProductCard.jsx (fixed)
- * - Hooks (useRef) are called unconditionally at the top of the component to satisfy rules-of-hooks.
- * - Robust extraction of image URL from many backend shapes (string or object).
- * - Tries common upload prefixes if only a key/filename is returned.
- * - Rewrites api.seemati.in -> current host to avoid CSP block.
+ * shopProductCard.jsx (replacement)
+ * - Preserves robust image extraction and rewriting logic.
+ * - Restores a visible "View" button that links to /product/:slug (or /product/:id fallback).
+ * - Keeps hooks (useRef) called unconditionally at the top to satisfy rules-of-hooks.
  */
+
+/* ---------- helpers (unchanged / improved) ---------- */
 
 function extractUrlFromPossibleObject(obj) {
   if (!obj) return null;
@@ -102,30 +104,31 @@ function absoluteifyAndRewrite(urlCandidate) {
   return null;
 }
 
+/* ---------- component ---------- */
+
 export default function ShopProductCard({ product, onClick }) {
-  // Call hooks unconditionally at top (fixes rules-of-hooks error)
+  // keep hook called unconditionally
   const loggedRef = useRef(false);
 
-  // Safe early return if no product
   if (!product) return null;
 
   const title = product.title ?? product.name ?? "Untitled product";
   const price = product.price ?? product.mrp ?? 0;
 
-  // Pick candidate thumbnail: thumbnail or first image
+  // pick thumbnail candidate
   let rawThumb = product.thumbnail ?? null;
   if (!rawThumb && Array.isArray(product.images) && product.images.length > 0) {
     rawThumb = product.images[0];
   }
 
-  // Log raw object once for debugging
+  // debug log raw object once
   if (rawThumb && typeof rawThumb === "object" && !loggedRef.current) {
     // eslint-disable-next-line no-console
     console.log("shopProductCard - raw thumbnail object for", product._id || product.slug || title, rawThumb);
     loggedRef.current = true;
   }
 
-  // Try extract string from object or use string directly
+  // extract and finalize URL
   let extracted = extractUrlFromPossibleObject(rawThumb);
   if (extracted && typeof extracted === "string" && extracted.includes("[object")) extracted = null;
 
@@ -140,10 +143,11 @@ export default function ShopProductCard({ product, onClick }) {
 
   const imgSrc = finalUrl || placeholder;
 
-  // Debug final url
+  // debug final url
   // eslint-disable-next-line no-console
   console.log("shopProductCard - final image src for", product._id || product.slug || title, "=>", imgSrc);
 
+  // inline styles (kept simple to avoid external css dependency)
   const cardStyle = {
     width: "100%",
     maxWidth: 260,
@@ -160,15 +164,18 @@ export default function ShopProductCard({ product, onClick }) {
   const imageWrapStyle = {
     width: "100%",
     height: 220,
-    background: "#000",
+    background: "#fff",
     display: "block",
     overflow: "hidden",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
   };
 
   const imgStyle = {
     width: "100%",
     height: "100%",
-    objectFit: "cover",
+    objectFit: "contain",
     display: "block",
   };
 
@@ -176,6 +183,27 @@ export default function ShopProductCard({ product, onClick }) {
     padding: "10px 12px",
     textAlign: "center",
   };
+
+  const footerStyle = {
+    padding: "10px 12px",
+    display: "flex",
+    gap: 8,
+    justifyContent: "center",
+    alignItems: "center",
+  };
+
+  const viewBtnStyle = {
+    display: "inline-block",
+    padding: "6px 12px",
+    borderRadius: 8,
+    background: "#6a0dad",
+    color: "#fff",
+    textDecoration: "none",
+    fontWeight: 700,
+    fontSize: 13,
+  };
+
+  const idOrSlug = product.slug || product._id || "";
 
   return (
     <article
@@ -195,7 +223,12 @@ export default function ShopProductCard({ product, onClick }) {
           style={imgStyle}
           onError={(e) => {
             // eslint-disable-next-line no-console
-            console.error("shopProductCard - image failed to load for", product._id || product.slug || title, "src=", e.currentTarget.src);
+            console.error(
+              "shopProductCard - image failed to load for",
+              product._id || product.slug || title,
+              "src=",
+              e.currentTarget.src
+            );
             const placeholderSrc = placeholder;
             if (e.currentTarget.src !== placeholderSrc) e.currentTarget.src = placeholderSrc;
           }}
@@ -205,6 +238,13 @@ export default function ShopProductCard({ product, onClick }) {
       <div style={bodyStyle}>
         <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600, color: "#111" }}>{title}</h3>
         <div style={{ marginTop: 6, fontWeight: 700 }}>₹{price}</div>
+      </div>
+
+      {/* footer with View button (restored) */}
+      <div style={footerStyle}>
+        <Link to={`/product/${idOrSlug}`} style={viewBtnStyle} aria-label={`View ${title}`}>
+          View
+        </Link>
       </div>
     </article>
   );
