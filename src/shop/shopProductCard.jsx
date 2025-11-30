@@ -1,15 +1,20 @@
 // src/shop/shopProductCard.jsx
-import React, { useRef } from "react";
+import React, { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 /**
  * shopProductCard.jsx (replacement)
- * - Preserves robust image extraction and rewriting logic.
- * - Restores a visible "View" button that links to /product/:slug (or /product/:id fallback).
- * - Keeps hooks (useRef) called unconditionally at the top to satisfy rules-of-hooks.
+ * - Displays MRP (struck) + selling price + "You save %" calculation.
+ * - Adds View, Wishlist, Explore more buttons in footer.
+ * - Adds a simple dynamic zoom-on-hover effect over the product image.
+ *
+ * Notes:
+ * - If you want wishlist to persist, pass onToggleWishlist(product) prop
+ *   or integrate with your cart/wishlist context.
+ * - Explore more currently links to the same product view; you can change target.
  */
 
-/* ---------- helpers (unchanged / improved) ---------- */
+/* ---------- helpers (kept from your robust implementation) ---------- */
 
 function extractUrlFromPossibleObject(obj) {
   if (!obj) return null;
@@ -106,29 +111,33 @@ function absoluteifyAndRewrite(urlCandidate) {
 
 /* ---------- component ---------- */
 
-export default function ShopProductCard({ product, onClick }) {
-  // keep hook called unconditionally
-  const loggedRef = useRef(false);
+export default function ShopProductCard({ product, onClick, onToggleWishlist }) {
+  // hooks at top
+  const zoomRef = useRef(null);
+  const [isWishlist, setIsWishlist] = useState(false);
 
   if (!product) return null;
 
   const title = product.title ?? product.name ?? "Untitled product";
-  const price = product.price ?? product.mrp ?? 0;
+  const price = Number(product.price ?? product.mrp ?? 0);
+  const mrp = typeof product.mrp !== "undefined" ? Number(product.mrp) : undefined;
 
-  // pick thumbnail candidate
+  // choose thumbnail
   let rawThumb = product.thumbnail ?? null;
   if (!rawThumb && Array.isArray(product.images) && product.images.length > 0) {
     rawThumb = product.images[0];
   }
 
-  // debug log raw object once
-  if (rawThumb && typeof rawThumb === "object" && !loggedRef.current) {
-    // eslint-disable-next-line no-console
-    console.log("shopProductCard - raw thumbnail object for", product._id || product.slug || title, rawThumb);
-    loggedRef.current = true;
+  if (rawThumb && typeof rawThumb === "object") {
+    // console debug once
+    if (!zoomRef.current?.__logged) {
+      // eslint-disable-next-line no-console
+      console.log("shopProductCard - raw thumbnail object for", product._id || product.slug || title, rawThumb);
+      if (!zoomRef.current) zoomRef.current = {};
+      zoomRef.current.__logged = true;
+    }
   }
 
-  // extract and finalize URL
   let extracted = extractUrlFromPossibleObject(rawThumb);
   if (extracted && typeof extracted === "string" && extracted.includes("[object")) extracted = null;
 
@@ -143,18 +152,24 @@ export default function ShopProductCard({ product, onClick }) {
 
   const imgSrc = finalUrl || placeholder;
 
-  // debug final url
-  // eslint-disable-next-line no-console
-  console.log("shopProductCard - final image src for", product._id || product.slug || title, "=>", imgSrc);
+  // Calculate save % safely (digit-by-digit as required)
+  let savePercent = null;
+  if (typeof mrp === "number" && mrp > 0 && !Number.isNaN(price)) {
+    // compute difference
+    const diff = mrp - price; // exact subtraction
+    const ratio = diff / mrp; // fractional saving
+    // percentage to nearest integer:
+    savePercent = Math.round(ratio * 100);
+  }
 
-  // inline styles (kept simple to avoid external css dependency)
+  // inline styles kept self-contained
   const cardStyle = {
     width: "100%",
     maxWidth: 260,
-    borderRadius: 8,
+    borderRadius: 10,
     overflow: "hidden",
     background: "#fff",
-    boxShadow: "0 0 0 1px rgba(0,0,0,0.03)",
+    boxShadow: "0 6px 18px rgba(0,0,0,0.04)",
     cursor: onClick ? "pointer" : "default",
     display: "flex",
     flexDirection: "column",
@@ -163,20 +178,22 @@ export default function ShopProductCard({ product, onClick }) {
 
   const imageWrapStyle = {
     width: "100%",
-    height: 220,
+    height: 260,
     background: "#fff",
     display: "block",
     overflow: "hidden",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
+    position: "relative",
   };
 
-  const imgStyle = {
+  // zoom container styles
+  const zoomImgStyle = {
     width: "100%",
     height: "100%",
     objectFit: "contain",
+    transformOrigin: "center center",
+    transition: "transform 180ms ease-out",
     display: "block",
+    willChange: "transform",
   };
 
   const bodyStyle = {
@@ -194,7 +211,7 @@ export default function ShopProductCard({ product, onClick }) {
 
   const viewBtnStyle = {
     display: "inline-block",
-    padding: "6px 12px",
+    padding: "7px 12px",
     borderRadius: 8,
     background: "#6a0dad",
     color: "#fff",
@@ -202,6 +219,71 @@ export default function ShopProductCard({ product, onClick }) {
     fontWeight: 700,
     fontSize: 13,
   };
+
+  const smallBtnStyle = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "6px 10px",
+    borderRadius: 8,
+    background: "#fff",
+    border: "1px solid rgba(0,0,0,0.08)",
+    color: "#111",
+    fontWeight: 700,
+    fontSize: 13,
+    textDecoration: "none",
+  };
+
+  // handlers
+  function handleWishlistClick(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const next = !isWishlist;
+    setIsWishlist(next);
+    if (typeof onToggleWishlist === "function") {
+      try {
+        onToggleWishlist(product, next);
+      } catch (err) {
+        // ignore
+      }
+    } else {
+      // eslint-disable-next-line no-console
+      console.log("Wishlist toggled for", product._id || product.slug || title, "=>", next);
+    }
+  }
+
+  // dynamic zoom handlers - simple scale + transform-origin based on mouse position
+  function handleMouseMove(e) {
+    const el = zoomRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * 100; // 0..100
+    const y = ((e.clientY - rect.top) / rect.height) * 100;
+    // set transform origin
+    const img = el.querySelector("img");
+    if (img) {
+      img.style.transformOrigin = `${x}% ${y}%`;
+    }
+  }
+
+  function handleMouseEnter() {
+    const el = zoomRef.current;
+    if (!el) return;
+    const img = el.querySelector("img");
+    if (img) {
+      img.style.transform = "scale(1.6)"; // gentle zoom
+    }
+  }
+
+  function handleMouseLeave() {
+    const el = zoomRef.current;
+    if (!el) return;
+    const img = el.querySelector("img");
+    if (img) {
+      img.style.transform = "scale(1)";
+      img.style.transformOrigin = "center center";
+    }
+  }
 
   const idOrSlug = product.slug || product._id || "";
 
@@ -216,11 +298,17 @@ export default function ShopProductCard({ product, onClick }) {
         if (onClick && (e.key === "Enter" || e.key === " ")) onClick();
       }}
     >
-      <div style={imageWrapStyle}>
+      <div
+        style={imageWrapStyle}
+        ref={(r) => (zoomRef.current = r)}
+        onMouseMove={handleMouseMove}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+      >
         <img
           src={imgSrc}
           alt={title}
-          style={imgStyle}
+          style={zoomImgStyle}
           onError={(e) => {
             // eslint-disable-next-line no-console
             console.error(
@@ -236,14 +324,45 @@ export default function ShopProductCard({ product, onClick }) {
       </div>
 
       <div style={bodyStyle}>
-        <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600, color: "#111" }}>{title}</h3>
-        <div style={{ marginTop: 6, fontWeight: 700 }}>₹{price}</div>
+        <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "#111" }}>{title}</h3>
+
+        <div style={{ marginTop: 6 }}>
+          {/* show MRP struck through if present */}
+          {typeof mrp === "number" && mrp > 0 && mrp !== price ? (
+            <div style={{ display: "flex", justifyContent: "center", alignItems: "baseline", gap: 8 }}>
+              <div style={{ textDecoration: "line-through", color: "#999", fontSize: 13 }}>₹{mrp.toFixed(2)}</div>
+              <div style={{ fontWeight: 800, fontSize: 16, color: "#0a5cff" }}>₹{price.toFixed(2)}</div>
+              {savePercent !== null && (
+                <div style={{ color: "#0a9b4a", fontWeight: 700, fontSize: 12, background: "#e6fbf0", padding: "4px 8px", borderRadius: 8 }}>
+                  You save {savePercent}% 
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ fontWeight: 800, fontSize: 16, color: "#0a5cff" }}>₹{price.toFixed(2)}</div>
+          )}
+        </div>
       </div>
 
-      {/* footer with View button (restored) */}
       <div style={footerStyle}>
         <Link to={`/product/${idOrSlug}`} style={viewBtnStyle} aria-label={`View ${title}`}>
           View
+        </Link>
+
+        <button
+          onClick={handleWishlistClick}
+          aria-pressed={isWishlist}
+          title={isWishlist ? "Remove from wishlist" : "Add to wishlist"}
+          style={smallBtnStyle}
+        >
+          {/* simple heart icon (unicode) */}
+          <span style={{ color: isWishlist ? "#e53935" : "#111", fontSize: 16 }}>{isWishlist ? "♥" : "♡"}</span>
+          <span style={{ fontWeight: 700 }}>{isWishlist ? "Saved" : "Wishlist"}</span>
+        </button>
+
+        <Link to={`/product/${idOrSlug}`} style={smallBtnStyle} title="Explore more">
+          <span style={{ fontSize: 14 }}>🔍</span>
+          <span style={{ fontWeight: 700 }}>Explore</span>
         </Link>
       </div>
     </article>
