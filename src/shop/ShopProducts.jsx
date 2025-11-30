@@ -3,22 +3,15 @@ import React, { useEffect, useState, useRef } from "react";
 import ShopProductCard from "./shopProductCard";
 
 /**
- * ShopProducts.jsx (full replacement)
+ * ShopProducts.jsx — improved (full replacement)
  *
- * Improvements included:
- * 1. Forces the free-shipping banner into a single-line layout (no wrapping).
- * 2. Reduces banner height/padding for a tighter look.
- * 3. Saves "Dismiss" state in localStorage so the user choice persists across pages.
- * 4. Debounces/limits subtotal reads and listens to storage events (keeps cart sync efficient).
- * 5. Dispatches a custom 'seemati:storage-sync' event on storage changes so other components
- *    (eg. shopProductCard / wishlist components) can react if they subscribe.
- * 6. Preloads primary product images (simple Image prefetch) to reduce perceived load flicker.
- * 7. Keeps defensive fetching (uses axiosInstance if present, falls back to fetch).
- * 8. Adds accessibility attributes (role/status and polite announcements).
- *
- * Notes:
- * - This file intentionally avoids external CSS dependencies; inline styles/tailwind-friendly classes used.
- * - If you prefer Tailwind classes, replace style objects with className strings.
+ * Fixes applied:
+ *  - Prevents UI flicker by initializing products to [] (avoids null -> array jumps)
+ *  - Less aggressive cart polling (5s) and stricter change detection
+ *  - Delays banner initial show by 300ms to avoid flash during mount/deploy
+ *  - Leaves a min-height for the grid so loading state doesn't shift page
+ *  - Keeps dismiss state persistent in localStorage
+ *  - Lightweight image preloading (first image of first 30 products)
  */
 
 const FREE_SHIPPING_THRESHOLD = 999;
@@ -125,8 +118,9 @@ function readCartFromEnvironment() {
 }
 
 export default function ShopProducts({ products = [] }) {
-  const [localProducts, setLocalProducts] = useState(null);
-  const [loading, setLoading] = useState(false);
+  // initialize to [] to avoid null -> array jumps (less layout shift)
+  const [localProducts, setLocalProducts] = useState(Array.isArray(products) && products.length ? products : []);
+  const [loading, setLoading] = useState(Array.isArray(products) && products.length ? false : true);
   const [fetchError, setFetchError] = useState(null);
   const [subtotal, setSubtotal] = useState(0);
   const [dismissed, setDismissed] = useState(() => {
@@ -136,60 +130,66 @@ export default function ShopProducts({ products = [] }) {
       return false;
     }
   });
+  // small delay to avoid banner flashing immediately during mount/deploy
+  const [bannerVisibleAfterDelay, setBannerVisibleAfterDelay] = useState(false);
 
   const lastCartRef = useRef(null);
-  const updateTimerRef = useRef(null);
+  const pollRef = useRef(null);
 
-  // Read cart periodically and from storage events, but debounce updates to avoid UI thrash.
+  // conservative cart read: initial + storage events + slow poll
   useEffect(() => {
-    function readAndMaybeUpdate() {
-      const c = readCartFromEnvironment();
-      const newSubtotal = Number.isFinite(c.subtotal) ? Number(c.subtotal) : 0;
-      // only update if value changed meaningfully (2 decimal places)
-      if (lastCartRef.current === null || Math.abs(lastCartRef.current - newSubtotal) > 0.005) {
-        lastCartRef.current = newSubtotal;
-        // debounce quick flurries
-        if (updateTimerRef.current) clearTimeout(updateTimerRef.current);
-        updateTimerRef.current = setTimeout(() => {
+    // initial read
+    const initial = readCartFromEnvironment();
+    lastCartRef.current = Number.isFinite(initial.subtotal) ? Number(initial.subtotal) : 0;
+    setSubtotal(lastCartRef.current);
+
+    function onStorage(e) {
+      // only respond to probable cart/wishlist keys (keeps re-renders low)
+      const watched = ["cart", "persist:root", "redux_state", "wishlist", "favorites"];
+      if (!e.key || watched.includes(e.key)) {
+        const c = readCartFromEnvironment();
+        const newSubtotal = Number.isFinite(c.subtotal) ? Number(c.subtotal) : 0;
+        // update only on meaningful change
+        if (Math.abs((lastCartRef.current ?? 0) - newSubtotal) > 0.005) {
+          lastCartRef.current = newSubtotal;
           setSubtotal(newSubtotal);
-        }, 300);
+        }
+        // notify listeners
+        try {
+          window.dispatchEvent(new CustomEvent("seemati:storage-sync", { detail: { key: e.key } }));
+        } catch (err) { /* ignore */ }
       }
     }
 
-    readAndMaybeUpdate();
-
-    function onStorage(e) {
-      // Notify any listeners (wishlist, other components) that storage changed
-      try {
-        const keysWeCare = ["cart", "persist:root", "redux_state", "wishlist", "favorites"];
-        if (!e.key || keysWeCare.includes(e.key)) {
-          // read updated cart
-          readAndMaybeUpdate();
-          // dispatch a custom event to let other components react (eg. wishlist sync)
-          try {
-            window.dispatchEvent(new CustomEvent("seemati:storage-sync", { detail: { key: e.key } }));
-          } catch (err) { /* silent */ }
-        }
-      } catch (err) { /* ignore */ }
-    }
     window.addEventListener("storage", onStorage);
 
-    // Poll as fallback (slower: every 2s)
-    const poll = setInterval(readAndMaybeUpdate, 2000);
+    // slow poll as a fallback (5s)
+    pollRef.current = setInterval(() => {
+      const c = readCartFromEnvironment();
+      const newSubtotal = Number.isFinite(c.subtotal) ? Number(c.subtotal) : 0;
+      if (Math.abs((lastCartRef.current ?? 0) - newSubtotal) > 0.005) {
+        lastCartRef.current = newSubtotal;
+        setSubtotal(newSubtotal);
+      }
+    }, 5000);
+
+    // small delay before showing banner to avoid flash on load
+    const bannerTimer = setTimeout(() => setBannerVisibleAfterDelay(true), 300);
 
     return () => {
       window.removeEventListener("storage", onStorage);
-      clearInterval(poll);
-      if (updateTimerRef.current) clearTimeout(updateTimerRef.current);
+      if (pollRef.current) clearInterval(pollRef.current);
+      clearTimeout(bannerTimer);
     };
   }, []);
 
-  // Fetch products once if none passed in props
+  // fetch products once (if not passed via props)
   useEffect(() => {
     let cancelled = false;
     async function fetchProducts() {
       if (Array.isArray(products) && products.length > 0) {
         setLocalProducts(products);
+        setLoading(false);
         return;
       }
       setLoading(true);
@@ -227,18 +227,14 @@ export default function ShopProducts({ products = [] }) {
       }
     }
     fetchProducts();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [products]);
 
-  // Preload primary product images (simple, light-weight)
+  // lightweight image preload for first N products (doesn't affect layout)
   useEffect(() => {
     const list = Array.isArray(products) && products.length > 0 ? products : Array.isArray(localProducts) ? localProducts : [];
     if (!list || list.length === 0) return;
-    // Only preload the first image per product and limit to first 30 products to avoid OOM/network flood.
     const toPreload = list.slice(0, 30).map((p) => {
-      // try multiple common fields
       if (Array.isArray(p.images) && p.images.length) return p.images[0];
       if (Array.isArray(p.imgs) && p.imgs.length) return p.imgs[0];
       if (p.image) return p.image;
@@ -248,26 +244,30 @@ export default function ShopProducts({ products = [] }) {
       return null;
     }).filter(Boolean);
 
-    const imgs = [];
     for (const src of toPreload) {
       try {
         const img = new Image();
         img.src = src;
-        imgs.push(img);
       } catch (e) { /* ignore */ }
     }
-    // no cleanup necessary for Image objects
   }, [localProducts, products]);
 
   const productsToShow = (Array.isArray(products) && products.length > 0) ? products : (Array.isArray(localProducts) ? localProducts : []);
 
   const remaining = Math.max(0, FREE_SHIPPING_THRESHOLD - subtotal);
 
-  // Layout styles (inline so easy to tweak)
+  // styles (inline so easy to tweak)
   const pageWrap = { padding: "24px 28px", paddingBottom: "140px", minHeight: "70vh", position: "relative" };
-  const gridStyle = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 12, alignItems: "start", marginTop: 12 };
+  const gridStyle = {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))",
+    gap: 12,
+    alignItems: "start",
+    marginTop: 12,
+    // reserve vertical space while loading to reduce layout shift
+    minHeight: loading ? 300 : undefined,
+  };
   const bannerWrap = { position: "fixed", bottom: 18, left: "50%", transform: "translateX(-50%)", zIndex: 1200, width: "min(96%, 960px)" };
-  // Banner: make it compact and force single line
   const bannerStyle = {
     background: "#e9f8f0",
     borderRadius: 28,
@@ -280,38 +280,10 @@ export default function ShopProducts({ products = [] }) {
     maxHeight: 56,
     overflow: "hidden",
   };
-  // Left: text block - force no wrap and ellipsis for long text
-  const leftStyle = {
-    display: "flex",
-    alignItems: "center",
-    gap: 12,
-    fontWeight: 700,
-    color: "#0a7b4f",
-    whiteSpace: "nowrap",
-    minWidth: 0, // needed for textOverflow to work in flexbox
-  };
-  const leftTextWrap = {
-    display: "flex",
-    flexDirection: "column",
-    minWidth: 0,
-    overflow: "hidden",
-  };
-  const mainLineStyle = {
-    fontSize: 14,
-    textOverflow: "ellipsis",
-    overflow: "hidden",
-    whiteSpace: "nowrap",
-  };
-  const subLineStyle = {
-    fontSize: 12,
-    color: "#2f6f52",
-    fontWeight: 700,
-    textOverflow: "ellipsis",
-    overflow: "hidden",
-    whiteSpace: "nowrap",
-  };
-
-  // Right side buttons - keep compact and not wrap
+  const leftStyle = { display: "flex", alignItems: "center", gap: 12, fontWeight: 700, color: "#0a7b4f", whiteSpace: "nowrap", minWidth: 0 };
+  const leftTextWrap = { display: "flex", flexDirection: "column", minWidth: 0, overflow: "hidden" };
+  const mainLineStyle = { fontSize: 14, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" };
+  const subLineStyle = { fontSize: 12, color: "#2f6f52", fontWeight: 700, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" };
   const rightStyle = { display: "flex", alignItems: "center", gap: 8, whiteSpace: "nowrap" };
 
   function handleDismiss() {
@@ -322,11 +294,9 @@ export default function ShopProducts({ products = [] }) {
   }
 
   function handleCelebrateOrContinue() {
-    // If eligible -> cart, else keep browsing (scroll to top)
     if (subtotal >= FREE_SHIPPING_THRESHOLD) {
       window.location.href = "/cart";
     } else {
-      // Scroll to top so product filters / top products visible
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
   }
@@ -349,15 +319,12 @@ export default function ShopProducts({ products = [] }) {
         </div>
       )}
 
-      {/* Banner: hide if dismissed */}
-      {!dismissed && (
+      {/* Banner — only display after short delay and not dismissed */}
+      {!dismissed && bannerVisibleAfterDelay && (
         <div style={bannerWrap} role="status" aria-live="polite" aria-atomic="true">
           <div style={bannerStyle}>
             <div style={leftStyle}>
-              <span style={{ fontSize: 16 }} aria-hidden>
-                {subtotal >= FREE_SHIPPING_THRESHOLD ? "🎉" : "🚚"}
-              </span>
-
+              <span style={{ fontSize: 16 }} aria-hidden>{subtotal >= FREE_SHIPPING_THRESHOLD ? "🎉" : "🚚"}</span>
               <div style={leftTextWrap}>
                 {subtotal >= FREE_SHIPPING_THRESHOLD ? (
                   <>
