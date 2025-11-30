@@ -3,10 +3,10 @@ import React, { useEffect, useState } from "react";
 import ShopProductCard from "./shopProductCard";
 
 /**
- * Safe ShopProducts.jsx (updated)
- * - Adds bottom padding so the fixed free-shipping banner doesn't overlap product card footers.
- * - Keeps defensive cart reading and product fetching.
- * - Forces single-line free-shipping banner (nowrap + ellipsis).
+ * ShopProducts.jsx
+ * - Single-line free-shipping banner (nowrap + ellipsis).
+ * - Defensive handling if products is not array.
+ * - Increased page bottom padding so banner doesn't overlap product cards.
  */
 
 const FREE_SHIPPING_THRESHOLD = 999;
@@ -21,11 +21,7 @@ try {
 }
 
 function safeParseJson(str) {
-  try {
-    return JSON.parse(str);
-  } catch (e) {
-    return null;
-  }
+  try { return JSON.parse(str); } catch (e) { return null; }
 }
 
 function tryComputeSubtotal(cartLike) {
@@ -40,24 +36,20 @@ function tryComputeSubtotal(cartLike) {
   if (Array.isArray(items) && items.length) {
     let sum = 0;
     for (const it of items) {
-      const p = Number(it.price ?? it.unitPrice ?? it.pricePerUnit ?? it.rate ?? 0);
-      const q = Number(it.qty ?? it.quantity ?? it.count ?? 1);
-      const pi = Number.isNaN(p) ? 0 : p;
-      const qi = Number.isNaN(q) ? 1 : q;
-      sum += pi * qi;
+      const p = Number(it.price ?? it.unitPrice ?? it.rate ?? 0);
+      const q = Number(it.qty ?? it.quantity ?? 1);
+      sum += (Number.isNaN(p) ? 0 : p) * (Number.isNaN(q) ? 1 : q);
     }
     return sum;
   }
   if (Array.isArray(cartLike) && cartLike.length) {
-    let sum2 = 0;
+    let sum = 0;
     for (const it of cartLike) {
       const p = Number(it.price ?? it.unitPrice ?? 0);
       const q = Number(it.qty ?? it.quantity ?? 1);
-      const pi = Number.isNaN(p) ? 0 : p;
-      const qi = Number.isNaN(q) ? 1 : q;
-      sum2 += pi * qi;
+      sum += (Number.isNaN(p) ? 0 : p) * (Number.isNaN(q) ? 1 : q);
     }
-    return sum2;
+    return sum;
   }
   return null;
 }
@@ -117,18 +109,19 @@ export default function ShopProducts({ products = [] }) {
   const [fetchError, setFetchError] = useState(null);
   const [subtotal, setSubtotal] = useState(0);
 
+  // update subtotal from possible sources (ls, store, window)
   useEffect(() => {
     function update() {
       const c = readCartFromEnvironment();
       setSubtotal(Number.isFinite(c.subtotal) ? c.subtotal : 0);
     }
     update();
-    function onStorage(e) {
-      const keysWeCare = ["cart", "persist:root", "redux_state"];
+    const onStorage = (e) => {
+      const keysWeCare = ["cart", "persist:root", "redux_state", "wishlist"];
       if (!e.key || keysWeCare.includes(e.key)) update();
-    }
+    };
     window.addEventListener("storage", onStorage);
-    const poll = setInterval(update, 1500);
+    const poll = setInterval(update, 1600);
     return () => {
       window.removeEventListener("storage", onStorage);
       clearInterval(poll);
@@ -138,12 +131,10 @@ export default function ShopProducts({ products = [] }) {
   useEffect(() => {
     let cancelled = false;
     async function fetchProducts() {
-      // If parent passed products array, don't fetch
       if (Array.isArray(products) && products.length > 0) {
         setLocalProducts(products.slice());
         return;
       }
-
       setLoading(true);
       setFetchError(null);
       try {
@@ -179,36 +170,32 @@ export default function ShopProducts({ products = [] }) {
       }
     }
     fetchProducts();
-    return () => {
-      cancelled = true;
-    };
-  }, [products]); // re-run if parent passes new products
+    return () => { cancelled = true; };
+  }, [products]);
 
-  const productsToShow = (Array.isArray(products) && products.length > 0) ? products : (Array.isArray(localProducts) ? localProducts : []);
-
+  const productsToShow = Array.isArray(products) && products.length > 0 ? products : (Array.isArray(localProducts) ? localProducts : []);
   const remaining = Math.max(0, FREE_SHIPPING_THRESHOLD - (Number.isFinite(subtotal) ? subtotal : 0));
 
-  // NOTE: increased paddingBottom so banner (fixed) doesn't overlap product card footers.
-  const pageWrap = { padding: "24px 28px", paddingBottom: "160px", minHeight: "70vh", position: "relative" };
-  const gridStyle = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 12, alignItems: "start", marginTop: 12 };
-  const bannerWrap = { position: "fixed", bottom: 18, left: "50%", transform: "translateX(-50%)", zIndex: 1200, width: "min(96%, 960px)" };
+  const pageWrap = { padding: "28px", paddingBottom: "160px", minHeight: "70vh", position: "relative" };
+  const gridStyle = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 14, alignItems: "start", marginTop: 14 };
 
-  // single-line banner style (nowrap + ellipsis). on very small screens, we allow normal wrapping via media query below.
+  // banner center and single-line forcing. minWidth blocks text wrapping for right actions.
+  const bannerWrap = { position: "fixed", bottom: 18, left: "50%", transform: "translateX(-50%)", zIndex: 1300, width: "min(98%, 980px)" };
   const bannerStyle = {
-    background: "#e9f8f0",
+    background: "#eaf8f0",
     borderRadius: 28,
-    padding: "8px 14px", // reduced vertical padding to keep single-line
+    padding: "8px 14px",
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    boxShadow: "0 6px 20px rgba(0,0,0,0.06)",
     gap: 12,
+    boxShadow: "0 8px 30px rgba(0,0,0,0.06)",
     whiteSpace: "nowrap",
     overflow: "hidden",
     textOverflow: "ellipsis",
   };
   const leftStyle = { display: "flex", alignItems: "center", gap: 12, fontWeight: 700, color: "#0a7b4f", minWidth: 0 };
-  const rightStyle = { display: "flex", alignItems: "center", gap: 10, flexShrink: 0 };
+  const rightStyle = { display: "flex", gap: 10, alignItems: "center", flexShrink: 0 };
 
   return (
     <div style={pageWrap}>
@@ -244,9 +231,7 @@ export default function ShopProducts({ products = [] }) {
                   <div style={{ fontSize: 15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Free shipping above ₹{FREE_SHIPPING_THRESHOLD}</div>
                   <div style={{ fontSize: 13, color: "#2f6f52", fontWeight: 700 }}>
                     Subtotal ₹{(Number(subtotal) || 0).toFixed(2)}{" "}
-                    <span style={{ fontWeight: 600, color: "#0a5cff" }}>
-                      • Add ₹{remaining.toFixed(2)} more to get free shipping
-                    </span>
+                    <span style={{ fontWeight: 600, color: "#0a5cff" }}>• Add ₹{remaining.toFixed(2)} more to get free shipping</span>
                   </div>
                 </div>
               </>
@@ -264,17 +249,13 @@ export default function ShopProducts({ products = [] }) {
               </button>
             )}
 
-            <button onClick={() => {
-              // dismiss: hide for this session
-              document.querySelectorAll("[role='status'][aria-live='polite']").forEach(el => el.style.display = 'none');
-            }} style={{ background: "transparent", border: "none", color: "#333", fontWeight: 700, textDecoration: "underline", cursor: "pointer" }}>
+            <button onClick={() => { document.querySelectorAll('[role="status"][aria-live="polite"]').forEach(el => el.style.display = 'none'); }} style={{ background: "transparent", border: "none", color: "#333", fontWeight: 700, textDecoration: "underline", cursor: "pointer" }}>
               Dismiss ✕
             </button>
           </div>
         </div>
       </div>
 
-      {/* keep simple responsive fallback */}
       <style>{`
         @media (max-width: 420px) {
           /* allow wrapping on very narrow screens so content is readable */
