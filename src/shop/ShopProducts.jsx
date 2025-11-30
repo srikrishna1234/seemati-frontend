@@ -3,13 +3,19 @@ import React, { useEffect, useState } from "react";
 import ShopProductCard from "./shopProductCard";
 
 /**
- * ShopProducts.jsx
- * - Keeps existing data/fetch logic unchanged.
- * - ONLY UI tweaks: moves product grid upwards (reduces gap below announcement ticker),
- *   keeps the running announcement ticker and compact bottom free-shipping banner.
+ * ShopProducts.jsx — stable layout version
+ *
+ * Key changes:
+ * - Uses a single BANNER_HEIGHT (56px) to size the fixed bottom banner.
+ * - Sets page paddingBottom to BANNER_HEIGHT + 12 to avoid overlap with product footers.
+ * - Removes large top paddings and margins so ticker / title / grid sit tight.
+ * - Keeps all data fetching and cart-subtotal logic unchanged.
+ * - Keeps running announcement ticker and single-line bottom banner.
  */
 
 const FREE_SHIPPING_THRESHOLD = 999;
+// set this to 56 (you can change to 48 later if needed)
+const BANNER_HEIGHT = 56;
 
 let axiosInstance = null;
 try {
@@ -111,8 +117,8 @@ function readCartFromEnvironment() {
   return { subtotal: 0, raw: null };
 }
 
-/* Announcement ticker text (edit as needed) */
-const DEFAULT_ANNOUNCEMENT = "⦿ Free Shipping on orders above ₹999 • Get 10% off on prepaid orders above ₹1499 • New arrivals added weekly!";
+// Announcement ticker default text (edit if needed)
+const DEFAULT_ANNOUNCEMENT = "⦿ Free Shipping on orders above ₹999 • Get 10% off on prepaid orders above ₹1499 • New arrivals weekly!";
 
 export default function ShopProducts({ products = [] }) {
   const [localProducts, setLocalProducts] = useState(null);
@@ -186,19 +192,27 @@ export default function ShopProducts({ products = [] }) {
 
   const remaining = Math.max(0, FREE_SHIPPING_THRESHOLD - subtotal);
 
-  // ---------- LIFT PRODUCTS: reduce top padding and remove grid top margin ----------
-  // smaller top padding so grid sits closer to header/ticker
-  const pageWrap = { padding: "8px 28px 160px 28px", minHeight: "70vh", position: "relative" };
-  // move grid up; marginTop 2 (almost zero) to minimize gap
-  const gridStyle = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 12, alignItems: "start", marginTop: 2 };
+  // Page wrapper paddingBottom uses BANNER_HEIGHT so nothing overlaps.
+  const pageWrap = { padding: `8px 28px ${BANNER_HEIGHT + 12}px 28px`, minHeight: "70vh", position: "relative" };
+  // Tight grid marginTop so products sit closer to header/ticker
+  const gridStyle = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 12, alignItems: "start", marginTop: 6 };
 
-  // Announcement ticker wrap
+  // Ticker area (red running bar) styles
   const tickerWrap = { width: "100%", overflow: "hidden", marginBottom: 8 };
+  const tickerOuterStyle = {
+    background: "#d9303e",
+    color: "#fff",
+    padding: "6px 12px",
+    borderRadius: 6,
+    display: "flex",
+    alignItems: "center",
+    height: 34,
+  };
+  const tickerInnerMask = { overflow: "hidden", width: "100%", marginLeft: 8 };
+  const tickerTextStyle = { display: "inline-block", whiteSpace: "nowrap", paddingLeft: "100%", fontWeight: 700 };
 
-  // Banner (free shipping) wrap at bottom
+  // Banner fixed at bottom using BANNER_HEIGHT
   const bannerWrap = { position: "fixed", bottom: 18, left: "50%", transform: "translateX(-50%)", zIndex: 1200, width: "min(96%, 960px)" };
-
-  // Compact single-line banner
   const bannerStyle = {
     background: "#e9f8f0",
     borderRadius: 28,
@@ -209,7 +223,7 @@ export default function ShopProducts({ products = [] }) {
     boxShadow: "0 6px 20px rgba(0,0,0,0.06)",
     gap: 12,
     whiteSpace: "nowrap",
-    height: 48,
+    height: `${BANNER_HEIGHT}px`,
     overflow: "hidden",
   };
   const leftStyle = {
@@ -229,19 +243,6 @@ export default function ShopProducts({ products = [] }) {
     gap: 10,
     whiteSpace: "nowrap",
   };
-
-  // Ticker styles
-  const tickerOuterStyle = {
-    background: "#d9303e",
-    color: "#fff",
-    padding: "6px 12px",
-    borderRadius: 6,
-    display: "flex",
-    alignItems: "center",
-    height: 34,
-  };
-  const tickerInnerMask = { overflow: "hidden", width: "100%", marginLeft: 8 };
-  const tickerTextStyle = { display: "inline-block", whiteSpace: "nowrap", paddingLeft: "100%", fontWeight: 700 };
 
   return (
     <div style={pageWrap}>
@@ -263,6 +264,7 @@ export default function ShopProducts({ products = [] }) {
         }
       `}</style>
 
+      {/* Announcement ticker */}
       <div style={tickerWrap} aria-hidden={false}>
         <div style={tickerOuterStyle} role="region" aria-label="Site announcements">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden style={{ flex: "0 0 auto" }}>
@@ -291,6 +293,7 @@ export default function ShopProducts({ products = [] }) {
         </div>
       )}
 
+      {/* fixed bottom banner */}
       <div style={bannerWrap} role="status" aria-live="polite">
         <div style={bannerStyle}>
           <div style={leftStyle}>
