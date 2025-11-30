@@ -4,26 +4,52 @@ import { Link } from "react-router-dom";
 
 /**
  * shopProductCard.jsx (replacement)
- * - Shows "MRP: ₹xxx" (dark grey, struck) when mrp exists.
- * - Prevents button overlap by allowing wrap and fixed min-width.
- * - Keeps wishlist & explore & view, zoom on hover.
+ * - Displays MRP (struck) + selling price + "You save %" calculation.
+ * - Adds View, Wishlist, Explore more buttons in footer.
+ * - Adds a simple dynamic zoom-on-hover effect over the product image.
+ *
+ * Notes:
+ * - If you want wishlist to persist, pass onToggleWishlist(product) prop
+ *   or integrate with your cart/wishlist context.
+ * - Explore more currently links to the same product view; you can change target.
  */
+
+/* ---------- helpers (kept from your robust implementation) ---------- */
 
 function extractUrlFromPossibleObject(obj) {
   if (!obj) return null;
   if (typeof obj === "string") return obj;
+
   const candidates = [
-    "url","src","secure_url","location","path","filePath","file_path","key","filename","publicUrl","public_url","original","file","uri",
+    "url",
+    "src",
+    "secure_url",
+    "location",
+    "path",
+    "filePath",
+    "file_path",
+    "key",
+    "filename",
+    "publicUrl",
+    "public_url",
+    "original",
+    "file",
+    "uri",
   ];
+
   for (const k of candidates) {
     const v = obj[k];
     if (typeof v === "string" && v.trim()) return v.trim();
   }
+
   try {
     if (obj.fields && obj.fields.file && typeof obj.fields.file.url === "string") return obj.fields.file.url;
     if (obj.file && obj.file.url) return obj.file.url;
     if (obj.attributes && obj.attributes.url) return obj.attributes.url;
-  } catch (e) {}
+  } catch (e) {
+    // ignore
+  }
+
   try {
     if (typeof obj.toJSON === "function") {
       const j = obj.toJSON();
@@ -31,21 +57,34 @@ function extractUrlFromPossibleObject(obj) {
     }
     const s = obj.toString();
     if (typeof s === "string" && s.startsWith("http")) return s;
-  } catch (e) {}
+  } catch (e) {
+    // ignore
+  }
+
   return null;
 }
 
 function absoluteifyAndRewrite(urlCandidate) {
   if (!urlCandidate) return null;
+
   try {
     const parsed = new URL(urlCandidate);
     if (parsed.hostname === "api.seemati.in") {
       parsed.hostname = window.location.hostname || "seemati.in";
     }
     return parsed.toString();
-  } catch (e) {}
-  if (urlCandidate.startsWith("//")) return `${window.location.protocol}${urlCandidate}`;
-  if (urlCandidate.startsWith("/")) return `${window.location.origin}${urlCandidate}`;
+  } catch (e) {
+    // not absolute
+  }
+
+  if (urlCandidate.startsWith("//")) {
+    return `${window.location.protocol}${urlCandidate}`;
+  }
+
+  if (urlCandidate.startsWith("/")) {
+    return `${window.location.origin}${urlCandidate}`;
+  }
+
   const prefixesToTry = [
     "https://api.seemati.in/uploads/",
     "https://seemati.in/uploads/",
@@ -53,6 +92,7 @@ function absoluteifyAndRewrite(urlCandidate) {
     "https://api.seemati.in/",
     `${window.location.origin}/uploads/`,
   ];
+
   for (const p of prefixesToTry) {
     const candidate = `${p}${urlCandidate}`;
     try {
@@ -61,12 +101,18 @@ function absoluteifyAndRewrite(urlCandidate) {
         parsed.hostname = window.location.hostname || "seemati.in";
       }
       return parsed.toString();
-    } catch (e) {}
+    } catch (e) {
+      // ignore invalid
+    }
   }
+
   return null;
 }
 
+/* ---------- component ---------- */
+
 export default function ShopProductCard({ product, onClick, onToggleWishlist }) {
+  // hooks at top
   const zoomRef = useRef(null);
   const [isWishlist, setIsWishlist] = useState(false);
 
@@ -76,20 +122,25 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
   const price = Number(product.price ?? product.mrp ?? 0);
   const mrp = typeof product.mrp !== "undefined" ? Number(product.mrp) : undefined;
 
+  // choose thumbnail
   let rawThumb = product.thumbnail ?? null;
-  if (!rawThumb && Array.isArray(product.images) && product.images.length > 0) rawThumb = product.images[0];
+  if (!rawThumb && Array.isArray(product.images) && product.images.length > 0) {
+    rawThumb = product.images[0];
+  }
 
   if (rawThumb && typeof rawThumb === "object") {
+    // console debug once
     if (!zoomRef.current?.__logged) {
       // eslint-disable-next-line no-console
       console.log("shopProductCard - raw thumbnail object for", product._id || product.slug || title, rawThumb);
-      zoomRef.current = zoomRef.current || {};
+      if (!zoomRef.current) zoomRef.current = {};
       zoomRef.current.__logged = true;
     }
   }
 
   let extracted = extractUrlFromPossibleObject(rawThumb);
   if (extracted && typeof extracted === "string" && extracted.includes("[object")) extracted = null;
+
   let finalUrl = absoluteifyAndRewrite(extracted);
   if (!finalUrl && typeof rawThumb === "string") finalUrl = absoluteifyAndRewrite(rawThumb);
 
@@ -101,14 +152,17 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
 
   const imgSrc = finalUrl || placeholder;
 
-  // compute save% safely
+  // Calculate save % safely (digit-by-digit as required)
   let savePercent = null;
   if (typeof mrp === "number" && mrp > 0 && !Number.isNaN(price)) {
-    const diff = mrp - price;
-    const ratio = diff / mrp;
+    // compute difference
+    const diff = mrp - price; // exact subtraction
+    const ratio = diff / mrp; // fractional saving
+    // percentage to nearest integer:
     savePercent = Math.round(ratio * 100);
   }
 
+  // inline styles kept self-contained
   const cardStyle = {
     width: "100%",
     maxWidth: 260,
@@ -120,20 +174,18 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
     display: "flex",
     flexDirection: "column",
     alignItems: "stretch",
-    margin: "12px",
   };
 
   const imageWrapStyle = {
     width: "100%",
     height: 260,
     background: "#fff",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    position: "relative",
+    display: "block",
     overflow: "hidden",
+    position: "relative",
   };
 
+  // zoom container styles
   const zoomImgStyle = {
     width: "100%",
     height: "100%",
@@ -149,18 +201,15 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
     textAlign: "center",
   };
 
-  // footer: allow wrapping so buttons never overlap
   const footerStyle = {
     padding: "10px 12px",
     display: "flex",
     gap: 8,
     justifyContent: "center",
     alignItems: "center",
-    flexWrap: "wrap",
   };
 
   const viewBtnStyle = {
-    minWidth: 72,
     display: "inline-block",
     padding: "7px 12px",
     borderRadius: 8,
@@ -169,11 +218,9 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
     textDecoration: "none",
     fontWeight: 700,
     fontSize: 13,
-    textAlign: "center",
   };
 
   const smallBtnStyle = {
-    minWidth: 96,
     display: "inline-flex",
     alignItems: "center",
     gap: 8,
@@ -185,9 +232,9 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
     fontWeight: 700,
     fontSize: 13,
     textDecoration: "none",
-    justifyContent: "center",
   };
 
+  // handlers
   function handleWishlistClick(e) {
     e.preventDefault();
     e.stopPropagation();
@@ -196,28 +243,36 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
     if (typeof onToggleWishlist === "function") {
       try {
         onToggleWishlist(product, next);
-      } catch (err) {}
+      } catch (err) {
+        // ignore
+      }
     } else {
       // eslint-disable-next-line no-console
       console.log("Wishlist toggled for", product._id || product.slug || title, "=>", next);
     }
   }
 
+  // dynamic zoom handlers - simple scale + transform-origin based on mouse position
   function handleMouseMove(e) {
     const el = zoomRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * 100;
+    const x = ((e.clientX - rect.left) / rect.width) * 100; // 0..100
     const y = ((e.clientY - rect.top) / rect.height) * 100;
+    // set transform origin
     const img = el.querySelector("img");
-    if (img) img.style.transformOrigin = `${x}% ${y}%`;
+    if (img) {
+      img.style.transformOrigin = `${x}% ${y}%`;
+    }
   }
 
   function handleMouseEnter() {
     const el = zoomRef.current;
     if (!el) return;
     const img = el.querySelector("img");
-    if (img) img.style.transform = "scale(1.6)";
+    if (img) {
+      img.style.transform = "scale(1.6)"; // gentle zoom
+    }
   }
 
   function handleMouseLeave() {
@@ -256,7 +311,12 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
           style={zoomImgStyle}
           onError={(e) => {
             // eslint-disable-next-line no-console
-            console.error("shopProductCard - image failed to load for", product._id || product.slug || title, "src=", e.currentTarget.src);
+            console.error(
+              "shopProductCard - image failed to load for",
+              product._id || product.slug || title,
+              "src=",
+              e.currentTarget.src
+            );
             const placeholderSrc = placeholder;
             if (e.currentTarget.src !== placeholderSrc) e.currentTarget.src = placeholderSrc;
           }}
@@ -267,18 +327,14 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
         <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "#111" }}>{title}</h3>
 
         <div style={{ marginTop: 6 }}>
+          {/* show MRP struck through if present */}
           {typeof mrp === "number" && mrp > 0 && mrp !== price ? (
-            <div style={{ display: "flex", justifyContent: "center", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-              <div style={{ color: "#444", fontSize: 13 }}>
-                <span style={{ marginRight: 6, fontWeight: 600 }}>MRP:</span>
-                <span style={{ textDecoration: "line-through", color: "#555" }}>₹{mrp.toFixed(2)}</span>
-              </div>
-
+            <div style={{ display: "flex", justifyContent: "center", alignItems: "baseline", gap: 8 }}>
+              <div style={{ textDecoration: "line-through", color: "#999", fontSize: 13 }}>₹{mrp.toFixed(2)}</div>
               <div style={{ fontWeight: 800, fontSize: 16, color: "#0a5cff" }}>₹{price.toFixed(2)}</div>
-
               {savePercent !== null && (
                 <div style={{ color: "#0a9b4a", fontWeight: 700, fontSize: 12, background: "#e6fbf0", padding: "4px 8px", borderRadius: 8 }}>
-                  You save {savePercent}%
+                  You save {savePercent}% 
                 </div>
               )}
             </div>
@@ -293,7 +349,13 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
           View
         </Link>
 
-        <button onClick={handleWishlistClick} aria-pressed={isWishlist} title={isWishlist ? "Remove from wishlist" : "Add to wishlist"} style={smallBtnStyle}>
+        <button
+          onClick={handleWishlistClick}
+          aria-pressed={isWishlist}
+          title={isWishlist ? "Remove from wishlist" : "Add to wishlist"}
+          style={smallBtnStyle}
+        >
+          {/* simple heart icon (unicode) */}
           <span style={{ color: isWishlist ? "#e53935" : "#111", fontSize: 16 }}>{isWishlist ? "♥" : "♡"}</span>
           <span style={{ fontWeight: 700 }}>{isWishlist ? "Saved" : "Wishlist"}</span>
         </button>
