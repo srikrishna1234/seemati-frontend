@@ -5,7 +5,7 @@ import { Link } from "react-router-dom";
 /**
  * shopProductCard.jsx (updated)
  * - Slightly lifts the image (reduced gap) so visual center sits higher.
- * - Wishlist persistence via localStorage and firing window 'wishlistUpdated' event.
+ * - Wishlist persistence via localStorage and firing window 'wishlistUpdated' and 'seemati:wishlist-updated' events.
  * - Keeps View centered and actions below. Defensive and self-contained.
  */
 
@@ -20,8 +20,10 @@ function extractUrlFromPossibleObject(obj) {
   ];
 
   for (const k of candidates) {
-    const v = obj[k];
-    if (typeof v === "string" && v.trim()) return v.trim();
+    try {
+      const v = obj[k];
+      if (typeof v === "string" && v.trim()) return v.trim();
+    } catch (e) {}
   }
 
   try {
@@ -45,8 +47,9 @@ function extractUrlFromPossibleObject(obj) {
 function absoluteifyAndRewrite(urlCandidate) {
   if (!urlCandidate) return null;
   try {
-    const parsed = new URL(urlCandidate);
-    if (parsed.hostname === "api.seemati.in") parsed.hostname = window.location.hostname || "seemati.in";
+    const parsed = new URL(urlCandidate, window.location.origin);
+    // keep hostname rewrite conservative; do not change protocol
+    if (parsed.hostname === "api.seemati.in") parsed.hostname = window.location.hostname || parsed.hostname;
     return parsed.toString();
   } catch (e) {}
   if (urlCandidate.startsWith("//")) return `${window.location.protocol}${urlCandidate}`;
@@ -58,7 +61,7 @@ function absoluteifyAndRewrite(urlCandidate) {
     const candidate = `${p}${urlCandidate}`;
     try {
       const parsed = new URL(candidate);
-      if (parsed.hostname === "api.seemati.in") parsed.hostname = window.location.hostname || "seemati.in";
+      if (parsed.hostname === "api.seemati.in") parsed.hostname = window.location.hostname || parsed.hostname;
       return parsed.toString();
     } catch (e) {}
   }
@@ -82,11 +85,17 @@ function readWishlistFromStorage() {
 function saveWishlistToStorage(arr) {
   try {
     localStorage.setItem("wishlist", JSON.stringify(arr));
-    // dispatch event for other parts of the app (header) to update counts
-    const ev = new CustomEvent("wishlistUpdated", { detail: { count: arr.length } });
-    window.dispatchEvent(ev);
+    // dispatch event(s) for other parts of the app (header) to update counts
+    try {
+      const ev1 = new CustomEvent("wishlistUpdated", { detail: { count: arr.length, ids: arr.slice() } });
+      window.dispatchEvent(ev1);
+    } catch (e) {}
+    try {
+      const ev2 = new CustomEvent("seemati:wishlist-updated", { detail: { count: arr.length, ids: arr.slice() } });
+      window.dispatchEvent(ev2);
+    } catch (e) {}
   } catch (e) {
-    // ignore
+    // ignore storage errors
   }
 }
 
@@ -100,7 +109,7 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
     const list = readWishlistFromStorage();
     const id = (product && (product._id ?? product.id ?? product.slug)) ?? null;
     if (!id) return;
-    setIsWishlist(list.includes(String(id)));
+    setIsWishlist(list.map(String).includes(String(id)));
   }, [product]);
 
   if (!product) return null;
@@ -116,7 +125,7 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
   if (rawThumb && typeof rawThumb === "object") {
     if (!zoomRef.current?.__logged) {
       // eslint-disable-next-line no-console
-      console.log("shopProductCard - raw thumbnail object for", product._id || product.slug || title, rawThumb);
+      console.log("shopProductCard - raw thumbnail object for", product._id || product.slug || title);
       zoomRef.current = zoomRef.current || {};
       zoomRef.current.__logged = true;
     }

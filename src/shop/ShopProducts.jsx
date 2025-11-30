@@ -6,6 +6,7 @@ import ShopProductCard from "./shopProductCard";
  * Safe ShopProducts.jsx (updated)
  * - Adds bottom padding so the fixed free-shipping banner doesn't overlap product card footers.
  * - Keeps defensive cart reading and product fetching.
+ * - Forces single-line free-shipping banner (nowrap + ellipsis).
  */
 
 const FREE_SHIPPING_THRESHOLD = 999;
@@ -137,7 +138,12 @@ export default function ShopProducts({ products = [] }) {
   useEffect(() => {
     let cancelled = false;
     async function fetchProducts() {
-      if (Array.isArray(products) && products.length > 0) return;
+      // If parent passed products array, don't fetch
+      if (Array.isArray(products) && products.length > 0) {
+        setLocalProducts(products.slice());
+        return;
+      }
+
       setLoading(true);
       setFetchError(null);
       try {
@@ -176,19 +182,33 @@ export default function ShopProducts({ products = [] }) {
     return () => {
       cancelled = true;
     };
-  }, []); // run once
+  }, [products]); // re-run if parent passes new products
 
   const productsToShow = (Array.isArray(products) && products.length > 0) ? products : (Array.isArray(localProducts) ? localProducts : []);
 
-  const remaining = Math.max(0, FREE_SHIPPING_THRESHOLD - subtotal);
+  const remaining = Math.max(0, FREE_SHIPPING_THRESHOLD - (Number.isFinite(subtotal) ? subtotal : 0));
 
   // NOTE: increased paddingBottom so banner (fixed) doesn't overlap product card footers.
   const pageWrap = { padding: "24px 28px", paddingBottom: "160px", minHeight: "70vh", position: "relative" };
   const gridStyle = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 12, alignItems: "start", marginTop: 12 };
   const bannerWrap = { position: "fixed", bottom: 18, left: "50%", transform: "translateX(-50%)", zIndex: 1200, width: "min(96%, 960px)" };
-  const bannerStyle = { background: "#e9f8f0", borderRadius: 28, padding: "12px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", boxShadow: "0 6px 20px rgba(0,0,0,0.06)", gap: 12 };
-  const leftStyle = { display: "flex", alignItems: "center", gap: 12, fontWeight: 700, color: "#0a7b4f" };
-  const rightStyle = { display: "flex", alignItems: "center", gap: 10 };
+
+  // single-line banner style (nowrap + ellipsis). on very small screens, we allow normal wrapping via media query below.
+  const bannerStyle = {
+    background: "#e9f8f0",
+    borderRadius: 28,
+    padding: "8px 14px", // reduced vertical padding to keep single-line
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    boxShadow: "0 6px 20px rgba(0,0,0,0.06)",
+    gap: 12,
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  };
+  const leftStyle = { display: "flex", alignItems: "center", gap: 12, fontWeight: 700, color: "#0a7b4f", minWidth: 0 };
+  const rightStyle = { display: "flex", alignItems: "center", gap: 10, flexShrink: 0 };
 
   return (
     <div style={pageWrap}>
@@ -212,18 +232,18 @@ export default function ShopProducts({ products = [] }) {
             {subtotal >= FREE_SHIPPING_THRESHOLD ? (
               <>
                 <span style={{ fontSize: 18 }}>🎉</span>
-                <div>
-                  <div style={{ fontSize: 15 }}>Congrats — you are eligible for free shipping</div>
-                  <div style={{ fontSize: 13, color: "#2f6f52", fontWeight: 700 }}>Subtotal ₹{subtotal.toFixed(2)}</div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Congrats — you are eligible for free shipping</div>
+                  <div style={{ fontSize: 13, color: "#2f6f52", fontWeight: 700 }}>Subtotal ₹{(Number(subtotal) || 0).toFixed(2)}</div>
                 </div>
               </>
             ) : (
               <>
                 <span style={{ fontSize: 18 }}>🚚</span>
-                <div>
-                  <div style={{ fontSize: 15 }}>Free shipping above ₹{FREE_SHIPPING_THRESHOLD}</div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Free shipping above ₹{FREE_SHIPPING_THRESHOLD}</div>
                   <div style={{ fontSize: 13, color: "#2f6f52", fontWeight: 700 }}>
-                    Subtotal ₹{subtotal.toFixed(2)}{" "}
+                    Subtotal ₹{(Number(subtotal) || 0).toFixed(2)}{" "}
                     <span style={{ fontWeight: 600, color: "#0a5cff" }}>
                       • Add ₹{remaining.toFixed(2)} more to get free shipping
                     </span>
@@ -244,12 +264,23 @@ export default function ShopProducts({ products = [] }) {
               </button>
             )}
 
-            <button onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })} style={{ background: "transparent", border: "none", color: "#333", fontWeight: 700, textDecoration: "underline", cursor: "pointer" }}>
+            <button onClick={() => {
+              // dismiss: hide for this session
+              document.querySelectorAll("[role='status'][aria-live='polite']").forEach(el => el.style.display = 'none');
+            }} style={{ background: "transparent", border: "none", color: "#333", fontWeight: 700, textDecoration: "underline", cursor: "pointer" }}>
               Dismiss ✕
             </button>
           </div>
         </div>
       </div>
+
+      {/* keep simple responsive fallback */}
+      <style>{`
+        @media (max-width: 420px) {
+          /* allow wrapping on very narrow screens so content is readable */
+          div[role="status"][aria-live="polite"] > div { white-space: normal !important; }
+        }
+      `}</style>
     </div>
   );
 }
