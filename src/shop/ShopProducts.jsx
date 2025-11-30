@@ -3,22 +3,13 @@ import React, { useEffect, useState } from "react";
 import ShopProductCard from "./shopProductCard";
 
 /**
- * ShopProducts.jsx
- * - Single-line free-shipping banner (nowrap + ellipsis).
- * - Defensive handling if products is not array.
- * - Increased page bottom padding so banner doesn't overlap product cards.
+ * ShopProducts.jsx (build-safe)
+ * - No top-level require/import of axiosInstance (avoids SSR build errors).
+ * - Uses dynamic import inside effect (browser-only) or fetch fallback.
+ * - Forces single-line free-shipping banner with responsive fallback.
  */
 
 const FREE_SHIPPING_THRESHOLD = 999;
-
-let axiosInstance = null;
-try {
-  // dynamic require to avoid bundler errors if file missing
-  // eslint-disable-next-line global-require
-  axiosInstance = require("../api/axiosInstance").default;
-} catch (e) {
-  axiosInstance = null;
-}
 
 function safeParseJson(str) {
   try { return JSON.parse(str); } catch (e) { return null; }
@@ -70,34 +61,39 @@ function extractCartFromParsed(parsed) {
 }
 
 function readCartFromEnvironment() {
-  const possibleWindowNames = ["__PRELOADED_STATE__", "__REDUX_STATE__", "REDUX_STATE"];
-  for (const name of possibleWindowNames) {
-    try {
+  try {
+    const possibleWindowNames = ["__PRELOADED_STATE__", "__REDUX_STATE__", "REDUX_STATE"];
+    for (const name of possibleWindowNames) {
+      if (typeof window === "undefined") break;
       const val = window?.[name];
       if (val) {
         const cart = val.cart ?? val.cartSlice ?? val.cartReducer ?? val?.root?.cart ?? val;
         const subtotal = tryComputeSubtotal(cart);
         if (typeof subtotal === "number") return { subtotal, raw: cart };
       }
-    } catch (e) {}
-  }
+    }
 
-  const lsKeys = ["cart", "persist:root", "redux_state", "reduxState", "app_state"];
-  for (const k of lsKeys) {
+    const lsKeys = ["cart", "persist:root", "redux_state", "reduxState", "app_state"];
+    if (typeof window !== "undefined") {
+      for (const k of lsKeys) {
+        try {
+          const raw = localStorage.getItem(k);
+          if (!raw) continue;
+          const parsed = safeParseJson(raw) ?? raw;
+          const maybe = extractCartFromParsed(parsed);
+          const subtotal = tryComputeSubtotal(maybe);
+          if (typeof subtotal === "number") return { subtotal, raw: maybe };
+        } catch (e) {}
+      }
+    }
+
     try {
-      const raw = localStorage.getItem(k);
-      if (!raw) continue;
-      const parsed = safeParseJson(raw) ?? raw;
-      const maybe = extractCartFromParsed(parsed);
-      const subtotal = tryComputeSubtotal(maybe);
-      if (typeof subtotal === "number") return { subtotal, raw: maybe };
+      if (typeof window !== "undefined") {
+        const maybeStore = window?.__STORE__ ?? window?.appState ?? window?.APP_STATE;
+        const subtotal = tryComputeSubtotal(maybeStore);
+        if (typeof subtotal === "number") return { subtotal, raw: maybeStore };
+      }
     } catch (e) {}
-  }
-
-  try {
-    const maybeStore = window?.__STORE__ ?? window?.appState ?? window?.APP_STATE;
-    const subtotal = tryComputeSubtotal(maybeStore);
-    if (typeof subtotal === "number") return { subtotal, raw: maybeStore };
   } catch (e) {}
 
   return { subtotal: 0, raw: null };
@@ -109,27 +105,32 @@ export default function ShopProducts({ products = [] }) {
   const [fetchError, setFetchError] = useState(null);
   const [subtotal, setSubtotal] = useState(0);
 
-  // update subtotal from possible sources (ls, store, window)
+  // subtotal updater (browser only)
   useEffect(() => {
     function update() {
       const c = readCartFromEnvironment();
       setSubtotal(Number.isFinite(c.subtotal) ? c.subtotal : 0);
     }
     update();
-    const onStorage = (e) => {
+
+    function onStorage(e) {
       const keysWeCare = ["cart", "persist:root", "redux_state", "wishlist"];
       if (!e.key || keysWeCare.includes(e.key)) update();
-    };
-    window.addEventListener("storage", onStorage);
-    const poll = setInterval(update, 1600);
+    }
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("storage", onStorage);
+    }
+    const poll = setInterval(update, 1500);
     return () => {
-      window.removeEventListener("storage", onStorage);
+      if (typeof window !== "undefined") window.removeEventListener("storage", onStorage);
       clearInterval(poll);
     };
   }, []);
 
   useEffect(() => {
     let cancelled = false;
+
     async function fetchProducts() {
       if (Array.isArray(products) && products.length > 0) {
         setLocalProducts(products.slice());
@@ -137,6 +138,19 @@ export default function ShopProducts({ products = [] }) {
       }
       setLoading(true);
       setFetchError(null);
+
+      // try dynamic import of axiosInstance only in browser and only if available
+      let axiosInstance = null;
+      if (typeof window !== "undefined") {
+        try {
+          // dynamic import keeps bundlers from breaking during SSR
+          // eslint-disable-next-line global-require
+          axiosInstance = require("../api/axiosInstance").default;
+        } catch (e) {
+          axiosInstance = null;
+        }
+      }
+
       try {
         if (axiosInstance) {
           const resp = await axiosInstance.get("/api/products?limit=100");
@@ -149,16 +163,22 @@ export default function ShopProducts({ products = [] }) {
           else items = data;
           if (!cancelled) setLocalProducts(Array.isArray(items) ? items : []);
         } else {
-          const r = await fetch("/api/products?limit=100");
-          if (!r.ok) throw new Error(`fetch /api/products failed: ${r.status}`);
-          const j = await r.json();
-          let items = null;
-          if (Array.isArray(j)) items = j;
-          else if (Array.isArray(j.docs)) items = j.docs;
-          else if (Array.isArray(j.products)) items = j.products;
-          else if (Array.isArray(j.data)) items = j.data;
-          else items = j;
-          if (!cancelled) setLocalProducts(Array.isArray(items) ? items : []);
+          // safe fetch (works both in dev & prod browser)
+          if (typeof window === "undefined") {
+            // server/build environment - avoid fetch (can't reach browser API)
+            if (!cancelled) setLocalProducts([]);
+          } else {
+            const r = await fetch("/api/products?limit=100");
+            if (!r.ok) throw new Error(`fetch /api/products failed: ${r.status}`);
+            const j = await r.json();
+            let items = null;
+            if (Array.isArray(j)) items = j;
+            else if (Array.isArray(j.docs)) items = j.docs;
+            else if (Array.isArray(j.products)) items = j.products;
+            else if (Array.isArray(j.data)) items = j.data;
+            else items = j;
+            if (!cancelled) setLocalProducts(Array.isArray(items) ? items : []);
+          }
         }
       } catch (err) {
         if (!cancelled) {
@@ -169,6 +189,7 @@ export default function ShopProducts({ products = [] }) {
         if (!cancelled) setLoading(false);
       }
     }
+
     fetchProducts();
     return () => { cancelled = true; };
   }, [products]);
@@ -176,26 +197,26 @@ export default function ShopProducts({ products = [] }) {
   const productsToShow = Array.isArray(products) && products.length > 0 ? products : (Array.isArray(localProducts) ? localProducts : []);
   const remaining = Math.max(0, FREE_SHIPPING_THRESHOLD - (Number.isFinite(subtotal) ? subtotal : 0));
 
-  const pageWrap = { padding: "28px", paddingBottom: "160px", minHeight: "70vh", position: "relative" };
-  const gridStyle = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 14, alignItems: "start", marginTop: 14 };
+  const pageWrap = { padding: "24px 28px", paddingBottom: "160px", minHeight: "70vh", position: "relative" };
+  const gridStyle = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 12, alignItems: "start", marginTop: 12 };
 
-  // banner center and single-line forcing. minWidth blocks text wrapping for right actions.
-  const bannerWrap = { position: "fixed", bottom: 18, left: "50%", transform: "translateX(-50%)", zIndex: 1300, width: "min(98%, 980px)" };
+  // banner centered and single-line forcing; right side won't shrink the left text into new line.
+  const bannerWrap = { position: "fixed", bottom: 18, left: "50%", transform: "translateX(-50%)", zIndex: 1200, width: "min(96%, 960px)" };
   const bannerStyle = {
-    background: "#eaf8f0",
+    background: "#e9f8f0",
     borderRadius: 28,
     padding: "8px 14px",
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
+    boxShadow: "0 6px 20px rgba(0,0,0,0.06)",
     gap: 12,
-    boxShadow: "0 8px 30px rgba(0,0,0,0.06)",
     whiteSpace: "nowrap",
     overflow: "hidden",
     textOverflow: "ellipsis",
   };
   const leftStyle = { display: "flex", alignItems: "center", gap: 12, fontWeight: 700, color: "#0a7b4f", minWidth: 0 };
-  const rightStyle = { display: "flex", gap: 10, alignItems: "center", flexShrink: 0 };
+  const rightStyle = { display: "flex", alignItems: "center", gap: 10, flexShrink: 0 };
 
   return (
     <div style={pageWrap}>
@@ -231,7 +252,9 @@ export default function ShopProducts({ products = [] }) {
                   <div style={{ fontSize: 15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Free shipping above ₹{FREE_SHIPPING_THRESHOLD}</div>
                   <div style={{ fontSize: 13, color: "#2f6f52", fontWeight: 700 }}>
                     Subtotal ₹{(Number(subtotal) || 0).toFixed(2)}{" "}
-                    <span style={{ fontWeight: 600, color: "#0a5cff" }}>• Add ₹{remaining.toFixed(2)} more to get free shipping</span>
+                    <span style={{ fontWeight: 600, color: "#0a5cff" }}>
+                      • Add ₹{remaining.toFixed(2)} more to get free shipping
+                    </span>
                   </div>
                 </div>
               </>
@@ -249,7 +272,10 @@ export default function ShopProducts({ products = [] }) {
               </button>
             )}
 
-            <button onClick={() => { document.querySelectorAll('[role="status"][aria-live="polite"]').forEach(el => el.style.display = 'none'); }} style={{ background: "transparent", border: "none", color: "#333", fontWeight: 700, textDecoration: "underline", cursor: "pointer" }}>
+            <button onClick={() => {
+              // dismiss: hide for this session
+              if (typeof document !== "undefined") document.querySelectorAll('[role="status"][aria-live="polite"]').forEach(el => el.style.display = 'none');
+            }} style={{ background: "transparent", border: "none", color: "#333", fontWeight: 700, textDecoration: "underline", cursor: "pointer" }}>
               Dismiss ✕
             </button>
           </div>
