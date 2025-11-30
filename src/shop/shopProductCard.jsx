@@ -3,10 +3,11 @@ import React, { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 /**
- * shopProductCard.jsx (replacement)
- * - Fixes button overlap by splitting footer into left/right groups (responsive).
- * - Shows "MRP" label and makes MRP price dark grey.
- * - Keeps zoom-on-hover + wishlist + explore + view.
+ * shopProductCard.jsx
+ * - View button centered below price.
+ * - "You save" moved left below price and shows percentage + rupee value.
+ * - MRP label visible and dark grey.
+ * - Keeps zoom-on-hover + wishlist + explore.
  */
 
 /* ---------- helpers (kept robust) ---------- */
@@ -41,9 +42,7 @@ function extractUrlFromPossibleObject(obj) {
     if (obj.fields && obj.fields.file && typeof obj.fields.file.url === "string") return obj.fields.file.url;
     if (obj.file && obj.file.url) return obj.file.url;
     if (obj.attributes && obj.attributes.url) return obj.attributes.url;
-  } catch (e) {
-    // ignore
-  }
+  } catch (e) {}
 
   try {
     if (typeof obj.toJSON === "function") {
@@ -52,9 +51,7 @@ function extractUrlFromPossibleObject(obj) {
     }
     const s = obj.toString();
     if (typeof s === "string" && s.startsWith("http")) return s;
-  } catch (e) {
-    // ignore
-  }
+  } catch (e) {}
 
   return null;
 }
@@ -68,17 +65,10 @@ function absoluteifyAndRewrite(urlCandidate) {
       parsed.hostname = window.location.hostname || "seemati.in";
     }
     return parsed.toString();
-  } catch (e) {
-    // not absolute
-  }
+  } catch (e) {}
 
-  if (urlCandidate.startsWith("//")) {
-    return `${window.location.protocol}${urlCandidate}`;
-  }
-
-  if (urlCandidate.startsWith("/")) {
-    return `${window.location.origin}${urlCandidate}`;
-  }
+  if (urlCandidate.startsWith("//")) return `${window.location.protocol}${urlCandidate}`;
+  if (urlCandidate.startsWith("/")) return `${window.location.origin}${urlCandidate}`;
 
   const prefixesToTry = [
     "https://api.seemati.in/uploads/",
@@ -96,9 +86,7 @@ function absoluteifyAndRewrite(urlCandidate) {
         parsed.hostname = window.location.hostname || "seemati.in";
       }
       return parsed.toString();
-    } catch (e) {
-      // ignore invalid
-    }
+    } catch (e) {}
   }
 
   return null;
@@ -107,7 +95,6 @@ function absoluteifyAndRewrite(urlCandidate) {
 /* ---------- component ---------- */
 
 export default function ShopProductCard({ product, onClick, onToggleWishlist }) {
-  // hooks
   const zoomRef = useRef(null);
   const [isWishlist, setIsWishlist] = useState(false);
 
@@ -117,13 +104,10 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
   const price = Number(product.price ?? product.mrp ?? 0);
   const mrp = typeof product.mrp !== "undefined" ? Number(product.mrp) : undefined;
 
-  // pick thumbnail candidate
+  // image pick
   let rawThumb = product.thumbnail ?? null;
-  if (!rawThumb && Array.isArray(product.images) && product.images.length > 0) {
-    rawThumb = product.images[0];
-  }
+  if (!rawThumb && Array.isArray(product.images) && product.images.length > 0) rawThumb = product.images[0];
 
-  // debug once if object
   if (rawThumb && typeof rawThumb === "object") {
     if (!zoomRef.current?.__logged) {
       // eslint-disable-next-line no-console
@@ -135,7 +119,6 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
 
   let extracted = extractUrlFromPossibleObject(rawThumb);
   if (extracted && typeof extracted === "string" && extracted.includes("[object")) extracted = null;
-
   let finalUrl = absoluteifyAndRewrite(extracted);
   if (!finalUrl && typeof rawThumb === "string") finalUrl = absoluteifyAndRewrite(rawThumb);
 
@@ -147,15 +130,17 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
 
   const imgSrc = finalUrl || placeholder;
 
-  // compute save% safely
+  // save % and rupee saving
   let savePercent = null;
+  let saveRupees = null;
   if (typeof mrp === "number" && mrp > 0 && !Number.isNaN(price)) {
     const diff = mrp - price;
     const ratio = diff / mrp;
     savePercent = Math.round(ratio * 100);
+    saveRupees = Math.max(0, diff);
   }
 
-  /* ---------- inline styles (kept self-contained) ---------- */
+  /* ---------- inline styles ---------- */
   const cardStyle = {
     width: "100%",
     maxWidth: 260,
@@ -196,24 +181,33 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
     textAlign: "center",
   };
 
-  // footer is split into left + right so buttons won't overlap
-  const footerContainerStyle = {
-    padding: "10px 12px",
+  // footer layout: view button sits centered in its row; other actions below it
+  const footerSplitStyle = {
     display: "flex",
-    gap: 12,
-    justifyContent: "space-between",
+    flexDirection: "column",
+    gap: 10,
+    padding: "10px 12px",
+  };
+
+  const viewRowStyle = {
+    display: "flex",
+    justifyContent: "center", // center the View button
+    alignItems: "center",
+  };
+
+  const actionsRowStyle = {
+    display: "flex",
+    gap: 8,
+    justifyContent: "center",
     alignItems: "center",
     flexWrap: "wrap",
   };
 
-  const leftGroup = { display: "flex", gap: 8, alignItems: "center" };
-  const rightGroup = { display: "flex", gap: 8, alignItems: "center" };
-
   const viewBtnStyle = {
-    minWidth: 72,
+    minWidth: 84,
     display: "inline-block",
-    padding: "7px 12px",
-    borderRadius: 8,
+    padding: "8px 14px",
+    borderRadius: 10,
     background: "#6a0dad",
     color: "#fff",
     textDecoration: "none",
@@ -248,9 +242,7 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
     if (typeof onToggleWishlist === "function") {
       try {
         onToggleWishlist(product, next);
-      } catch (err) {
-        // ignore
-      }
+      } catch (err) {}
     } else {
       // eslint-disable-next-line no-console
       console.log("Wishlist toggled for", product._id || product.slug || title, "=>", next);
@@ -273,9 +265,7 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
     const el = zoomRef.current;
     if (!el) return;
     const img = el.querySelector("img");
-    if (img) {
-      img.style.transform = "scale(1.6)";
-    }
+    if (img) img.style.transform = "scale(1.6)";
   }
 
   function handleMouseLeave() {
@@ -314,12 +304,7 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
           style={zoomImgStyle}
           onError={(e) => {
             // eslint-disable-next-line no-console
-            console.error(
-              "shopProductCard - image failed to load for",
-              product._id || product.slug || title,
-              "src=",
-              e.currentTarget.src
-            );
+            console.error("shopProductCard - image failed to load for", product._id || product.slug || title, "src=", e.currentTarget.src);
             const placeholderSrc = placeholder;
             if (e.currentTarget.src !== placeholderSrc) e.currentTarget.src = placeholderSrc;
           }}
@@ -329,38 +314,40 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
       <div style={bodyStyle}>
         <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "#111" }}>{title}</h3>
 
-        <div style={{ marginTop: 6 }}>
+        <div style={{ marginTop: 8 }}>
           {typeof mrp === "number" && mrp > 0 && mrp !== price ? (
-            <div style={{ display: "flex", justifyContent: "center", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-              {/* MRP label + struck price (dark grey) */}
+            <div style={{ display: "flex", justifyContent: "center", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
               <div style={{ color: "#444", fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
                 <span style={{ fontWeight: 600 }}>MRP:</span>
                 <span style={{ textDecoration: "line-through", color: "#555" }}>₹{mrp.toFixed(2)}</span>
               </div>
 
               <div style={{ fontWeight: 800, fontSize: 16, color: "#0a5cff" }}>₹{price.toFixed(2)}</div>
-
-              {savePercent !== null && (
-                <div style={{ color: "#0a9b4a", fontWeight: 700, fontSize: 12, background: "#e6fbf0", padding: "4px 8px", borderRadius: 8 }}>
-                  You save {savePercent}%
-                </div>
-              )}
             </div>
           ) : (
             <div style={{ fontWeight: 800, fontSize: 16, color: "#0a5cff" }}>₹{price.toFixed(2)}</div>
           )}
         </div>
+
+        {/* SAVE badge moved left beneath price area (visual left: use alignLeft container) */}
+        <div style={{ marginTop: 8, display: "flex", justifyContent: "flex-start" }}>
+          {savePercent !== null && (
+            <div style={{ color: "#0a9b4a", fontWeight: 700, fontSize: 12, background: "#e6fbf0", padding: "6px 10px", borderRadius: 8 }}>
+              <span style={{ marginRight: 8 }}>You save {savePercent}%</span>
+              <span style={{ color: "#0a7b4f", fontWeight: 800 }}>• ₹{saveRupees.toFixed(2)}</span>
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Footer split into two groups to avoid overlap */}
-      <div style={footerContainerStyle}>
-        <div style={leftGroup}>
+      <div style={footerSplitStyle}>
+        <div style={viewRowStyle}>
           <Link to={`/product/${idOrSlug}`} style={viewBtnStyle} aria-label={`View ${title}`}>
             View
           </Link>
         </div>
 
-        <div style={rightGroup}>
+        <div style={actionsRowStyle}>
           <button onClick={handleWishlistClick} aria-pressed={isWishlist} title={isWishlist ? "Remove from wishlist" : "Add to wishlist"} style={smallBtnStyle}>
             <span style={{ color: isWishlist ? "#e53935" : "#111", fontSize: 16 }}>{isWishlist ? "♥" : "♡"}</span>
             <span style={{ fontWeight: 700 }}>{isWishlist ? "Saved" : "Wishlist"}</span>
