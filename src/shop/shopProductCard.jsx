@@ -4,17 +4,12 @@ import { Link } from "react-router-dom";
 
 /**
  * shopProductCard.jsx (replacement)
- * - Displays MRP (struck) + selling price + "You save %" calculation.
- * - Adds View, Wishlist, Explore more buttons in footer.
- * - Adds a simple dynamic zoom-on-hover effect over the product image.
- *
- * Notes:
- * - If you want wishlist to persist, pass onToggleWishlist(product) prop
- *   or integrate with your cart/wishlist context.
- * - Explore more currently links to the same product view; you can change target.
+ * - Fixes button overlap by splitting footer into left/right groups (responsive).
+ * - Shows "MRP" label and makes MRP price dark grey.
+ * - Keeps zoom-on-hover + wishlist + explore + view.
  */
 
-/* ---------- helpers (kept from your robust implementation) ---------- */
+/* ---------- helpers (kept robust) ---------- */
 
 function extractUrlFromPossibleObject(obj) {
   if (!obj) return null;
@@ -112,7 +107,7 @@ function absoluteifyAndRewrite(urlCandidate) {
 /* ---------- component ---------- */
 
 export default function ShopProductCard({ product, onClick, onToggleWishlist }) {
-  // hooks at top
+  // hooks
   const zoomRef = useRef(null);
   const [isWishlist, setIsWishlist] = useState(false);
 
@@ -122,18 +117,18 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
   const price = Number(product.price ?? product.mrp ?? 0);
   const mrp = typeof product.mrp !== "undefined" ? Number(product.mrp) : undefined;
 
-  // choose thumbnail
+  // pick thumbnail candidate
   let rawThumb = product.thumbnail ?? null;
   if (!rawThumb && Array.isArray(product.images) && product.images.length > 0) {
     rawThumb = product.images[0];
   }
 
+  // debug once if object
   if (rawThumb && typeof rawThumb === "object") {
-    // console debug once
     if (!zoomRef.current?.__logged) {
       // eslint-disable-next-line no-console
       console.log("shopProductCard - raw thumbnail object for", product._id || product.slug || title, rawThumb);
-      if (!zoomRef.current) zoomRef.current = {};
+      zoomRef.current = zoomRef.current || {};
       zoomRef.current.__logged = true;
     }
   }
@@ -152,17 +147,15 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
 
   const imgSrc = finalUrl || placeholder;
 
-  // Calculate save % safely (digit-by-digit as required)
+  // compute save% safely
   let savePercent = null;
   if (typeof mrp === "number" && mrp > 0 && !Number.isNaN(price)) {
-    // compute difference
-    const diff = mrp - price; // exact subtraction
-    const ratio = diff / mrp; // fractional saving
-    // percentage to nearest integer:
+    const diff = mrp - price;
+    const ratio = diff / mrp;
     savePercent = Math.round(ratio * 100);
   }
 
-  // inline styles kept self-contained
+  /* ---------- inline styles (kept self-contained) ---------- */
   const cardStyle = {
     width: "100%",
     maxWidth: 260,
@@ -174,18 +167,20 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
     display: "flex",
     flexDirection: "column",
     alignItems: "stretch",
+    margin: "12px",
   };
 
   const imageWrapStyle = {
     width: "100%",
     height: 260,
     background: "#fff",
-    display: "block",
-    overflow: "hidden",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
     position: "relative",
+    overflow: "hidden",
   };
 
-  // zoom container styles
   const zoomImgStyle = {
     width: "100%",
     height: "100%",
@@ -201,15 +196,21 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
     textAlign: "center",
   };
 
-  const footerStyle = {
+  // footer is split into left + right so buttons won't overlap
+  const footerContainerStyle = {
     padding: "10px 12px",
     display: "flex",
-    gap: 8,
-    justifyContent: "center",
+    gap: 12,
+    justifyContent: "space-between",
     alignItems: "center",
+    flexWrap: "wrap",
   };
 
+  const leftGroup = { display: "flex", gap: 8, alignItems: "center" };
+  const rightGroup = { display: "flex", gap: 8, alignItems: "center" };
+
   const viewBtnStyle = {
+    minWidth: 72,
     display: "inline-block",
     padding: "7px 12px",
     borderRadius: 8,
@@ -218,9 +219,11 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
     textDecoration: "none",
     fontWeight: 700,
     fontSize: 13,
+    textAlign: "center",
   };
 
   const smallBtnStyle = {
+    minWidth: 96,
     display: "inline-flex",
     alignItems: "center",
     gap: 8,
@@ -232,9 +235,11 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
     fontWeight: 700,
     fontSize: 13,
     textDecoration: "none",
+    justifyContent: "center",
   };
 
-  // handlers
+  /* ---------- handlers ---------- */
+
   function handleWishlistClick(e) {
     e.preventDefault();
     e.stopPropagation();
@@ -252,14 +257,12 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
     }
   }
 
-  // dynamic zoom handlers - simple scale + transform-origin based on mouse position
   function handleMouseMove(e) {
     const el = zoomRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * 100; // 0..100
+    const x = ((e.clientX - rect.left) / rect.width) * 100;
     const y = ((e.clientY - rect.top) / rect.height) * 100;
-    // set transform origin
     const img = el.querySelector("img");
     if (img) {
       img.style.transformOrigin = `${x}% ${y}%`;
@@ -271,7 +274,7 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
     if (!el) return;
     const img = el.querySelector("img");
     if (img) {
-      img.style.transform = "scale(1.6)"; // gentle zoom
+      img.style.transform = "scale(1.6)";
     }
   }
 
@@ -327,14 +330,19 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
         <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "#111" }}>{title}</h3>
 
         <div style={{ marginTop: 6 }}>
-          {/* show MRP struck through if present */}
           {typeof mrp === "number" && mrp > 0 && mrp !== price ? (
-            <div style={{ display: "flex", justifyContent: "center", alignItems: "baseline", gap: 8 }}>
-              <div style={{ textDecoration: "line-through", color: "#999", fontSize: 13 }}>₹{mrp.toFixed(2)}</div>
+            <div style={{ display: "flex", justifyContent: "center", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+              {/* MRP label + struck price (dark grey) */}
+              <div style={{ color: "#444", fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontWeight: 600 }}>MRP:</span>
+                <span style={{ textDecoration: "line-through", color: "#555" }}>₹{mrp.toFixed(2)}</span>
+              </div>
+
               <div style={{ fontWeight: 800, fontSize: 16, color: "#0a5cff" }}>₹{price.toFixed(2)}</div>
+
               {savePercent !== null && (
                 <div style={{ color: "#0a9b4a", fontWeight: 700, fontSize: 12, background: "#e6fbf0", padding: "4px 8px", borderRadius: 8 }}>
-                  You save {savePercent}% 
+                  You save {savePercent}%
                 </div>
               )}
             </div>
@@ -344,26 +352,25 @@ export default function ShopProductCard({ product, onClick, onToggleWishlist }) 
         </div>
       </div>
 
-      <div style={footerStyle}>
-        <Link to={`/product/${idOrSlug}`} style={viewBtnStyle} aria-label={`View ${title}`}>
-          View
-        </Link>
+      {/* Footer split into two groups to avoid overlap */}
+      <div style={footerContainerStyle}>
+        <div style={leftGroup}>
+          <Link to={`/product/${idOrSlug}`} style={viewBtnStyle} aria-label={`View ${title}`}>
+            View
+          </Link>
+        </div>
 
-        <button
-          onClick={handleWishlistClick}
-          aria-pressed={isWishlist}
-          title={isWishlist ? "Remove from wishlist" : "Add to wishlist"}
-          style={smallBtnStyle}
-        >
-          {/* simple heart icon (unicode) */}
-          <span style={{ color: isWishlist ? "#e53935" : "#111", fontSize: 16 }}>{isWishlist ? "♥" : "♡"}</span>
-          <span style={{ fontWeight: 700 }}>{isWishlist ? "Saved" : "Wishlist"}</span>
-        </button>
+        <div style={rightGroup}>
+          <button onClick={handleWishlistClick} aria-pressed={isWishlist} title={isWishlist ? "Remove from wishlist" : "Add to wishlist"} style={smallBtnStyle}>
+            <span style={{ color: isWishlist ? "#e53935" : "#111", fontSize: 16 }}>{isWishlist ? "♥" : "♡"}</span>
+            <span style={{ fontWeight: 700 }}>{isWishlist ? "Saved" : "Wishlist"}</span>
+          </button>
 
-        <Link to={`/product/${idOrSlug}`} style={smallBtnStyle} title="Explore more">
-          <span style={{ fontSize: 14 }}>🔍</span>
-          <span style={{ fontWeight: 700 }}>Explore</span>
-        </Link>
+          <Link to={`/product/${idOrSlug}`} style={smallBtnStyle} title="Explore more">
+            <span style={{ fontSize: 14 }}>🔍</span>
+            <span style={{ fontWeight: 700 }}>Explore</span>
+          </Link>
+        </div>
       </div>
     </article>
   );
