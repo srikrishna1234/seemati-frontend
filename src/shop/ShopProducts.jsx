@@ -15,7 +15,7 @@ import ShopProductCard from "./shopProductCard";
 
 const FREE_SHIPPING_THRESHOLD = 999;
 // set this to 56 (you can change to 48 later if needed)
-const BANNER_HEIGHT = 38;
+const BANNER_HEIGHT = 28;
 
 let axiosInstance = null;
 try {
