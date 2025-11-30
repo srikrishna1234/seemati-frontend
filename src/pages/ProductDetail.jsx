@@ -26,10 +26,7 @@ function saveWishlist(arr) {
   }
 }
 
-/* burst animation and image-zoom hooks unchanged (omitted for brevity in comment) */
-/* copy the burstAt, checkAndTriggerBurst, useImageZoom helpers from your original file */
-/* For brevity here: reuse the same functions you already had above in your original file. */
-
+/* burst animation and image-zoom helpers (kept from your original file) */
 function burstAt(containerEl, options = {}) {
   if (!containerEl) containerEl = document.body;
   const { count = 20, spread = 160, lifetime = 900, colors = ["#f59e0b", "#ef4444", "#10b981", "#0b5cff", "#7c3aed"] } = options;
@@ -209,8 +206,8 @@ export default function ProductDetailPage({ products = [] }) {
 
       // candidate endpoints on backend — call backend base via axios instance
       const endpoints = [
-        `/products?slug=${encodeURIComponent(slug)}`,
-        `/products/${encodeURIComponent(slug)}`,
+        `/api/products?slug=${encodeURIComponent(slug)}`,
+        `/api/products/${encodeURIComponent(slug)}`,
       ];
 
       let lastError = null;

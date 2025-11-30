@@ -31,19 +31,22 @@ function resolveImageObject(i) {
   }
 
   // object shape { url } or { filename }
-  if (i.url) {
-    const u = String(i.url);
-    if (/^https?:\/\//i.test(u)) {
-      if (/https?:\/\/(localhost|127\.0\.0\.1)/i.test(u)) {
-        return u.replace(/^https?:\/\/[^/]+/i, apiBase);
+  if (i && typeof i === "object") {
+    if (i.url) {
+      const u = String(i.url);
+      if (/^https?:\/\//i.test(u)) {
+        if (/https?:\/\/(localhost|127\.0\.0\.1)/i.test(u)) {
+          return u.replace(/^https?:\/\/[^/]+/i, apiBase);
+        }
+        return u;
       }
-      return u;
+      return u.startsWith("/") ? `${apiBase}${u}` : `${apiBase}/${u}`;
     }
-    return u.startsWith("/") ? `${apiBase}${u}` : `${apiBase}/${u}`;
+    if (i.filename) {
+      return `${apiBase}/uploads/${i.filename}`;
+    }
   }
-  if (i.filename) {
-    return `${apiBase}/uploads/${i.filename}`;
-  }
+
   return null;
 }
 
@@ -67,12 +70,12 @@ export default function ProductListPage({ limit = 8 }) {
       try {
         const fields =
           "title,price,mrp,compareAtPrice,slug,thumbnail,images,description";
-        // NOTE: backend exposes /products (not /api/products)
+        // Request products from backend via axiosInstance — use /api/products for local proxy
         const res = await axios.get(
-          `/products?page=1&limit=${limit}&fields=${encodeURIComponent(fields)}`
+          `/api/products?page=1&limit=${encodeURIComponent(limit)}&fields=${encodeURIComponent(fields)}`
         );
 
-        const data = res.data?.products ?? res.data ?? [];
+        const data = res?.data?.products ?? res?.data ?? [];
         const normalized = (Array.isArray(data) ? data : []).map((p) => {
           const images = Array.isArray(p.images)
             ? p.images
@@ -99,12 +102,14 @@ export default function ProductListPage({ limit = 8 }) {
           }
           return { ...p, images, thumbnail };
         });
+
         if (!mountedRef.current) return;
         setProducts(normalized);
       } catch (err) {
+        // eslint-disable-next-line no-console
         console.error("Home product load error:", err);
         if (!mountedRef.current) return;
-        setError(err.message || "Failed to load products");
+        setError(err?.message || "Failed to load products");
       } finally {
         if (mountedRef.current) setLoading(false);
       }
@@ -142,4 +147,3 @@ export default function ProductListPage({ limit = 8 }) {
     </div>
   );
 }
-
