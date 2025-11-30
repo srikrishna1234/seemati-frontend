@@ -3,11 +3,10 @@ import React, { useEffect, useState } from "react";
 import ShopProductCard from "./shopProductCard";
 
 /**
- * Safe ShopProducts.jsx (updated)
- * - Adds bottom padding so the fixed free-shipping banner doesn't overlap product card footers.
- * - Keeps defensive cart reading and product fetching.
- * - ONLY UI changes: reduced top gap (lift products), and added a running announcement ticker
- *   directly below the site header (red bar, continuous scroll) — no other logic changes.
+ * ShopProducts.jsx
+ * - Keeps existing data/fetch logic unchanged.
+ * - ONLY UI tweaks: moves product grid upwards (reduces gap below announcement ticker),
+ *   keeps the running announcement ticker and compact bottom free-shipping banner.
  */
 
 const FREE_SHIPPING_THRESHOLD = 999;
@@ -112,7 +111,7 @@ function readCartFromEnvironment() {
   return { subtotal: 0, raw: null };
 }
 
-/* Announcement ticker defaults — you can change this text in future by editing the string below */
+/* Announcement ticker text (edit as needed) */
 const DEFAULT_ANNOUNCEMENT = "⦿ Free Shipping on orders above ₹999 • Get 10% off on prepaid orders above ₹1499 • New arrivals added weekly!";
 
 export default function ShopProducts({ products = [] }) {
@@ -187,19 +186,19 @@ export default function ShopProducts({ products = [] }) {
 
   const remaining = Math.max(0, FREE_SHIPPING_THRESHOLD - subtotal);
 
-  // ---------- LIFT PRODUCTS: reduced top padding & smaller grid marginTop ----------
-  // reduced top padding so product grid sits a bit higher under header (no overlap)
-  const pageWrap = { padding: "12px 28px 160px 28px", minHeight: "70vh", position: "relative" };
-  // smaller marginTop so the grid moves up — adjust if you want it closer/further
-  const gridStyle = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 12, alignItems: "start", marginTop: 8 };
+  // ---------- LIFT PRODUCTS: reduce top padding and remove grid top margin ----------
+  // smaller top padding so grid sits closer to header/ticker
+  const pageWrap = { padding: "8px 28px 160px 28px", minHeight: "70vh", position: "relative" };
+  // move grid up; marginTop 2 (almost zero) to minimize gap
+  const gridStyle = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 12, alignItems: "start", marginTop: 2 };
 
-  // Announcement ticker bar wrap (will appear under the site header, above the Shop title)
-  const tickerWrap = { width: "100%", overflow: "hidden", marginBottom: 12 };
+  // Announcement ticker wrap
+  const tickerWrap = { width: "100%", overflow: "hidden", marginBottom: 8 };
 
-  // Banner (free shipping) wrap stays fixed at bottom
+  // Banner (free shipping) wrap at bottom
   const bannerWrap = { position: "fixed", bottom: 18, left: "50%", transform: "translateX(-50%)", zIndex: 1200, width: "min(96%, 960px)" };
 
-  // Banner: kept compact single-line from earlier
+  // Compact single-line banner
   const bannerStyle = {
     background: "#e9f8f0",
     borderRadius: 28,
@@ -231,9 +230,9 @@ export default function ShopProducts({ products = [] }) {
     whiteSpace: "nowrap",
   };
 
-  // Announcement ticker styles (uses inline <style> keyframes below)
+  // Ticker styles
   const tickerOuterStyle = {
-    background: "#d9303e", // red bar
+    background: "#d9303e",
     color: "#fff",
     padding: "6px 12px",
     borderRadius: 6,
@@ -241,22 +240,11 @@ export default function ShopProducts({ products = [] }) {
     alignItems: "center",
     height: 34,
   };
-  const tickerInnerMask = {
-    overflow: "hidden",
-    width: "100%",
-    marginLeft: 8,
-  };
-  const tickerTextStyle = {
-    display: "inline-block",
-    whiteSpace: "nowrap",
-    paddingLeft: "100%", // start off-screen on the right
-    fontWeight: 700,
-  };
+  const tickerInnerMask = { overflow: "hidden", width: "100%", marginLeft: 8 };
+  const tickerTextStyle = { display: "inline-block", whiteSpace: "nowrap", paddingLeft: "100%", fontWeight: 700 };
 
-  // Note: simple accessible ticker using CSS animation. If you want different text speed, adjust '12s' below.
   return (
     <div style={pageWrap}>
-      {/* Inline keyframes and helper classes for the ticker animation */}
       <style>{`
         @keyframes seematiTicker {
           0% { transform: translateX(0%); }
@@ -267,7 +255,6 @@ export default function ShopProducts({ products = [] }) {
           padding-left: 100%;
           animation: seematiTicker 18s linear infinite;
         }
-        /* reduces animation motion on prefers-reduced-motion */
         @media (prefers-reduced-motion: reduce) {
           .seemati-ticker-inner {
             animation: none;
@@ -276,7 +263,6 @@ export default function ShopProducts({ products = [] }) {
         }
       `}</style>
 
-      {/* Announcement ticker: sits under header (Shop title will follow) */}
       <div style={tickerWrap} aria-hidden={false}>
         <div style={tickerOuterStyle} role="region" aria-label="Site announcements">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden style={{ flex: "0 0 auto" }}>
@@ -291,7 +277,7 @@ export default function ShopProducts({ products = [] }) {
         </div>
       </div>
 
-      <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800 }}>Shop</h2>
+      <h2 style={{ margin: "0 0 8px 0", fontSize: 22, fontWeight: 800 }}>Shop</h2>
 
       {loading ? (
         <div style={{ padding: 20 }}>Loading products…</div>
