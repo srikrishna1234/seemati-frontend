@@ -7,6 +7,9 @@
 // - Serves /uploads statically only for non-production local dev
 // - Basic health endpoint and error handling
 // - Adds backward-compatible /admin-api mounts for product & upload routes
+// - Conditionally mounts sitemap route if file present (sitemap.cjs or sitemap.js)
+
+'use strict';
 
 const express = require('express');
 const path = require('path');
@@ -24,7 +27,7 @@ const app = express();
 // Configuration / env
 const PORT = process.env.PORT || 4000;
 const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI;
-const RAW_FRONTEND = process.env.FRONTEND_URL || process.env.FRONTEND_ORIGIN || process.env.FRONTEND_URLS || process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URLS || 'https://seemati.in';
+const RAW_FRONTEND = process.env.FRONTEND_URL || process.env.FRONTEND_ORIGIN || process.env.FRONTEND_URLS || process.env.ALLOWED_ORIGINS || 'https://seemati.in';
 const ALLOW_CREDENTIALS = (process.env.CORS_ALLOW_CREDENTIALS || 'true').toString().toLowerCase() === 'true';
 
 // ---- Basic middleware
@@ -147,6 +150,50 @@ app.get('/_health', (req, res) => {
     }
   } catch (err) {
     console.warn('authRoutes found but failed to mount:', String(err));
+  }
+})();
+
+// ---- Sitemap route mounting (conditionally)
+// Looks for either src/routes/sitemap.cjs or src/routes/sitemap.js (common patterns).
+// If found, mount it. Otherwise, if a static public/sitemap.xml exists, note that.
+// This is intentionally non-fatal — missing sitemap will not crash the server.
+(() => {
+  try {
+    const sitemapCjs = path.join(__dirname, 'src', 'routes', 'sitemap.cjs');
+    const sitemapJs = path.join(__dirname, 'src', 'routes', 'sitemap.js');
+    const publicSitemap = path.join(__dirname, '..', 'public', 'sitemap.xml'); // adjust if your public folder is elsewhere
+    let mounted = false;
+
+    if (fs.existsSync(sitemapCjs)) {
+      const sitemapRouter = require('./src/routes/sitemap.cjs');
+      // Expect the router to handle GET /sitemap.xml or provide subpaths
+      app.use('/', sitemapRouter);
+      console.log('Mounted sitemap router from src/routes/sitemap.cjs');
+      mounted = true;
+    } else if (fs.existsSync(sitemapJs)) {
+      const sitemapRouter = require('./src/routes/sitemap.js');
+      app.use('/', sitemapRouter);
+      console.log('Mounted sitemap router from src/routes/sitemap.js');
+      mounted = true;
+    } else if (fs.existsSync(publicSitemap)) {
+      console.log('No sitemap route found, but public/sitemap.xml exists — ensure your frontend/static host serves it at /sitemap.xml');
+      // Optionally, you can serve it statically from backend for local testing:
+      if (process.env.SERVE_STATIC_SITEMAP === 'true') {
+        app.get('/sitemap.xml', (req, res) => {
+          res.sendFile(publicSitemap);
+        });
+        console.log('Serving public/sitemap.xml at /sitemap.xml (SERVE_STATIC_SITEMAP=true)');
+        mounted = true;
+      }
+    } else {
+      console.log('No sitemap route or static sitemap.xml found — skipping sitemap mount.');
+    }
+
+    if (!mounted) {
+      // Not an error; just informative
+    }
+  } catch (err) {
+    console.warn('Failed to mount sitemap route (non-fatal):', String(err));
   }
 })();
 

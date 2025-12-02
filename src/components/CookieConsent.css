@@ -1,0 +1,25 @@
+/* src/components/CookieConsent.css */
+
+.cookie-consent {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 18px;
+  display: flex;
+  justify-content: center;
+  z-index: 9999;
+  pointer-events: auto;
+}
+
+.cookie-inner {
+  max-width: 1100px;
+  width: calc(100% - 32px);
+  background: #fff;
+  border-radius: 10px;
+  padding: 14px 18px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.08);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}

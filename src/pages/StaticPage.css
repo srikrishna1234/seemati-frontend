@@ -1,0 +1,32 @@
+/* src/pages/StaticPage.css */
+
+.static-page-container {
+  max-width: 900px;
+  margin: 40px auto;
+  padding: 20px;
+  line-height: 1.7;
+  font-size: 1.05rem;
+  color: #333;
+}
+
+.static-page-container h1 {
+  font-size: 2rem;
+  margin-bottom: 15px;
+  color: #111;
+}
+
+.static-page-container h2 {
+  margin-top: 25px;
+  margin-bottom: 10px;
+  font-size: 1.35rem;
+  color: #222;
+}
+
+.static-page-container ul {
+  padding-left: 20px;
+  margin-top: 10px;
+}
+
+.static-page-container p {
+  margin-bottom: 12px;
+}

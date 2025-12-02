@@ -1,0 +1,93 @@
+/* src/App.css
+   Defensive CSS for header, hero spacing, and hero-thumbnail overlap issues.
+   These rules are intentionally non-invasive and scoped to common classes used by hero/carousel sections.
+*/
+
+/* Basic header layout */
+.seemati-header {
+  position: sticky;
+  top: 0;
+  z-index: 1200;
+  background: #fff;
+  border-bottom: 1px solid rgba(0,0,0,0.04);
+}
+.seemati-header-inner {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 24px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+.brand { text-decoration: none; color: inherit; display:flex; align-items:center; gap:8px; }
+.brand-name { font-weight: 800; font-size: 20px; }
+.top-links { display:flex; gap:12px; margin-left: 12px; align-items:center; }
+.nav-link { color: #6a0dad; text-decoration: none; font-weight: 700; }
+
+/* search layout */
+.search-form { flex: 1 1 420px; display:flex; gap:8px; align-items:center; margin: 0 18px; }
+.search-form input[type="search"] { flex:1; padding:8px 10px; border-radius:6px; border:1px solid rgba(0,0,0,0.08); }
+.btn-primary { background: #6a0dad; color: #fff; border: none; padding: 8px 12px; border-radius:6px; cursor: pointer; font-weight:700; }
+.btn-outline { background: #fff; border: 1px solid rgba(0,0,0,0.08); padding: 8px 10px; border-radius:6px; cursor:pointer; }
+
+/* header actions small icons */
+.header-actions { display:flex; gap:8px; align-items:center; }
+.icon-btn { background:transparent; border:none; padding:6px 8px; cursor:pointer; }
+
+/* PAGE main */
+.app-main { min-height: calc(100vh - 140px); }
+
+/* HERO & CAROUSEL defensive spacing rules */
+/* Many hero/carousel implementations use classes like .hero, .home-hero, .carousel, .hero-slider.
+   Add padding-bottom so inline thumbnails or subsequent content don't overlap the hero overlay. */
+.hero,
+.home-hero,
+.carousel,
+.hero-slider {
+  position: relative;
+  z-index: 1;
+  /* give room for overlayed text/buttons and small thumbnails that might sit near the bottom */
+  padding-bottom: 110px; /* safe default — adjust smaller if you prefer */
+}
+
+/* If a specific hero has a smaller banner, this rule keeps spacing short:
+   target if the hero has .tight-hero class */
+.hero.tight-hero,
+.home-hero.tight-hero {
+  padding-bottom: 64px;
+}
+
+/* Ensure immediate sibling (thumbnails/rows) clear the hero and get a gap */
+.hero + .hero-thumbnails,
+.home-hero + .hero-thumbnails,
+.carousel + .hero-thumbnails,
+.hero-slider + .hero-thumbnails {
+  margin-top: 8px;
+  clear: both;
+}
+
+/* Generic selector for rows of thumbnails that may be positioned absolute by some home implementations.
+   For safety, force them into normal flow unless they intentionally override with !important. */
+.hero-thumbnails,
+.thumbs-row {
+  position: relative !important;
+  z-index: 2;
+  margin-top: 8px;
+}
+
+/* When thumbnails are absolutely positioned by home code, ensure they don't overlap hero caption:
+   this tries to detect common patterns (element with small height placed at hero bottom) and push content below.
+   Use carefully — it is conservative and only applies when the element is inside a hero container.
+*/
+.home-hero .thumbs-row,
+.hero .thumbs-row {
+  transform: translateY(0);
+  margin-top: 8px;
+}
+
+/* Small responsive tweaks */
+@media (max-width: 900px) {
+  .search-form { flex-basis: 180px; }
+  .hero, .home-hero, .carousel { padding-bottom: 80px; }
+}

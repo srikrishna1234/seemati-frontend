@@ -1,0 +1,92 @@
+/* src/components/Hero.css - styles for drop-in Hero */
+.app-hero-wrapper {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 18px;
+}
+
+/* Hero with background image */
+.home-hero.restored-hero {
+  min-height: 360px;
+  background-size: cover;
+  background-position: center center;
+  position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+}
+
+/* translucent overlay so text is readable over images */
+.hero-overlay {
+  background: linear-gradient(90deg, rgba(3,3,3,0.48) 0%, rgba(3,3,3,0.12) 100%);
+  color: #fff;
+  padding: 32px;
+  border-radius: 6px;
+  max-width: 720px;
+}
+
+.hero-title {
+  margin: 0 0 8px 0;
+  font-size: 36px;
+  font-weight: 800;
+  line-height: 1.05;
+}
+
+.hero-sub {
+  margin: 0 0 16px 0;
+  font-size: 16px;
+  color: rgba(255,255,255,0.92);
+}
+
+/* CTA buttons */
+.hero-ctas { display:flex; gap:10px; align-items:center; }
+
+.btn-primary {
+  background: #6a0dad;
+  color: #fff;
+  padding: 10px 14px;
+  border-radius: 8px;
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.btn-outline {
+  background: #fff;
+  color: #3b3b3b;
+  padding: 8px 12px;
+  border-radius: 8px;
+  text-decoration: none;
+  border: 1px solid rgba(0,0,0,0.06);
+}
+
+/* Thumbnails row */
+.hero-thumbnails.restored-thumbs {
+  margin-top: 16px;
+  display: block;
+}
+.thumbs-row {
+  display:flex;
+  gap: 12px;
+  padding: 8px 6px;
+  align-items:center;
+}
+.thumb {
+  width: 64px;
+  height: 64px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  border:1px solid rgba(0,0,0,0.03);
+}
+.thumb img { width:100%; height:100%; object-fit:cover; display:block; }
+
+/* small screens */
+@media (max-width: 680px) {
+  .hero-title { font-size: 24px; }
+  .home-hero.restored-hero { min-height: 220px; }
+  .hero-overlay { padding: 16px; }
+}

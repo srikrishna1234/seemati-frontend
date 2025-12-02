@@ -1,9 +1,95 @@
 /* src/index.css - minimal global styles so CRA import succeeds */
-html,body,#root {
+
+/* Base page / root */
+html, body, #root {
   height: 100%;
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial;
   background: #fff;
   color: #111;
 }
-#root { min-height: 100vh; }
+#root {
+  min-height: 100vh;
+}
+
+/* Basic element resets (small additions to keep layout consistent) */
+img {
+  max-width: 100%;
+  display: block;
+  height: auto;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* Utility: container center (optional - used in places) */
+.container {
+  width: 100%;
+  max-width: 1200px;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+/* Hidden helper for legacy thumbnails (ensures any thumbnail strip is hidden) */
+.hero-thumbnails,
+.hero-thumb-strip,
+.hero-thumbs,
+.hero-thumbnail-strip,
+.heroThumbs {
+  display: none !important;
+}
+
+/* Small responsive tweaks */
+@media (max-width: 768px) {
+  .container { padding-left: 12px; padding-right: 12px; }
+}
+
+/* Button utilities (used by HomePage.jsx inline code, kept here so you can re-use) */
+.btn-primary {
+  border: none;
+  cursor: pointer;
+  display: inline-block;
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 10px 16px;
+  text-align: center;
+  transition: transform 140ms ease, box-shadow 140ms ease;
+}
+
+.btn-primary:active { transform: translateY(1px); }
+
+.btn-secondary {
+  border: none;
+  cursor: pointer;
+  display: inline-block;
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 10px 16px;
+  text-align: center;
+  transition: transform 140ms ease, box-shadow 140ms ease;
+}
+
+.btn-ghost {
+  border: none;
+  cursor: pointer;
+  display: inline-block;
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 10px 16px;
+  text-align: center;
+  transition: transform 140ms ease, box-shadow 140ms ease;
+}
+
+/* Ensure we don't accidentally hide actionable elements inside announcement ticker */
+.announcement-ticker a,
+.announcement-ticker button,
+.announcementTicker a,
+.announcementTicker button,
+.announcement-wrapper a,
+.announcement-wrapper button {
+  pointer-events: auto;
+}

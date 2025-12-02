@@ -55,11 +55,6 @@ body {
 
 /* -------------------------
    Product image zoom + pan
-   Usage:
-     - Wrap the product <img> inside an element with class:
-         .product-image-container
-       e.g. <div className="product-image-container"><img className="product-image" ... /></div>
-     - Ensure this CSS file is imported/used by your app (it is by default).
    ------------------------- */
 
 /* Container keeps the image centered and clips overflow */
@@ -82,24 +77,19 @@ body {
 .product-image {
   width: 100%;
   height: auto;
-  object-fit: contain;        /* ensure full product visible inside container */
+  object-fit: contain;
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
   will-change: transform;
 
   /* transition for smooth zoom/pan */
   transition: transform 380ms cubic-bezier(.2,.9,.2,1), box-shadow 240ms ease;
-  transform-origin: center center; /* baseline origin (we modify via translate) */
+  transform-origin: center center;
 }
 
-/* Hover state: scale (zoom) + translate (pan toward cursor)
-   The translate values are calculated from CSS variables --mx/--my which are percentages.
-   We subtract 50% to get a centered offset (-50%..+50%), then multiply by a factor to limit pan amount.
-*/
+/* Hover state: scale (zoom) + translate (pan toward cursor) */
 .product-image-container:hover .product-image,
 .product-image-container:focus-within .product-image {
-  /* scale: stronger zoom (1.30 = 30%) */
-  /* translate: we convert percentage offset into smaller translate to avoid runaway pan */
   transform: scale(1.30)
     translate(
       calc((var(--mx, 50%) - 50%) * 0.6),
@@ -110,13 +100,13 @@ body {
   cursor: zoom-in;
 }
 
-/* Focus/keyboard accessibility: allow keyboard users to trigger zoom */
+/* Focus/keyboard accessibility */
 .product-image-container:focus-within .product-image,
 .product-image:focus {
   outline: none;
 }
 
-/* Subtle reduction of zoom for very small screens (optional) */
+/* Subtle reduction of zoom for very small screens */
 @media (max-width: 640px) {
   .product-image-container:hover .product-image {
     transform: scale(1.18)
@@ -126,7 +116,6 @@ body {
 
 /* Utility: if you have a fixed height card image area, keep that visually consistent */
 .product-image-box {
-  /* example fixed height; optional - use only if your markup uses it */
   height: 14rem;
   display: flex;
   align-items: center;
@@ -137,4 +126,77 @@ body {
 .product-image-container .product-card-actions {
   position: relative;
   z-index: 10;
+}
+
+/* -------------------------
+   Hide legacy hero thumbnails (explicit)
+   ------------------------- */
+.hero-thumbnails,
+.hero-thumb-strip,
+.hero-thumbs,
+.hero-thumbnail-strip,
+.heroThumbs {
+  display: none !important;
+}
+
+/* -------------------------
+   HomePage/hero CTA specific helpers
+   (these help the centered green overlay CTA block)
+   ------------------------- */
+
+.homepage-hero-cta {
+  width: 86%;
+  max-width: 980px;
+  background: rgba(10,10,10,0.75);
+  color: #fff;
+  padding: 30px 36px;
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+  text-align: center;
+  margin: 0 auto;
+}
+
+/* Responsive: smaller padding on mobile */
+@media (max-width: 640px) {
+  .homepage-hero-cta {
+    padding: 18px 18px;
+    width: 94%;
+  }
+}
+
+/* simple button theme (if not using Tailwind for these specific elements) */
+.homepage-hero-cta .cta-row {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.homepage-hero-cta .cta-row a {
+  display: inline-block;
+  padding: 10px 18px;
+  border-radius: 6px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.home-cta-primary {
+  background: #6b2db3;
+  color: #fff;
+}
+
+.home-cta-white {
+  background: #fff;
+  color: #222;
+}
+
+.home-cta-ghost {
+  background: #efefef;
+  color: #222;
+}
+
+/* small visual nudge to overlap the CTA slightly over hero bottom (used on desktop) */
+.hero-cta-pullup {
+  margin-top: -40px;
+  margin-bottom: 28px;
 }

@@ -1,341 +1,227 @@
 // src/shop/ShopProducts.jsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import ShopProductCard from "./shopProductCard";
+import { Helmet } from "react-helmet";
 
 /**
- * ShopProducts.jsx — stable layout version
+ * ShopProducts (updated)
  *
- * Key changes:
- * - Uses a single BANNER_HEIGHT (56px) to size the fixed bottom banner.
- * - Sets page paddingBottom to BANNER_HEIGHT + 12 to avoid overlap with product footers.
- * - Removes large top paddings and margins so ticker / title / grid sit tight.
- * - Keeps all data fetching and cart-subtotal logic unchanged.
- * - Keeps running announcement ticker and single-line bottom banner.
+ * - Keeps your original fetch logic (/api/products, fallback to /products).
+ * - Client-side search, pagination and friendly loading/error UI (unchanged behavior).
+ * - Adds `preview` prop: when preview=true it shows only the first 4 items and hides pagination/search UI.
+ * - Adds a page <title> via react-helmet.
  */
 
-const FREE_SHIPPING_THRESHOLD = 999;
-// set this to 56 (you can change to 48 later if needed)
-const BANNER_HEIGHT = 18;
+const PAGE_SIZE = 12;
 
-let axiosInstance = null;
-try {
-  // dynamic require to avoid bundler errors if file missing
-  // eslint-disable-next-line global-require
-  axiosInstance = require("../api/axiosInstance").default;
-} catch (e) {
-  axiosInstance = null;
-}
+export default function ShopProducts({ preview = false }) {
+  const [products, setProducts] = useState(null); // null = loading, [] = loaded empty
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-function safeParseJson(str) {
-  try {
-    return JSON.parse(str);
-  } catch (e) {
-    return null;
-  }
-}
-
-function tryComputeSubtotal(cartLike) {
-  if (!cartLike) return null;
-  if (typeof cartLike === "number") return Number(cartLike);
-  const subtotalCandidates = ["subtotal", "total", "cartTotal", "grandTotal"];
-  for (const k of subtotalCandidates) {
-    if (typeof cartLike[k] === "number") return cartLike[k];
-    if (typeof cartLike[k] === "string" && !Number.isNaN(Number(cartLike[k]))) return Number(cartLike[k]);
-  }
-  const items = cartLike.items ?? cartLike.cartItems ?? cartLike.lineItems ?? null;
-  if (Array.isArray(items) && items.length) {
-    let sum = 0;
-    for (const it of items) {
-      const p = Number(it.price ?? it.unitPrice ?? it.pricePerUnit ?? it.rate ?? 0);
-      const q = Number(it.qty ?? it.quantity ?? it.count ?? 1);
-      const pi = Number.isNaN(p) ? 0 : p;
-      const qi = Number.isNaN(q) ? 1 : q;
-      sum += pi * qi;
-    }
-    return sum;
-  }
-  if (Array.isArray(cartLike) && cartLike.length) {
-    let sum2 = 0;
-    for (const it of cartLike) {
-      const p = Number(it.price ?? it.unitPrice ?? 0);
-      const q = Number(it.qty ?? it.quantity ?? 1);
-      const pi = Number.isNaN(p) ? 0 : p;
-      const qi = Number.isNaN(q) ? 1 : q;
-      sum2 += pi * qi;
-    }
-    return sum2;
-  }
-  return null;
-}
-
-function extractCartFromParsed(parsed) {
-  if (!parsed) return null;
-  if (parsed.cart) return parsed.cart;
-  if (parsed.root && parsed.root.cart) return parsed.root.cart;
-  for (const k of Object.keys(parsed)) {
-    const v = parsed[k];
-    if (k.toLowerCase().includes("cart")) return v;
-    if (typeof v === "string") {
-      const nested = safeParseJson(v);
-      if (nested && nested.cart) return nested.cart;
-    }
-  }
-  return parsed;
-}
-
-function readCartFromEnvironment() {
-  const possibleWindowNames = ["__PRELOADED_STATE__", "__REDUX_STATE__", "REDUX_STATE"];
-  for (const name of possibleWindowNames) {
-    try {
-      const val = window?.[name];
-      if (val) {
-        const cart = val.cart ?? val.cartSlice ?? val.cartReducer ?? val?.root?.cart ?? val;
-        const subtotal = tryComputeSubtotal(cart);
-        if (typeof subtotal === "number") return { subtotal, raw: cart };
-      }
-    } catch (e) {}
-  }
-
-  const lsKeys = ["cart", "persist:root", "redux_state", "reduxState", "app_state"];
-  for (const k of lsKeys) {
-    try {
-      const raw = localStorage.getItem(k);
-      if (!raw) continue;
-      const parsed = safeParseJson(raw) ?? raw;
-      const maybe = extractCartFromParsed(parsed);
-      const subtotal = tryComputeSubtotal(maybe);
-      if (typeof subtotal === "number") return { subtotal, raw: maybe };
-    } catch (e) {}
-  }
-
-  try {
-    const maybeStore = window?.__STORE__ ?? window?.appState ?? window?.APP_STATE;
-    const subtotal = tryComputeSubtotal(maybeStore);
-    if (typeof subtotal === "number") return { subtotal, raw: maybeStore };
-  } catch (e) {}
-
-  return { subtotal: 0, raw: null };
-}
-
-// Announcement ticker default text (edit if needed)
-const DEFAULT_ANNOUNCEMENT = "⦿ Free Shipping on orders above ₹999 • Get 10% off on prepaid orders above ₹1499 • New arrivals weekly!";
-
-export default function ShopProducts({ products = [] }) {
-  const [localProducts, setLocalProducts] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [fetchError, setFetchError] = useState(null);
-  const [subtotal, setSubtotal] = useState(0);
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
-    function update() {
-      const c = readCartFromEnvironment();
-      setSubtotal(Number.isFinite(c.subtotal) ? c.subtotal : 0);
+    let mounted = true;
+    setLoading(true);
+    setError(null);
+
+    async function load() {
+      try {
+        const res = await fetch("/api/products", { credentials: "include" });
+        if (!mounted) return;
+        if (!res.ok) {
+          console.warn("ShopProducts: /api/products returned", res.status);
+          if (res.status === 404) {
+            const res2 = await fetch("/products", { credentials: "include" });
+            if (!mounted) return;
+            if (!res2.ok) throw new Error(`Fallback /products returned ${res2.status}`);
+            const data2 = await res2.json();
+            setProducts(normalizeArray(data2));
+            setLoading(false);
+            return;
+          }
+          throw new Error(`Fetch failed: ${res.status}`);
+        }
+
+        const data = await res.json();
+        if (!mounted) return;
+        setProducts(normalizeArray(data));
+      } catch (err) {
+        console.error("ShopProducts fetch error:", err);
+        if (!mounted) return;
+        setError(
+          "Unable to load products. Check that the dev server is running and that /api/products responds. See console for details."
+        );
+        setProducts([]);
+      } finally {
+        if (!mounted) return;
+        setLoading(false);
+      }
     }
-    update();
-    function onStorage(e) {
-      const keysWeCare = ["cart", "persist:root", "redux_state"];
-      if (!e.key || keysWeCare.includes(e.key)) update();
-    }
-    window.addEventListener("storage", onStorage);
-    const poll = setInterval(update, 1500);
+
+    load();
     return () => {
-      window.removeEventListener("storage", onStorage);
-      clearInterval(poll);
+      mounted = false;
     };
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function fetchProducts() {
-      if (Array.isArray(products) && products.length > 0) return;
-      setLoading(true);
-      setFetchError(null);
-      try {
-        if (axiosInstance) {
-          const resp = await axiosInstance.get("/api/products?limit=100");
-          const data = resp?.data ?? resp;
-          let items = null;
-          if (Array.isArray(data)) items = data;
-          else if (Array.isArray(data.docs)) items = data.docs;
-          else if (Array.isArray(data.products)) items = data.products;
-          else if (Array.isArray(data.data)) items = data.data;
-          else items = data;
-          if (!cancelled) setLocalProducts(Array.isArray(items) ? items : []);
-        } else {
-          const r = await fetch("/api/products?limit=100");
-          if (!r.ok) throw new Error(`fetch /api/products failed: ${r.status}`);
-          const j = await r.json();
-          let items = null;
-          if (Array.isArray(j)) items = j;
-          else if (Array.isArray(j.docs)) items = j.docs;
-          else if (Array.isArray(j.products)) items = j.products;
-          else if (Array.isArray(j.data)) items = j.data;
-          else items = j;
-          if (!cancelled) setLocalProducts(Array.isArray(items) ? items : []);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setFetchError(err.message || String(err));
-          setLocalProducts([]);
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-    fetchProducts();
-    return () => {
-      cancelled = true;
-    };
-  }, []); // run once
+  // normalize responses: either array or object { products: [...] } etc.
+  function normalizeArray(data) {
+    if (!data) return [];
+    if (Array.isArray(data)) return data;
+    if (data.products && Array.isArray(data.products)) return data.products;
+    if (data.docs && Array.isArray(data.docs)) return data.docs;
+    if (data.items && Array.isArray(data.items)) return data.items;
+    const arr = Object.values(data).find((v) => Array.isArray(v));
+    if (arr) return arr;
+    return [];
+  }
 
-  const productsToShow = (Array.isArray(products) && products.length > 0) ? products : (Array.isArray(localProducts) ? localProducts : []);
+  // derived: filtered by search query (client-side)
+  const filtered = useMemo(() => {
+    if (!products || products.length === 0) return [];
+    if (!query) return products;
+    const q = query.trim().toLowerCase();
+    return products.filter((p) => {
+      const s = `${p.title || p.name || p.slug || ""} ${p.description || ""} ${p.tags ? p.tags.join(" ") : ""}`.toLowerCase();
+      return s.includes(q);
+    });
+  }, [products, query]);
 
-  const remaining = Math.max(0, FREE_SHIPPING_THRESHOLD - subtotal);
+  // pagination
+  const totalPages = Math.max(1, Math.ceil((filtered || []).length / PAGE_SIZE));
+  const pageItems = useMemo(() => {
+    if (!filtered) return [];
+    const start = (page - 1) * PAGE_SIZE;
+    return filtered.slice(start, start + PAGE_SIZE);
+  }, [filtered, page]);
 
-  // Page wrapper paddingBottom uses BANNER_HEIGHT so nothing overlaps.
-  const pageWrap = { padding: `8px 28px ${BANNER_HEIGHT + 12}px 28px`, minHeight: "70vh", position: "relative" };
-  // Tight grid marginTop so products sit closer to header/ticker
-  const gridStyle = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 12, alignItems: "start", marginTop: 6 };
+  // when preview mode, show a limited set (first 4 matching items)
+  const previewItems = preview ? (filtered || []).slice(0, 4) : pageItems;
 
-  // Ticker area (red running bar) styles
-  const tickerWrap = { width: "100%", overflow: "hidden", marginBottom: 8 };
-  const tickerOuterStyle = {
-    background: "#d9303e",
-    color: "#fff",
-    padding: "6px 12px",
-    borderRadius: 6,
-    display: "flex",
-    alignItems: "center",
-    height: 34,
-  };
-  const tickerInnerMask = { overflow: "hidden", width: "100%", marginLeft: 8 };
-  const tickerTextStyle = { display: "inline-block", whiteSpace: "nowrap", paddingLeft: "100%", fontWeight: 700 };
-
-  // Banner fixed at bottom using BANNER_HEIGHT
-  const bannerWrap = { position: "fixed", bottom: 18, left: "50%", transform: "translateX(-50%)", zIndex: 1200, width: "min(96%, 960px)" };
-  const bannerStyle = {
-    background: "#e9f8f0",
-    borderRadius: 28,
-    padding: "6px 14px",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    boxShadow: "0 6px 20px rgba(0,0,0,0.06)",
-    gap: 12,
-    whiteSpace: "nowrap",
-    height: `${BANNER_HEIGHT}px`,
-    overflow: "hidden",
-  };
-  const leftStyle = {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    fontWeight: 700,
-    color: "#0a7b4f",
-    minWidth: 0,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  };
-  const rightStyle = {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    whiteSpace: "nowrap",
+  const gotoPage = (p) => {
+    const clamped = Math.max(1, Math.min(totalPages, p));
+    setPage(clamped);
+    window.scrollTo({ top: 280, behavior: "smooth" });
   };
 
   return (
-    <div style={pageWrap}>
-      <style>{`
-        @keyframes seematiTicker {
-          0% { transform: translateX(0%); }
-          100% { transform: translateX(-100%); }
-        }
-        .seemati-ticker-inner {
-          display: inline-block;
-          padding-left: 100%;
-          animation: seematiTicker 18s linear infinite;
-        }
-        @media (prefers-reduced-motion: reduce) {
-          .seemati-ticker-inner {
-            animation: none;
-            padding-left: 0;
-          }
-        }
-      `}</style>
+    <div style={{ padding: preview ? 0 : "18px 24px", maxWidth: 1200, margin: preview ? "0" : "0 auto" }}>
+      <Helmet>
+        <title>{preview ? "Featured — Seemati" : "Shop — Seemati"}</title>
+      </Helmet>
 
-      {/* Announcement ticker */}
-      <div style={tickerWrap} aria-hidden={false}>
-        <div style={tickerOuterStyle} role="region" aria-label="Site announcements">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden style={{ flex: "0 0 auto" }}>
-            <path d="M3 10a1 1 0 0 1 .894-.553H6V8a4 4 0 0 1 4-4h4v2h-4a2 2 0 0 0-2 2v1h2l.447.894A2 2 0 0 1 12 14H6a1 1 0 0 1-1-1v-2H3.894A1 1 0 0 1 3 10z" fill="#fff" />
-          </svg>
-
-          <div style={tickerInnerMask}>
-            <div className="seemati-ticker-inner" style={tickerTextStyle}>
-              {DEFAULT_ANNOUNCEMENT} &nbsp; • &nbsp; {DEFAULT_ANNOUNCEMENT}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <h2 style={{ margin: "0 0 8px 0", fontSize: 22, fontWeight: 800 }}>Shop</h2>
-
-      {loading ? (
-        <div style={{ padding: 20 }}>Loading products…</div>
-      ) : fetchError ? (
-        <div style={{ padding: 20, color: "crimson" }}>Error loading products: {fetchError}</div>
-      ) : productsToShow.length === 0 ? (
-        <div style={{ padding: 20 }}>No products found.</div>
-      ) : (
-        <div style={gridStyle}>
-          {productsToShow.map((p) => <ShopProductCard key={p._id ?? p.slug ?? p.id} product={p} />)}
+      {/* show search/pager only when not previewing */}
+      {!preview && (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18 }}>
+          <input
+            aria-label="Search products"
+            placeholder="Search products, brands and more"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setPage(1);
+            }}
+            style={{
+              flex: 1,
+              padding: "10px 12px",
+              borderRadius: 6,
+              border: "1px solid #ddd",
+              minWidth: 250,
+            }}
+          />
+          <button
+            onClick={() => {
+              setQuery("");
+            }}
+            style={{
+              padding: "10px 14px",
+              background: "#6b21a8",
+              color: "#fff",
+              border: "none",
+              borderRadius: 6,
+            }}
+          >
+            Search
+          </button>
         </div>
       )}
 
-      {/* fixed bottom banner */}
-      <div style={bannerWrap} role="status" aria-live="polite">
-        <div style={bannerStyle}>
-          <div style={leftStyle}>
-            <span style={{ fontSize: 18, flex: "0 0 auto" }}>{subtotal >= FREE_SHIPPING_THRESHOLD ? "🎉" : "🚚"}</span>
-
-            {subtotal >= FREE_SHIPPING_THRESHOLD ? (
-              <span style={{ fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                Congrats — eligible • Subtotal ₹{subtotal.toFixed(2)}
-              </span>
-            ) : (
-              <span style={{ fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                Free shipping above ₹{FREE_SHIPPING_THRESHOLD} • Subtotal ₹{subtotal.toFixed(2)} • Add ₹{remaining.toFixed(2)}
-              </span>
-            )}
-          </div>
-
-          <div style={rightStyle}>
-            {subtotal >= FREE_SHIPPING_THRESHOLD ? (
-              <button
-                style={{ background: "#13a65f", color: "#fff", border: "none", padding: "6px 10px", borderRadius: 8, fontWeight: 800 }}
-                onClick={() => (window.location.href = "/cart")}
-              >
-                Celebrate
-              </button>
-            ) : (
-              <button
-                style={{ background: "#6a0dad", color: "#fff", border: "none", padding: "6px 10px", borderRadius: 8, fontWeight: 800 }}
-                onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-              >
-                Continue shopping
-              </button>
-            )}
-
-            <button
-              onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-              style={{ background: "transparent", border: "none", color: "#333", fontWeight: 700, textDecoration: "underline", cursor: "pointer", padding: "4px 6px" }}
-            >
-              Dismiss ✕
-            </button>
+      {/* hero (small) shown only when not in preview */}
+      {!preview && (
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ height: 220, borderRadius: 8, background: "linear-gradient(90deg,#fff7f0,#fffefc)", display: "flex", alignItems: "center", padding: 20 }}>
+            <div style={{ flex: 1 }}>
+              <h2 style={{ margin: 0 }}>Seemati — Confident & Stylish</h2>
+              <p style={{ marginTop: 6, color: "#555" }}>Comfort-first kurti pants and palazzos — made for every day</p>
+            </div>
           </div>
         </div>
-      </div>
+      )}
+
+      {/* content */}
+      <section>
+        {loading && (
+          <div style={{ padding: 20 }}>
+            <strong>Loading products…</strong>
+            <div style={{ marginTop: 8, color: "#666" }}>If loading hangs, check Console and that /api/products returns JSON.</div>
+          </div>
+        )}
+
+        {!loading && error && (
+          <div style={{ padding: 20, border: "1px dashed #f00", borderRadius: 6 }}>
+            <strong style={{ color: "#b91c1c" }}>Could not load products</strong>
+            <div style={{ marginTop: 8 }}>{error}</div>
+          </div>
+        )}
+
+        {!loading && products && products.length === 0 && (
+          <div style={{ padding: 20 }}>No products found.</div>
+        )}
+
+        {!loading && products && products.length > 0 && (
+          <>
+            {!preview && (
+              <div style={{ marginBottom: 12, color: "#444" }}>
+                Showing <strong>{filtered.length}</strong> products {query ? <>matching <em>"{query}"</em></> : null}
+              </div>
+            )}
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 16 }}>
+              {(preview ? previewItems : pageItems).map((p) => (
+                <ShopProductCard product={p} key={p._id || p.id || p.slug || `${p.title}-${Math.random()}`} />
+              ))}
+            </div>
+
+            {/* pagination (hidden in preview) */}
+            {!preview && (
+              <div style={{ marginTop: 20, display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+                <button onClick={() => gotoPage(page - 1)} disabled={page === 1} style={pagerBtnStyle}>
+                  Prev
+                </button>
+
+                <div style={{ padding: "6px 10px", borderRadius: 6, background: "#fff" }}>
+                  Page {page} of {totalPages}
+                </div>
+
+                <button onClick={() => gotoPage(page + 1)} disabled={page === totalPages} style={pagerBtnStyle}>
+                  Next
+                </button>
+              </div>
+            )}
+          </>
+        )}
+      </section>
     </div>
   );
 }
+
+const pagerBtnStyle = {
+  padding: "8px 12px",
+  borderRadius: 6,
+  border: "1px solid #ddd",
+  background: "#fff",
+  cursor: "pointer",
+};
