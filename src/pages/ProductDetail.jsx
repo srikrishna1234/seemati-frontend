@@ -5,6 +5,7 @@ import axios from "../api/axiosInstance";
 import { getImageUrl, getImageUrls } from "../utils/imageUtils";
 import { addOrIncrementItem, loadCart, computeTotals, SHIPPING_THRESHOLD } from "../utils/cartHelpers";
 import { useCartDispatch } from "../context/CartContext";
+import colorNames from "../utils/colorNames";
 
 /* ---------- wishlist helpers (unchanged) ---------- */
 const WISHLIST_KEY = "wishlist_v1";
@@ -132,6 +133,49 @@ function useImageZoom() {
   return { imgRef, onImgMouseMove, onImgEnter, onImgLeave };
 }
 
+/* ---------- small helpers for color/video/image ---------- */
+
+const PLACEHOLDER = "/images/placeholder.png";
+
+function normalizeHex(raw) {
+  if (!raw) return null;
+  let s = String(raw).trim();
+  if (s.startsWith("0x")) s = s.slice(2);
+  if (s.startsWith("#")) s = s.slice(1);
+  s = s.replace(/[^0-9a-fA-F]/g, "");
+  if (s.length === 3) s = s.split("").map(c => c + c).join("");
+  if (s.length === 6) return ("#" + s).toUpperCase();
+  return null;
+}
+
+function youtubeEmbedUrl(raw) {
+  if (!raw || typeof raw !== "string") return null;
+  const s = raw.trim();
+  try {
+    const url = new URL(s, window.location.origin);
+    const host = url.hostname.toLowerCase();
+    if (host.includes("youtube.com")) {
+      if (url.pathname.startsWith("/embed/")) return `https://www.youtube.com${url.pathname}${url.search || ""}`;
+      const vid = url.searchParams.get("v");
+      if (vid) return `https://www.youtube.com/embed/${vid}`;
+    }
+    if (host.includes("youtu.be")) {
+      const vid = url.pathname.replace("/", "");
+      if (vid) return `https://www.youtube.com/embed/${vid}`;
+    }
+  } catch (err) {
+    const maybeId = s.match(/^[A-Za-z0-9_-]{8,}$/);
+    if (maybeId) return `https://www.youtube.com/embed/${maybeId[0]}`;
+  }
+  return null;
+}
+
+function isDirectVideoUrl(u) {
+  if (!u || typeof u !== "string") return false;
+  const lower = u.toLowerCase();
+  return lower.endsWith(".mp4") || lower.endsWith(".webm") || lower.endsWith(".ogg");
+}
+
 /* ---------------- ProductDetail component ---------------- */
 export default function ProductDetailPage({ products = [] }) {
   const { slug } = useParams();
@@ -167,6 +211,12 @@ export default function ProductDetailPage({ products = [] }) {
   // gallery state
   const [galleryUrls, setGalleryUrls] = useState([]); // array of resolved urls
   const [galleryIndex, setGalleryIndex] = useState(0);
+
+  // color list derived (each { raw, hex, name, imageUrl })
+  const [derivedColors, setDerivedColors] = useState([]);
+
+  // when a color has its own image not already in gallery, we temporarily show it
+  const [tempColorImage, setTempColorImage] = useState(null);
 
   // load wishlist status and set defaults
   useEffect(() => {
@@ -250,14 +300,64 @@ export default function ProductDetailPage({ products = [] }) {
 
   // Build gallery URLs whenever product.images (or product.image/thumbnail fallback) changes
   useEffect(() => {
+    // gather base images
     const imgs = Array.isArray(product?.images) ? [...product.images] : [];
     if ((imgs.length === 0) && product?.image) imgs.push(product.image);
     if ((imgs.length === 0) && product?.thumbnail) imgs.push(product.thumbnail);
 
+    // resolve urls using helper
     const urls = getImageUrls(imgs);
     setGalleryUrls(urls);
     setGalleryIndex(0);
-  }, [product?.images, product?.image, product?.thumbnail, product?.slug, product?._id]);
+    setTempColorImage(null);
+
+    // build derivedColors using product.colors + color-image mapping (supports multiple shapes)
+    const rawColors = Array.isArray(product?.colors)
+      ? product.colors
+      : (product?.colors ? String(product.colors).split(",").map(s => s.trim()).filter(Boolean) : []);
+
+    // color->image map: support array/object shapes
+    const colorImageMap = {};
+    const rawColorImgs =
+      product?.colorImages ||
+      product?.color_image_map ||
+      product?.color_map ||
+      product?.colorImagesMap ||
+      product?.colorImagesObj ||
+      product?.colorImageMap ||
+      product?.color_image ||
+      null;
+
+    if (rawColorImgs) {
+      if (Array.isArray(rawColorImgs)) {
+        rawColorImgs.forEach((ci) => {
+          if (!ci) return;
+          const name = (ci.name || ci.label || ci.color || "").toString().trim().toLowerCase();
+          const img = ci.image || ci.url || ci.src || ci.path || null;
+          if (name && img) colorImageMap[name] = getImageUrl(img);
+        });
+      } else if (typeof rawColorImgs === "object") {
+        Object.entries(rawColorImgs).forEach(([k, v]) => {
+          const name = String(k).trim().toLowerCase();
+          const img = typeof v === "string" ? v : (v && (v.url || v.image || v.src || v.path));
+          if (name && img) colorImageMap[name] = getImageUrl(img);
+        });
+      }
+    }
+
+    // compose derived colors
+    const derived = rawColors.map((raw) => {
+      const hex = normalizeHex(raw);
+      const displayHex = hex || null;
+      const friendly = displayHex ? colorNames.hexToName(displayHex) : (String(raw || ""));
+      const mappedImg =
+        (colorImageMap && (colorImageMap[String(raw).toLowerCase()] || colorImageMap[String(friendly).toLowerCase()])) || null;
+      const imageUrl = mappedImg ? mappedImg : null;
+      return { raw, displayHex, friendly, imageUrl };
+    });
+
+    setDerivedColors(derived);
+  }, [product?.images, product?.image, product?.thumbnail, product?.colors, product?.slug, product?._id]);
 
   // floating shipping helper state
   const [cartTotals, setCartTotals] = useState(() => {
@@ -367,6 +467,19 @@ export default function ProductDetailPage({ products = [] }) {
 
   const leftForFree = Math.max(0, (SHIPPING_THRESHOLD - (cartTotals.subtotal || 0)));
 
+  // Main displayed image: prefer tempColorImage if set, else selected gallery item
+  const fallbackSrc =
+    product?.thumbnail ||
+    (product?.images && product.images[0] && (product.images[0].url || product.images[0])) ||
+    product?.image ||
+    null;
+  const mainImageSrc = tempColorImage ? tempColorImage : (galleryUrls.length > 0 ? galleryUrls[galleryIndex] : getImageUrl(fallbackSrc));
+
+  // Video detection (supports product.videoUrl / video / video_link)
+  const possibleVideo =
+    product?.videoUrl || product?.video || product?.video_url || product?.videoLink || product?.video_link || product?.productVideo || "";
+  const embedUrl = youtubeEmbedUrl(possibleVideo);
+
   if (loading) {
     return <div style={{ padding: 24 }}><p>Loading product…</p></div>;
   }
@@ -380,14 +493,6 @@ export default function ProductDetailPage({ products = [] }) {
       </div>
     );
   }
-
-  const fallbackSrc =
-    product?.thumbnail ||
-    (product?.images && product.images[0] && (product.images[0].url || product.images[0])) ||
-    product?.image ||
-    null;
-
-  const mainImageSrc = galleryUrls.length > 0 ? galleryUrls[galleryIndex] : getImageUrl(fallbackSrc);
 
   return (
     <div style={{ padding: 24, position: "relative" }}>
@@ -410,7 +515,7 @@ export default function ProductDetailPage({ products = [] }) {
               position: "relative"
             }}
           >
-            {galleryUrls.length > 1 && (
+            {galleryUrls.length > 1 && !tempColorImage && (
               <button
                 onClick={() => setGalleryIndex((i) => (i - 1 + galleryUrls.length) % galleryUrls.length)}
                 aria-label="Previous image"
@@ -447,7 +552,7 @@ export default function ProductDetailPage({ products = [] }) {
               onError={(e) => { e.target.src = getImageUrl(null); }}
             />
 
-            {galleryUrls.length > 1 && (
+            {galleryUrls.length > 1 && !tempColorImage && (
               <button
                 onClick={() => setGalleryIndex((i) => (i + 1) % galleryUrls.length)}
                 aria-label="Next image"
@@ -467,31 +572,76 @@ export default function ProductDetailPage({ products = [] }) {
             )}
           </div>
 
-          {galleryUrls.length > 1 && (
-            <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-              {galleryUrls.map((u, i) => (
+          {/* thumbnails */}
+          <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+            {galleryUrls.map((u, i) => (
+              <button
+                key={u + i}
+                onClick={() => { setTempColorImage(null); setGalleryIndex(i); }}
+                style={{
+                  border: i === galleryIndex && !tempColorImage ? "2px solid #0b5cff" : "1px solid #eee",
+                  padding: 0,
+                  borderRadius: 6,
+                  overflow: "hidden",
+                  width: 76,
+                  height: 76,
+                  background: "#fff",
+                  cursor: "pointer",
+                }}
+                aria-label={`Show image ${i + 1}`}
+              >
+                <img src={u} alt={`${product.title}-${i}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              </button>
+            ))}
+
+            {/* color-specific thumbnails (only those not already in gallery) */}
+            {derivedColors.map((c, idx) => {
+              if (!c.imageUrl) return null;
+              const exists = galleryUrls.includes(c.imageUrl);
+              if (exists) return null;
+              return (
                 <button
-                  key={u + i}
-                  onClick={() => setGalleryIndex(i)}
+                  key={`cimg-${idx}`}
+                  onClick={() => { setTempColorImage(c.imageUrl); setSelectedColor(c.raw); }}
+                  title={c.friendly}
                   style={{
-                    border: i === galleryIndex ? "2px solid #0b5cff" : "1px solid #eee",
-                    padding: 0,
-                    borderRadius: 6,
-                    overflow: "hidden",
-                    width: 76,
-                    height: 76,
-                    background: "#fff",
-                    cursor: "pointer",
+                    width: 76, height: 76, borderRadius: 6, overflow: "hidden",
+                    border: tempColorImage === c.imageUrl ? "2px solid #0b5cff" : "1px solid #eee",
+                    padding: 0, background: "#fff", cursor: "pointer"
                   }}
-                  aria-label={`Show image ${i + 1}`}
                 >
-                  <img src={u} alt={`${product.title}-${i}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  <img src={c.imageUrl} alt={`color-${idx}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                 </button>
-              ))}
+              );
+            })}
+
+            {/* video tile */}
+            {possibleVideo && (
+              <div title="Video" onClick={() => { const el = document.getElementById("product-video-player"); if (el) el.scrollIntoView({behavior:"smooth", block:"center"}); }}
+                style={{ width: 76, height: 76, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid #eee", background: "#fafafa", cursor: "pointer" }}>
+                <svg width="28" height="28" viewBox="0 0 24 24"><path d="M5 3v18l15-9L5 3z" fill="currentColor"/></svg>
+              </div>
+            )}
+          </div>
+
+          {galleryUrls.length > 1 && <div style={{ marginTop: 8, color: "#6b7280", fontSize: 13 }}>{tempColorImage ? "Color preview" : `${galleryIndex + 1} / ${galleryUrls.length}`}</div>}
+
+          {/* video player */}
+          {possibleVideo && (
+            <div id="product-video-player" style={{ marginTop: 14 }}>
+              {embedUrl ? (
+                <div style={{ width: "100%", maxWidth: 720, height: 360, border: "1px solid #eee", borderRadius: 6, overflow: "hidden" }}>
+                  <iframe title="product-video" width="100%" height="100%" src={embedUrl} frameBorder="0" allowFullScreen />
+                </div>
+              ) : isDirectVideoUrl(possibleVideo) ? (
+                <div style={{ width: "100%", maxWidth: 720, border: "1px solid #eee", borderRadius: 6, overflow: "hidden" }}>
+                  <video controls style={{ width: "100%" }}><source src={possibleVideo} /></video>
+                </div>
+              ) : (
+                <div style={{ marginTop: 8 }}>Video URL: <a href={possibleVideo} target="_blank" rel="noreferrer">Open</a></div>
+              )}
             </div>
           )}
-
-          {galleryUrls.length > 1 && <div style={{ marginTop: 8, color: "#6b7280", fontSize: 13 }}>{galleryIndex + 1} / {galleryUrls.length}</div>}
         </div>
 
         <div style={{ flex: "1 1 auto", maxWidth: 720 }}>
@@ -507,26 +657,50 @@ export default function ProductDetailPage({ products = [] }) {
             </div>
           </div>
 
-          {Array.isArray(product.colors) && product.colors.length > 0 && (
+          {/* Colors: render improved swatches with friendly names */}
+          {derivedColors.length > 0 && (
             <div style={{ marginTop: 14 }}>
               <div style={{ marginBottom: 8, fontWeight: 700 }}>Color</div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {product.colors.map((c) => {
-                  const active = selectedColor === c;
+                {derivedColors.map((c) => {
+                  const label = c.friendly || (c.displayHex || c.raw);
+                  const active = selectedColor === c.raw;
+                  const swatchBg = c.displayHex || "#fff";
                   return (
-                    <button
-                      key={c}
-                      onClick={() => setSelectedColor(c)}
-                      style={{
-                        padding: "8px 12px",
-                        borderRadius: 8,
-                        border: active ? "2px solid #0b5cff" : "1px solid #e6e6e6",
-                        background: active ? "#eef2ff" : "#fff",
-                        cursor: "pointer",
-                      }}
-                    >
-                      {c}
-                    </button>
+                    <div key={String(c.raw)} style={{ textAlign: "center", minWidth: 92 }}>
+                      <button
+                        onClick={() => {
+                          setSelectedColor(c.raw);
+                          if (c.imageUrl) {
+                            // if color has image included in gallery, set its index
+                            const idx = galleryUrls.findIndex(u => u === c.imageUrl);
+                            if (idx >= 0) {
+                              setTempColorImage(null);
+                              setGalleryIndex(idx);
+                            } else {
+                              // show temp color image
+                              setTempColorImage(c.imageUrl);
+                            }
+                          } else {
+                            // clear temp color image and keep current gallery image
+                            setTempColorImage(null);
+                            if (galleryUrls.length > 0) setGalleryIndex(0);
+                          }
+                        }}
+                        title={label}
+                        style={{
+                          width: 44, height: 36, borderRadius: 8,
+                          border: active ? "2px solid #0b5cff" : "1px solid #e6e6e6",
+                          background: swatchBg,
+                          backgroundImage: c.imageUrl && !c.displayHex ? `url(${c.imageUrl})` : undefined,
+                          backgroundSize: "cover",
+                          backgroundPosition: "center",
+                          cursor: "pointer",
+                          display: "inline-block"
+                        }}
+                      />
+                      <div style={{ marginTop: 6, fontSize: 13 }}>{label}</div>
+                    </div>
                   );
                 })}
               </div>
