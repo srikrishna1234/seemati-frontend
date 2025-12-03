@@ -494,17 +494,26 @@ export default function ProductDetailPage({ products = [] }) {
     );
   }
 
+  /* ----------- LAYOUT: grid 3 columns (left gallery / center details / right video) ----------- */
+  // On small screens the grid areas will stack naturally by using minmax and auto-fit via CSS fallback
   return (
-    <div style={{ padding: 24, position: "relative" }}>
+    <div style={{ padding: 24 }}>
       <button onClick={() => navigate(-1)} style={{ marginBottom: 12 }}>← Back</button>
 
-      <div style={{ display: "flex", gap: 40 }}>
-        <div style={{ flex: "0 0 520px" }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: embedUrl || isDirectVideoUrl(possibleVideo) ? "minmax(360px, 520px) 1fr 320px" : "minmax(360px, 520px) 1fr",
+          gap: 24,
+          alignItems: "start"
+        }}
+      >
+        {/* Left: gallery */}
+        <div style={{ width: "100%" }}>
           <div
             ref={productImageContainerRef}
             style={{
-              width: "100%",
-              height: 520,
+              height: 420,
               borderRadius: 8,
               border: "1px solid #f3f3f3",
               display: "flex",
@@ -572,8 +581,8 @@ export default function ProductDetailPage({ products = [] }) {
             )}
           </div>
 
-          {/* thumbnails */}
-          <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+          {/* thumbnails (smaller) */}
+          <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
             {galleryUrls.map((u, i) => (
               <button
                 key={u + i}
@@ -583,8 +592,8 @@ export default function ProductDetailPage({ products = [] }) {
                   padding: 0,
                   borderRadius: 6,
                   overflow: "hidden",
-                  width: 76,
-                  height: 76,
+                  width: 60,
+                  height: 60,
                   background: "#fff",
                   cursor: "pointer",
                 }}
@@ -594,7 +603,6 @@ export default function ProductDetailPage({ products = [] }) {
               </button>
             ))}
 
-            {/* color-specific thumbnails (only those not already in gallery) */}
             {derivedColors.map((c, idx) => {
               if (!c.imageUrl) return null;
               const exists = galleryUrls.includes(c.imageUrl);
@@ -605,7 +613,7 @@ export default function ProductDetailPage({ products = [] }) {
                   onClick={() => { setTempColorImage(c.imageUrl); setSelectedColor(c.raw); }}
                   title={c.friendly}
                   style={{
-                    width: 76, height: 76, borderRadius: 6, overflow: "hidden",
+                    width: 60, height: 60, borderRadius: 6, overflow: "hidden",
                     border: tempColorImage === c.imageUrl ? "2px solid #0b5cff" : "1px solid #eee",
                     padding: 0, background: "#fff", cursor: "pointer"
                   }}
@@ -615,36 +623,17 @@ export default function ProductDetailPage({ products = [] }) {
               );
             })}
 
-            {/* video tile */}
             {possibleVideo && (
               <div title="Video" onClick={() => { const el = document.getElementById("product-video-player"); if (el) el.scrollIntoView({behavior:"smooth", block:"center"}); }}
-                style={{ width: 76, height: 76, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid #eee", background: "#fafafa", cursor: "pointer" }}>
-                <svg width="28" height="28" viewBox="0 0 24 24"><path d="M5 3v18l15-9L5 3z" fill="currentColor"/></svg>
+                style={{ width: 60, height: 60, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid #eee", background: "#fafafa", cursor: "pointer" }}>
+                <svg width="20" height="20" viewBox="0 0 24 24"><path d="M5 3v18l15-9L5 3z" fill="currentColor"/></svg>
               </div>
             )}
           </div>
-
-          {galleryUrls.length > 1 && <div style={{ marginTop: 8, color: "#6b7280", fontSize: 13 }}>{tempColorImage ? "Color preview" : `${galleryIndex + 1} / ${galleryUrls.length}`}</div>}
-
-          {/* video player */}
-          {possibleVideo && (
-            <div id="product-video-player" style={{ marginTop: 14 }}>
-              {embedUrl ? (
-                <div style={{ width: "100%", maxWidth: 720, height: 360, border: "1px solid #eee", borderRadius: 6, overflow: "hidden" }}>
-                  <iframe title="product-video" width="100%" height="100%" src={embedUrl} frameBorder="0" allowFullScreen />
-                </div>
-              ) : isDirectVideoUrl(possibleVideo) ? (
-                <div style={{ width: "100%", maxWidth: 720, border: "1px solid #eee", borderRadius: 6, overflow: "hidden" }}>
-                  <video controls style={{ width: "100%" }}><source src={possibleVideo} /></video>
-                </div>
-              ) : (
-                <div style={{ marginTop: 8 }}>Video URL: <a href={possibleVideo} target="_blank" rel="noreferrer">Open</a></div>
-              )}
-            </div>
-          )}
         </div>
 
-        <div style={{ flex: "1 1 auto", maxWidth: 720 }}>
+        {/* Middle: product info (colors + sizes + CTA) */}
+        <div style={{ minWidth: 320 }}>
           <h1 style={{ marginTop: 0 }}>{product.title}</h1>
           {product.description && <p style={{ color: "#374151" }}>{product.description}</p>}
 
@@ -657,39 +646,32 @@ export default function ProductDetailPage({ products = [] }) {
             </div>
           </div>
 
-          {/* Colors: render improved swatches with friendly names */}
+          {/* Colors: render improved swatches with friendly names (smaller) */}
           {derivedColors.length > 0 && (
             <div style={{ marginTop: 14 }}>
               <div style={{ marginBottom: 8, fontWeight: 700 }}>Color</div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
                 {derivedColors.map((c) => {
                   const label = c.friendly || (c.displayHex || c.raw);
                   const active = selectedColor === c.raw;
                   const swatchBg = c.displayHex || "#fff";
                   return (
-                    <div key={String(c.raw)} style={{ textAlign: "center", minWidth: 92 }}>
+                    <div key={String(c.raw)} style={{ textAlign: "center", minWidth: 72 }}>
                       <button
                         onClick={() => {
                           setSelectedColor(c.raw);
                           if (c.imageUrl) {
-                            // if color has image included in gallery, set its index
                             const idx = galleryUrls.findIndex(u => u === c.imageUrl);
-                            if (idx >= 0) {
-                              setTempColorImage(null);
-                              setGalleryIndex(idx);
-                            } else {
-                              // show temp color image
-                              setTempColorImage(c.imageUrl);
-                            }
+                            if (idx >= 0) { setTempColorImage(null); setGalleryIndex(idx); }
+                            else { setTempColorImage(c.imageUrl); }
                           } else {
-                            // clear temp color image and keep current gallery image
                             setTempColorImage(null);
                             if (galleryUrls.length > 0) setGalleryIndex(0);
                           }
                         }}
                         title={label}
                         style={{
-                          width: 44, height: 36, borderRadius: 8,
+                          width: 36, height: 28, borderRadius: 8,
                           border: active ? "2px solid #0b5cff" : "1px solid #e6e6e6",
                           background: swatchBg,
                           backgroundImage: c.imageUrl && !c.displayHex ? `url(${c.imageUrl})` : undefined,
@@ -699,7 +681,7 @@ export default function ProductDetailPage({ products = [] }) {
                           display: "inline-block"
                         }}
                       />
-                      <div style={{ marginTop: 6, fontSize: 13 }}>{label}</div>
+                      <div style={{ marginTop: 6, fontSize: 12 }}>{label}</div>
                     </div>
                   );
                 })}
@@ -789,8 +771,39 @@ export default function ProductDetailPage({ products = [] }) {
             <div>Category: {product.category ?? "—"}</div>
           </div>
         </div>
+
+        {/* Right: video (only rendered if video exists) */}
+        {possibleVideo && (
+          <div style={{ alignSelf: "start" }}>
+            <div style={{ marginBottom: 8, fontWeight: 700 }}>Product video</div>
+            {embedUrl ? (
+              <div style={{ width: "100%", height: 220, border: "1px solid #eee", borderRadius: 8, overflow: "hidden", background: "#000" }}>
+                <iframe
+                  title="product-video"
+                  width="100%"
+                  height="100%"
+                  src={embedUrl}
+                  frameBorder="0"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                />
+              </div>
+            ) : isDirectVideoUrl(possibleVideo) ? (
+              <div style={{ width: "100%", height: 220, border: "1px solid #eee", borderRadius: 8, overflow: "hidden", background: "#000" }}>
+                <video controls style={{ width: "100%", height: "100%" }}>
+                  <source src={possibleVideo} />
+                </video>
+              </div>
+            ) : (
+              <div style={{ fontSize: 13 }}>
+                <a href={possibleVideo} target="_blank" rel="noreferrer">Open video</a>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
+      {/* shipping floating bar kept unchanged */}
       <div
         aria-hidden="false"
         style={{
