@@ -30,6 +30,9 @@ const Testimonials = lazy(() => import("./pages/Testimonials"));   // Testimonia
 const WishlistPage = lazy(() => import("./pages/WishlistPage"));   // WishlistPage.jsx
 const NotFound = lazy(() => import("./pages/NotFound"));           // NotFound.jsx
 
+// NEW: admin entry point (delegate all /admin/* routes here)
+const AdminPage = lazy(() => import("./admin/AdminPage"));
+
 function App() {
   return (
     <div className="app-root">
@@ -57,6 +60,12 @@ function App() {
             <Route path="/returns" element={<Returns />} />
             <Route path="/testimonials" element={<Testimonials />} />
             <Route path="/wishlist" element={<WishlistPage />} />
+
+            {/*
+              Admin subtree: delegate /admin/* to AdminPage which should handle
+              specific admin routes such as /admin/products, /admin/login, etc.
+            */}
+            <Route path="/admin/*" element={<AdminPage />} />
 
             <Route path="/404" element={<NotFound />} />
             <Route path="*" element={<Navigate to="/404" replace />} />
