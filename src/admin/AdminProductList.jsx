@@ -34,6 +34,7 @@ export default function AdminProductList() {
     async function load() {
       setLoading(true);
       setError(null);
+
       try {
         console.debug("[AdminProductList] trying relative path:", RELATIVE_PATH);
         const r1 = await fetchJson(RELATIVE_PATH);
@@ -49,8 +50,11 @@ export default function AdminProductList() {
         }
 
         if (r1.looksLikeHtml) {
-          console.warn("[AdminProductList] relative path returned HTML, falling back to backend origin");
-          const r2 = await fetchJson(BACKEND_ORIGIN + RELATIVE_PATH);
+          console.warn("[AdminProductList] relative path returned HTML (frontend served index), falling back to backend origin");
+          const backendUrl = BACKEND_ORIGIN + RELATIVE_PATH;
+          console.debug("[AdminProductList] trying backend URL:", backendUrl);
+          const r2 = await fetchJson(backendUrl);
+
           if (r2.json) {
             console.debug("[AdminProductList] got JSON from backend origin", r2);
             const arr = r2.json.products || r2.json.data || r2.json.items || r2.json || [];
@@ -60,10 +64,11 @@ export default function AdminProductList() {
             }
             return;
           } else {
-            throw new Error("Backend origin did not return JSON");
+            throw new Error("Backend origin did not return JSON. Check backend logs.");
           }
         }
 
+        console.error("[AdminProductList] unexpected response at relative path:", r1);
         throw new Error("Unexpected response from relative path");
       } catch (err) {
         console.error("[AdminProductList] load error:", err);
@@ -84,8 +89,12 @@ export default function AdminProductList() {
   const safe = (v) => (v === undefined || v === null ? "" : v);
 
   const getThumbnailUrl = (p) => {
-    if (p && typeof p.thumbnail === "string" && p.thumbnail.trim()) return p.thumbnail.trim();
-    if (p && Array.isArray(p.images) && p.images.length > 0 && p.images[0].url) return p.images[0].url;
+    if (p && typeof p.thumbnail === "string" && p.thumbnail.trim()) {
+      return p.thumbnail.trim();
+    }
+    if (p && Array.isArray(p.images) && p.images.length > 0 && p.images[0].url) {
+      return p.images[0].url;
+    }
     return null;
   };
 
@@ -110,17 +119,28 @@ export default function AdminProductList() {
                 <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd", width: 90 }}>
                   Thumbnail
                 </th>
-                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>Title</th>
-                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>Price</th>
-                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>Stock</th>
-                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>Category</th>
-                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>Actions</th>
+                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>
+                  Title
+                </th>
+                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>
+                  Price
+                </th>
+                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>
+                  Stock
+                </th>
+                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>
+                  Category
+                </th>
+                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>
+                  Actions
+                </th>
               </tr>
             </thead>
             <tbody>
               {products.map((p, i) => {
                 const id = p._id || p.id || `${i}`;
                 const thumbUrl = getThumbnailUrl(p);
+
                 return (
                   <tr key={id}>
                     <td style={{ padding: "8px 8px", borderBottom: "1px solid #f0f0f0", verticalAlign: "middle" }}>
@@ -135,12 +155,10 @@ export default function AdminProductList() {
                         <span style={{ fontSize: 12, color: "#999" }}>No image</span>
                       )}
                     </td>
-
                     <td style={{ padding: "10px 8px", borderBottom: "1px solid #f0f0f0" }}>{safe(p.title)}</td>
                     <td style={{ padding: "10px 8px", borderBottom: "1px solid #f0f0f0" }}>{safe(p.price)}</td>
                     <td style={{ padding: "10px 8px", borderBottom: "1px solid #f0f0f0" }}>{safe(p.stock)}</td>
                     <td style={{ padding: "10px 8px", borderBottom: "1px solid #f0f0f0" }}>{safe(p.category)}</td>
-
                     <td style={{ padding: "10px 8px", borderBottom: "1px solid #f0f0f0" }}>
                       <Link to={`/admin/products/${id}/edit`}>
                         <button>Edit</button>
