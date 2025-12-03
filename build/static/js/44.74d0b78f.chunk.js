@@ -1,2 +1,0 @@
-"use strict";(self.webpackChunkseemati_ladies_wear=self.webpackChunkseemati_ladies_wear||[]).push([[44],{2044:(e,s,t)=>{t.r(s),t.d(s,{default:()=>i});t(5043);var n=t(8163),a=t(579);const i=()=>(0,a.jsxs)("div",{style:{padding:"4rem 1rem",textAlign:"center"},children:[(0,a.jsx)("h1",{style:{fontSize:48,margin:0},children:"404"}),(0,a.jsx)("p",{style:{marginTop:12},children:"Page not found."}),(0,a.jsx)(n.N_,{to:"/",className:"btn btn-outline",style:{marginTop:12},children:"Back to home"})]})}}]);
-//# sourceMappingURL=44.74d0b78f.chunk.js.map
