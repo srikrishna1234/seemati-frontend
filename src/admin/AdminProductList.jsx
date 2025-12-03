@@ -1,15 +1,15 @@
 // src/admin/AdminProductList.jsx
 import React, { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 
 /**
- * AdminProductList (Link-based navigation)
- * - Uses Link for SPA navigation to /admin/products/:id/edit
- * - Keeps the robust fallback fetch behaviour
+ * Robust AdminProductList
+ * - Try relative path first (so dev + correct rewrites still work)
+ * - If response is HTML (index.html), fallback to the backend origin
+ * - Prints helpful console.debug lines so you can verify behaviour live
  */
 
 const BACKEND_ORIGIN = "https://seemati-backend.onrender.com";
-const RELATIVE_PATH = "/admin-api/products";
+const RELATIVE_PATH = "/admin-api/products"; // what your frontend has been calling
 
 export default function AdminProductList() {
   const [products, setProducts] = useState(null);
@@ -40,11 +40,13 @@ export default function AdminProductList() {
     async function load() {
       setLoading(true);
       setError(null);
+
       try {
         console.debug("[AdminProductList] trying relative path:", RELATIVE_PATH);
         const r1 = await fetchJson(RELATIVE_PATH);
 
         if (r1.json) {
+          console.debug("[AdminProductList] got JSON from relative path", r1);
           const arr = r1.json.products || r1.json.data || r1.json.items || r1.json || [];
           if (!cancelled) {
             setProducts(Array.isArray(arr) ? arr : []);
@@ -54,11 +56,15 @@ export default function AdminProductList() {
         }
 
         if (r1.looksLikeHtml) {
-          console.warn("[AdminProductList] relative path returned HTML — falling back to backend origin");
+          console.warn(
+            "[AdminProductList] relative path returned HTML (frontend served index), falling back to backend origin"
+          );
           const backendUrl = BACKEND_ORIGIN + RELATIVE_PATH;
+          console.debug("[AdminProductList] trying backend URL:", backendUrl);
           const r2 = await fetchJson(backendUrl);
 
           if (r2.json) {
+            console.debug("[AdminProductList] got JSON from backend origin", r2);
             const arr = r2.json.products || r2.json.data || r2.json.items || r2.json || [];
             if (!cancelled) {
               setProducts(Array.isArray(arr) ? arr : []);
@@ -70,6 +76,7 @@ export default function AdminProductList() {
           }
         }
 
+        console.error("[AdminProductList] unexpected response at relative path:", r1);
         throw new Error("Unexpected response from relative path");
       } catch (err) {
         console.error("[AdminProductList] load error:", err);
@@ -90,8 +97,12 @@ export default function AdminProductList() {
   const safe = (v) => (v === undefined || v === null ? "" : v);
 
   const getThumbnailUrl = (p) => {
-    if (p && typeof p.thumbnail === "string" && p.thumbnail.trim()) return p.thumbnail.trim();
-    if (p && Array.isArray(p.images) && p.images.length > 0 && p.images[0].url) return p.images[0].url;
+    if (p && typeof p.thumbnail === "string" && p.thumbnail.trim()) {
+      return p.thumbnail.trim();
+    }
+    if (p && Array.isArray(p.images) && p.images.length > 0 && p.images[0].url) {
+      return p.images[0].url;
+    }
     return null;
   };
 
@@ -99,9 +110,7 @@ export default function AdminProductList() {
     <div style={{ padding: 20 }}>
       <h1>Products</h1>
       <div style={{ marginBottom: 8 }}>
-        <Link to="/admin/products/add">
-          <button>Add product</button>
-        </Link>
+        <button onClick={() => window.location.assign("/admin/products/add")}>Add product</button>
       </div>
 
       {loading && <div>Loading products…</div>}
@@ -113,47 +122,90 @@ export default function AdminProductList() {
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr>
-                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd", width: 90 }}>
+                <th
+                  style={{
+                    textAlign: "left",
+                    padding: "12px 8px",
+                    borderBottom: "1px solid #ddd",
+                    width: 90,
+                  }}
+                >
                   Thumbnail
                 </th>
-                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>Title</th>
-                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>Price</th>
-                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>Stock</th>
-                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>Category</th>
-                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>Actions</th>
+                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>
+                  Title
+                </th>
+                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>
+                  Price
+                </th>
+                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>
+                  Stock
+                </th>
+                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>
+                  Category
+                </th>
+                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>
+                  Actions
+                </th>
               </tr>
             </thead>
             <tbody>
               {products.map((p, i) => {
                 const id = p._id || p.id || `${i}`;
                 const thumbUrl = getThumbnailUrl(p);
+
                 return (
                   <tr key={id}>
-                    <td style={{ padding: "8px 8px", borderBottom: "1px solid #f0f0f0", verticalAlign: "middle" }}>
+                    <td
+                      style={{
+                        padding: "8px 8px",
+                        borderBottom: "1px solid #f0f0f0",
+                        verticalAlign: "middle",
+                      }}
+                    >
                       {thumbUrl ? (
                         <img
                           src={thumbUrl}
                           alt={safe(p.title) || "Product thumbnail"}
-                          style={{ width: 64, height: 64, objectFit: "cover", borderRadius: 4, border: "1px solid #eee" }}
+                          style={{
+                            width: 64,
+                            height: 64,
+                            objectFit: "cover",
+                            borderRadius: 4,
+                            border: "1px solid #eee",
+                          }}
                           loading="lazy"
                         />
                       ) : (
                         <span style={{ fontSize: 12, color: "#999" }}>No image</span>
                       )}
                     </td>
-
-                    <td style={{ padding: "10px 8px", borderBottom: "1px solid #f0f0f0" }}>{safe(p.title)}</td>
-                    <td style={{ padding: "10px 8px", borderBottom: "1px solid #f0f0f0" }}>{safe(p.price)}</td>
-                    <td style={{ padding: "10px 8px", borderBottom: "1px solid #f0f0f0" }}>{safe(p.stock)}</td>
-                    <td style={{ padding: "10px 8px", borderBottom: "1px solid #f0f0f0" }}>{safe(p.category)}</td>
-
                     <td style={{ padding: "10px 8px", borderBottom: "1px solid #f0f0f0" }}>
-                      <Link to={`/admin/products/${id}/edit`}>
-                        <button>Edit</button>
-                      </Link>{" "}
-                      <a href={thumbUrl || (p.images && p.images[0] && p.images[0].url) || "#"} target="_blank" rel="noreferrer">
-                        <button>View</button>
-                      </a>
+                      {safe(p.title)}
+                    </td>
+                    <td style={{ padding: "10px 8px", borderBottom: "1px solid #f0f0f0" }}>
+                      {safe(p.price)}
+                    </td>
+                    <td style={{ padding: "10px 8px", borderBottom: "1px solid #f0f0f0" }}>
+                      {safe(p.stock)}
+                    </td>
+                    <td style={{ padding: "10px 8px", borderBottom: "1px solid #f0f0f0" }}>
+                      {safe(p.category)}
+                    </td>
+                    <td style={{ padding: "10px 8px", borderBottom: "1px solid #f0f0f0" }}>
+                      <button onClick={() => window.location.assign(`/admin/products/${id}/edit`)}>
+                        Edit
+                      </button>{" "}
+                      <button
+                        onClick={() =>
+                          window.open(
+                            thumbUrl || (p.images && p.images[0] && p.images[0].url) || "#",
+                            "_blank"
+                          )
+                        }
+                      >
+                        View
+                      </button>
                     </td>
                   </tr>
                 );
