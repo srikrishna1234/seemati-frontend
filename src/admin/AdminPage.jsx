@@ -1,31 +1,58 @@
 // src/admin/AdminPage.jsx
 import React, { useEffect } from "react";
-import AdminProductList from "./AdminProductList.jsx"; // exact filename (case-sensitive)
- 
+import { Routes, Route, Link, useLocation } from "react-router-dom";
+
+// Explicit imports — match exact file names (case & extension)
+import AdminProductList from "./AdminProductList.jsx";
+import AdminProductEdit from "./AdminProductEdit.jsx"; // make sure this exists (or .js)
+import AdminProductAdd from "./AdminProductEdit.jsx";  // reuse edit page for add (if you want separate, change)
+import AdminAnnouncements from "./AdminAnnouncements.jsx"; // optional admin subpage
+
 /**
- * AdminPage.jsx
- * - Thin wrapper page that renders AdminProductList.
- * - Adds console logs so we can confirm this page mounts the expected component.
- * - Use this full-file replacement to avoid ambiguous imports / wrong file being bundled.
+ * AdminPage
+ * - Handles all /admin/* routes (mounted by App.js)
+ * - Renders an admin sidebar/header and nested routes
+ * - Adds debug logs so we can confirm which route mounted
  */
 export default function AdminPage() {
+  const loc = useLocation();
+
   useEffect(() => {
-    console.debug("[AdminPage] mounted");
+    console.debug("[AdminPage] mounted, location:", loc.pathname);
     return () => console.debug("[AdminPage] unmounted");
-  }, []);
+  }, [loc.pathname]);
 
   return (
-    <main style={{ padding: 20 }}>
-      <div style={{ maxWidth: 1200, margin: "0 auto" }}>
-        <div style={{ marginBottom: 24 }}>
+    <div style={{ padding: 18 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
+        <div>
           <h1 style={{ margin: 0 }}>Admin</h1>
+          <div style={{ fontSize: 13, color: "#666" }}>Manage products, announcements and site content.</div>
         </div>
 
-        {/* Keep the AdminProductList import very explicit */}
-        <section id="admin-products-section">
-          <AdminProductList />
-        </section>
+        <div>
+          <Link to="/" style={{ marginRight: 12 }}>Back to site</Link>
+          <Link to="/admin/products" style={{ marginRight: 8 }}>Products</Link>
+          <Link to="/admin/announcements">Announcements</Link>
+        </div>
       </div>
-    </main>
+
+      <div style={{ background: "#fff", borderRadius: 6, padding: 8 }}>
+        <Routes>
+          {/* Admin product list */}
+          <Route path="products" element={<AdminProductList />} />
+          {/* Add product (you can reuse same edit component) */}
+          <Route path="products/add" element={<AdminProductAdd />} />
+          {/* Edit product */}
+          <Route path="products/:id/edit" element={<AdminProductEdit />} />
+
+          {/* Other admin pages (optional) */}
+          <Route path="announcements" element={<AdminAnnouncements />} />
+
+          {/* Default admin route -> products list */}
+          <Route path="" element={<AdminProductList />} />
+        </Routes>
+      </div>
+    </div>
   );
 }
