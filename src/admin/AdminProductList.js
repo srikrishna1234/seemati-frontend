@@ -1,156 +1,93 @@
-// src/admin/AdminProductList.jsx
+// src/admin/AdminProductList.js
 import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import axios from "../api/axiosInstance";
 
-/*
-  AdminProductList (improved)
-  - Uses absolute navigation to avoid repeated relative paths
-  - Accepts multiple API response shapes
-  - Shows loading, error and empty states
-  - Keeps image fallback and delete action
-*/
-
+/**
+ * Identical to AdminProductList.jsx — included to avoid bundler/filename conflicts.
+ */
 export default function AdminProductList() {
-  const navigate = useNavigate();
-  const [products, setProducts] = useState([]);
+  const [products, setProducts] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    let mounted = true;
+    let cancelled = false;
 
-    async function fetchProducts() {
+    async function load() {
+      setLoading(true);
+      setError(null);
       try {
-        setLoading(true);
-        setError(null);
+        const res = await fetch("/admin-api/products", {
+          method: "GET",
+          credentials: "include",
+          headers: { "Accept": "application/json" },
+        });
+        const text = await res.text();
+        let data;
+        try {
+          data = text ? JSON.parse(text) : {};
+        } catch (parseErr) {
+          console.error("AdminProductList.js: parse error", parseErr, text);
+          throw new Error("Invalid JSON");
+        }
 
-        // Adjust endpoint if your backend admin route differs.
-        // This expects the public API that returns either an array or { products: [] }.
-        const res = await axios.get("/api/products?page=1&limit=200&fields=_id,title,slug,price,thumbnail,images,stock,category");
-        const data = res?.data;
-
-        // Normalize product list:
-        let list = [];
-        if (Array.isArray(data)) list = data;
-        else if (Array.isArray(data?.products)) list = data.products;
-        else if (Array.isArray(data?.data)) list = data.data;
-        else if (Array.isArray(data?.rows)) list = data.rows;
-        else list = [];
-
-        if (!mounted) return;
-        setProducts(list);
+        console.debug("[AdminProductList.js] status:", res.status, "data:", data);
+        const arr = data.products || data.data || data.items || data || [];
+        if (!cancelled) {
+          setProducts(Array.isArray(arr) ? arr : []);
+          setLoading(false);
+        }
       } catch (err) {
-        console.error("AdminProductList: fetch failed", err);
-        if (mounted) setError(err);
-      } finally {
-        if (mounted) setLoading(false);
+        console.error("AdminProductList.js load error:", err);
+        if (!cancelled) {
+          setError(err.message || "Unknown error");
+          setProducts([]);
+          setLoading(false);
+        }
       }
     }
 
-    fetchProducts();
-
-    return () => {
-      mounted = false;
-    };
+    load();
+    return () => (cancelled = true);
   }, []);
 
-  const handleDelete = async (productId) => {
-    try {
-      const ok = window.confirm("Are you sure you want to delete this product? This cannot be undone.");
-      if (!ok) return;
-
-      // call delete API (adjust path if your backend expects /admin/products)
-      await axios.delete(`/api/products/${productId}`);
-      setProducts((prev) => prev.filter((p) => (p._id || p.id) !== productId));
-    } catch (err) {
-      console.error("AdminProductList: delete failed", err);
-      alert("Delete failed — see console for details.");
-    }
-  };
-
-  const goToEdit = (productId) => {
-    // absolute path prevents relative append issues
-    navigate(`/admin/products/edit/${productId}`);
-  };
-
-  const goToNew = () => {
-    navigate("/admin/products/new");
-  };
+  const safe = (v) => (v === undefined || v === null ? "" : v);
 
   return (
     <div style={{ padding: 20 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-        <h2 style={{ margin: 0 }}>Products</h2>
-        <button onClick={goToNew} style={{ padding: "6px 10px" }}>
-          Add product
-        </button>
+      <h1>Products</h1>
+      <div style={{ marginBottom: 8 }}>
+        <button onClick={() => window.location.assign("/admin/products/add")}>Add product</button>
       </div>
 
-      {loading ? (
-        <div style={{ padding: 12 }}>Loading products…</div>
-      ) : error ? (
-        <div style={{ padding: 12, color: "red" }}>Failed to load products. Check console for details.</div>
-      ) : products.length === 0 ? (
-        <div style={{ padding: 12, color: "#444" }}>No products found.</div>
-      ) : (
+      {loading && <div>Loading products…</div>}
+      {error && <div style={{ color: "crimson" }}>Error loading products: {error}</div>}
+      {!loading && (!products || products.length === 0) && <div>No products found.</div>}
+
+      {!loading && products && products.length > 0 && (
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
-              <tr style={{ textAlign: "left", borderBottom: "1px solid #eee" }}>
-                <th style={{ padding: "8px" }}>Image</th>
-                <th style={{ padding: "8px" }}>Title</th>
-                <th style={{ padding: "8px" }}>Price</th>
-                <th style={{ padding: "8px" }}>Stock</th>
-                <th style={{ padding: "8px" }}>Category</th>
-                <th style={{ padding: "8px" }}>Actions</th>
+              <tr>
+                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>Title</th>
+                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>Price</th>
+                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>Stock</th>
+                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>Category</th>
+                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {products.map((p) => {
-                const id = p._id || p.id || p.slug || JSON.stringify(p).slice(0, 8);
-                const imageUrl =
-                  p.thumbnail ||
-                  (Array.isArray(p.images) && (p.images[0]?.url || p.images[0])) ||
-                  (typeof p.images === "string" ? p.images : "");
+              {products.map((p, i) => {
+                const id = p._id || p.id || `${i}`;
                 return (
-                  <tr key={id} style={{ borderBottom: "1px solid #f6f6f6" }}>
-                    <td style={{ padding: 8, verticalAlign: "middle" }}>
-                      {imageUrl ? (
-                        <img
-                          src={imageUrl}
-                          alt={p.title || p.name || "product"}
-                          style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 4 }}
-                          onError={(e) => {
-                            // lightweight fallback svg
-                            e.target.onerror = null;
-                            e.target.src =
-                              "data:image/svg+xml;utf8," +
-                              encodeURIComponent(
-                                '<svg xmlns="http://www.w3.org/2000/svg" width="60" height="60"><rect width="100%" height="100%" fill="#f4f4f4"/></svg>'
-                              );
-                          }}
-                        />
-                      ) : (
-                        <div style={{ width: 60, height: 60, background: "#f4f4f4", borderRadius: 4 }} />
-                      )}
-                    </td>
-
-                    <td style={{ padding: 8, verticalAlign: "middle", maxWidth: 320 }}>{p.title || p.name || "-"}</td>
-
-                    <td style={{ padding: 8, verticalAlign: "middle" }}>
-                      {typeof p.price === "number" ? `₹${p.price}` : p.price ?? "-"}
-                    </td>
-
-                    <td style={{ padding: 8, verticalAlign: "middle" }}>{p.stock ?? "-"}</td>
-
-                    <td style={{ padding: 8, verticalAlign: "middle" }}>{p.category ?? "-"}</td>
-
-                    <td style={{ padding: 8, verticalAlign: "middle" }}>
-                      <button onClick={() => goToEdit(id)} style={{ marginRight: 8 }}>
-                        Edit
-                      </button>
-                      <button onClick={() => handleDelete(id)}>Delete</button>
+                  <tr key={id}>
+                    <td style={{ padding: "10px 8px", borderBottom: "1px solid #f0f0f0" }}>{safe(p.title)}</td>
+                    <td style={{ padding: "10px 8px", borderBottom: "1px solid #f0f0f0" }}>{safe(p.price)}</td>
+                    <td style={{ padding: "10px 8px", borderBottom: "1px solid #f0f0f0" }}>{safe(p.stock)}</td>
+                    <td style={{ padding: "10px 8px", borderBottom: "1px solid #f0f0f0" }}>{safe(p.category)}</td>
+                    <td style={{ padding: "10px 8px", borderBottom: "1px solid #f0f0f0" }}>
+                      <button onClick={() => window.location.assign(`/admin/products/${id}/edit`)}>Edit</button>
+                      {" "}
+                      <button onClick={() => window.open(p.images && p.images[0] && p.images[0].url ? p.images[0].url : "#", "_blank")}>View</button>
                     </td>
                   </tr>
                 );
