@@ -150,10 +150,27 @@ export default function AdminProductEdit() {
   const [swatches, setSwatches] = useState([]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    // Defensive guard: if id is missing, don't attempt to fetch.
+    // This prevents accidental calls like /api/products/undefined when the Edit component
+    // is mounted on an "add" route or when params aren't available.
+    if (!id) {
+      // initialize an "empty" edit form to let user create via Add page flow if needed,
+      // but here we simply stop loading and keep defaults.
+      setLoading(false);
+      setExistingImages([]);
+      setKeepMap({});
+      setSwatches([]);
+      return () => { cancelled = true; };
+    }
+
     async function load() {
       try {
         setLoading(true);
         const resp = await axiosInstance.get(`/api/products/${id}`);
+        if (cancelled) return;
+
         if (resp.data && resp.data.product) {
           const p = resp.data.product;
           setProduct({
@@ -190,18 +207,22 @@ export default function AdminProductEdit() {
           const normalized = parsed.map((c) => normalizeToHexIfPossible(c));
           setSwatches(normalized);
         } else {
+          // If backend response doesn't include product, show alert but keep UI stable
           alert('Failed to load product.');
         }
       } catch (err) {
         console.error('Failed to fetch product', err);
         alert('Error loading product. See console.');
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
+
     load();
+
     // cleanup previews on unmount
     return () => {
+      cancelled = true;
       selectedFiles.forEach(s => s.previewUrl && URL.revokeObjectURL(s.previewUrl));
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
