@@ -1,13 +1,14 @@
 // src/admin/ProductDetail.js
 import React, { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import colorUtil from "../utils/colorNames"; // expects src/utils/colorNames.js from earlier
 
 const BASE_URL =
   process.env.REACT_APP_API_BASE_URL ||
   process.env.REACT_APP_API_URL ||
   "https://seemati-backend.onrender.com";
 const PLACEHOLDER = "/images/placeholder.png";
+
+/* -------------------- utilities -------------------- */
 
 function toImageUrl(img) {
   if (!img) return null;
@@ -24,21 +25,99 @@ function toImageUrl(img) {
   return `${BASE_URL}${s.startsWith("/") ? s : `/${s}`}`;
 }
 
-// Try to extract YouTube embed URL. Return null if not a recognized youtube url.
+// normalize a color input (name, hex) into a 6-char hex like #AABBCC
+function normalizeHex(raw) {
+  if (!raw) return null;
+  let s = String(raw).trim();
+  // if it's a named color (like "baby pink"), we won't map here — let hex matcher handle common names later
+  // if already hex like #abc or abc or 0xabc
+  if (s.startsWith("0x")) s = s.slice(2);
+  if (s.startsWith("#")) s = s.slice(1);
+  s = s.replace(/[^0-9a-fA-F]/g, "");
+  if (s.length === 3) {
+    // expand
+    s = s.split("").map(c => c + c).join("");
+  }
+  if (s.length === 6) {
+    return ("#" + s).toUpperCase();
+  }
+  return null;
+}
+
+// small palette of named colors (common ones) to match against — add more if you want better matches
+const NAMED_COLORS = {
+  "black": "#000000",
+  "white": "#FFFFFF",
+  "red": "#FF0000",
+  "green": "#008000",
+  "blue": "#0000FF",
+  "yellow": "#FFFF00",
+  "pink": "#FFC0CB",
+  "baby pink": "#F4C6D8",
+  "teal": "#008B8B",
+  "olive": "#808000",
+  "navy": "#000080",
+  "maroon": "#800000",
+  "purple": "#800080",
+  "orange": "#FFA500",
+  "brown": "#A52A2A",
+  "gray": "#808080",
+  "lightgray": "#D3D3D3",
+  "coral": "#FF7F50",
+  "magenta": "#FF00FF",
+  "cyan": "#00FFFF",
+  "lime": "#00FF00",
+  "indigo": "#4B0082",
+  "gold": "#FFD700",
+  "silver": "#C0C0C0",
+  "mustard": "#D2A200"
+};
+
+// produce array of {name, hex, rgb}
+const _palette = Object.entries(NAMED_COLORS).map(([n, h]) => {
+  const r = parseInt(h.slice(1,3),16);
+  const g = parseInt(h.slice(3,5),16);
+  const b = parseInt(h.slice(5,7),16);
+  return { name: n, hex: h.toUpperCase(), r, g, b };
+});
+
+// convert hex to nearest friendly name by Euclidean distance in RGB space
+function hexToNearestName(hex) {
+  if (!hex) return null;
+  const h = normalizeHex(hex);
+  if (!h) return null;
+  const r = parseInt(h.slice(1,3),16);
+  const g = parseInt(h.slice(3,5),16);
+  const b = parseInt(h.slice(5,7),16);
+
+  let best = null;
+  let bestDist = Infinity;
+  for (const p of _palette) {
+    const dr = p.r - r;
+    const dg = p.g - g;
+    const db = p.b - b;
+    const d = dr*dr + dg*dg + db*db;
+    if (d < bestDist) {
+      bestDist = d;
+      best = p;
+    }
+  }
+  if (!best) return h;
+  // if distance is large, return hex instead of misleading name (threshold chosen somewhat heuristically)
+  if (bestDist > (160*160)) return h; // far away -> show hex
+  // return capitalized name (e.g. "Baby Pink")
+  return best.name.split(" ").map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(" ");
+}
+
+// youtube embed helper - returns embed url or null
 function youtubeEmbedUrl(raw) {
   if (!raw || typeof raw !== "string") return null;
   const s = raw.trim();
-  // common youtube forms:
-  // https://www.youtube.com/watch?v=VIDEOID
-  // https://youtu.be/VIDEOID
-  // https://www.youtube.com/embed/VIDEOID
   try {
     const url = new URL(s, window.location.origin);
     const host = url.hostname.toLowerCase();
     if (host.includes("youtube.com")) {
-      if (url.pathname.startsWith("/embed/")) {
-        return `https://www.youtube.com${url.pathname}${url.search || ""}`;
-      }
+      if (url.pathname.startsWith("/embed/")) return `https://www.youtube.com${url.pathname}${url.search || ""}`;
       const vid = url.searchParams.get("v");
       if (vid) return `https://www.youtube.com/embed/${vid}`;
     }
@@ -47,12 +126,14 @@ function youtubeEmbedUrl(raw) {
       if (vid) return `https://www.youtube.com/embed/${vid}`;
     }
   } catch (err) {
-    // not a full URL, maybe just an ID
+    // maybe user pasted only ID
     const maybeId = s.match(/^[A-Za-z0-9_-]{8,}$/);
     if (maybeId) return `https://www.youtube.com/embed/${maybeId[0]}`;
   }
   return null;
 }
+
+/* -------------------- component -------------------- */
 
 export default function ProductDetail() {
   const { id } = useParams();
@@ -60,9 +141,8 @@ export default function ProductDetail() {
   const [error, setError] = useState("");
   const [product, setProduct] = useState(null);
 
-  // UI state
-  const [selectedColor, setSelectedColor] = useState(null);
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
+  const [selectedColor, setSelectedColor] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -82,15 +162,23 @@ export default function ProductDetail() {
         }
 
         const data = await res.json();
+
+        // ADJUSTMENT: some endpoints return { product: {...} } and some return the product directly
+        const prod = data && data.product ? data.product : data;
+
         if (!cancelled) {
-          setProduct(data);
-          // derive default selected color (first available)
-          const rawColors = Array.isArray(data.colors)
-            ? data.colors
-            : (data.colors ? String(data.colors).split(",").map(s => s.trim()).filter(Boolean) : []);
+          setProduct(prod);
+
+          // derive colors: array or CSV
+          const rawColors = Array.isArray(prod.colors)
+            ? prod.colors
+            : (prod.colors ? String(prod.colors).split(",").map(s => s.trim()).filter(Boolean) : []);
+
+          // choose first color as selected
           if (rawColors.length > 0) {
-            const normalized = colorUtil.normalizeHex(rawColors[0]) || rawColors[0];
-            setSelectedColor(normalized);
+            // normalize into hex if possible, else keep raw
+            const firstHex = normalizeHex(rawColors[0]) || rawColors[0];
+            setSelectedColor(firstHex);
           } else {
             setSelectedColor(null);
           }
@@ -113,26 +201,29 @@ export default function ProductDetail() {
   if (error) return <div style={{ padding: 16, color: "crimson" }}>{error}</div>;
   if (!product) return null;
 
-  // normalize images to array of urls
-  const rawImages = Array.isArray(product.images)
-    ? product.images
-    : (product.images ? [product.images] : []);
+  // images
+  const rawImages = Array.isArray(product.images) ? product.images : (product.images ? [product.images] : []);
   const images = rawImages.map(toImageUrl).filter(Boolean);
 
-  // colors: accept array or comma-separated string
+  // colors normalized: map each raw value to hex if possible or keep original
   const rawColors = Array.isArray(product.colors)
     ? product.colors
     : (product.colors ? String(product.colors).split(",").map(s => s.trim()).filter(Boolean) : []);
-  const colors = rawColors.map(c => (colorUtil.normalizeHex(c) || c));
+  const colors = rawColors.map(c => {
+    const hex = normalizeHex(c);
+    return { raw: c, hex: hex, displayHex: hex || null, name: (hex ? hexToNearestName(hex) : (String(c).length <= 8 ? c : c)) };
+  });
 
-  const embedUrl = youtubeEmbedUrl(product.videoUrl);
+  // Video embed detection - look for common fields
+  const possibleVideo = product.videoUrl || product.video || product.video_url || product.videoLink || product.video_link || "";
+  const embedUrl = youtubeEmbedUrl(possibleVideo);
 
   return (
     <div style={{ padding: 16 }}>
       <h2 style={{ marginTop: 0 }}>{product.title || "Untitled product"}</h2>
 
       <div style={{ display: "flex", gap: 24, alignItems: "flex-start", flexWrap: "wrap" }}>
-        {/* Left: images */}
+        {/* Images + video */}
         <div style={{ minWidth: 260 }}>
           {images.length > 0 ? (
             <div>
@@ -159,7 +250,6 @@ export default function ProductDetail() {
                 />
               </div>
 
-              {/* thumbnails */}
               <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
                 {images.map((url, i) => (
                   <button
@@ -180,10 +270,7 @@ export default function ProductDetail() {
                       src={url}
                       alt={`thumb-${i}`}
                       style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                      onError={(e) => {
-                        e.currentTarget.onerror = null;
-                        e.currentTarget.src = PLACEHOLDER;
-                      }}
+                      onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = PLACEHOLDER; }}
                     />
                   </button>
                 ))}
@@ -205,8 +292,8 @@ export default function ProductDetail() {
             </div>
           )}
 
-          {/* video preview below images (if youtube embed available) */}
-          {product.videoUrl && (
+          {/* Video preview if available */}
+          {possibleVideo && (
             <div style={{ marginTop: 14 }}>
               {embedUrl ? (
                 <div style={{ width: 320, height: 180, border: "1px solid #eee", borderRadius: 6, overflow: "hidden" }}>
@@ -223,49 +310,35 @@ export default function ProductDetail() {
               ) : (
                 <div style={{ fontSize: 13 }}>
                   <strong>Video:</strong>{" "}
-                  <a href={product.videoUrl} target="_blank" rel="noreferrer">
-                    Open video
-                  </a>
+                  <a href={possibleVideo} target="_blank" rel="noreferrer">Open video</a>
                 </div>
               )}
             </div>
           )}
         </div>
 
-        {/* Right: details */}
+        {/* Details */}
         <div style={{ flex: 1, minWidth: 320 }}>
-          <p>
-            <strong>Price:</strong> ₹{product.price ?? "—"}
-          </p>
-          <p>
-            <strong>MRP:</strong> {product.mrp ? `₹${product.mrp}` : "—"}
-          </p>
-          <p>
-            <strong>Brand:</strong> {product.brand ?? "—"}
-          </p>
-          <p>
-            <strong>Stock:</strong> {product.stock ?? product.countInStock ?? "—"}
-          </p>
-          <p>
-            <strong>Category:</strong> {product.category ?? "—"}
-          </p>
-          <p>
-            <strong>Slug:</strong> {product.slug ?? "—"}
-          </p>
+          <p><strong>Price:</strong> ₹{product.price ?? "—"}</p>
+          <p><strong>MRP:</strong> {product.mrp ? `₹${product.mrp}` : "—"}</p>
+          <p><strong>Brand:</strong> {product.brand ?? "—"}</p>
+          <p><strong>Stock:</strong> {product.stock ?? product.countInStock ?? "—"}</p>
+          <p><strong>Category:</strong> {product.category ?? "—"}</p>
+          <p><strong>Slug:</strong> {product.slug ?? "—"}</p>
 
-          {/* Colors */}
+          {/* Colors: show swatches and friendly name */}
           {colors && colors.length > 0 && (
             <div style={{ marginTop: 12 }}>
               <div style={{ marginBottom: 8, fontWeight: 600 }}>Color</div>
               <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
                 {colors.map((c, idx) => {
-                  const hex = colorUtil.normalizeHex(c) || c;
-                  const friendly = colorUtil.hexToName(hex) || hex;
-                  const isSelected = selectedColor === hex || selectedColor === c;
+                  const bg = c.displayHex || "#fff";
+                  const friendly = c.name || (typeof c.raw === "string" ? c.raw : (c.displayHex || ""));
+                  const isSelected = (selectedColor && c.displayHex && selectedColor.toUpperCase() === c.displayHex.toUpperCase()) || (!selectedColor && idx === 0);
                   return (
-                    <div key={idx} style={{ textAlign: "center", minWidth: 70 }}>
+                    <div key={idx} style={{ textAlign: "center", minWidth: 80 }}>
                       <button
-                        onClick={() => setSelectedColor(hex)}
+                        onClick={() => setSelectedColor(c.displayHex || c.raw)}
                         aria-label={friendly}
                         title={friendly}
                         style={{
@@ -273,14 +346,12 @@ export default function ProductDetail() {
                           height: 36,
                           borderRadius: 6,
                           border: isSelected ? "2px solid #1A84C7" : "1px solid #ddd",
-                          background: hex || "#fff",
+                          background: bg,
                           display: "inline-block",
                           cursor: "pointer",
                         }}
                       />
-                      <div style={{ marginTop: 6, fontSize: 13, color: "#222" }}>
-                        {friendly}
-                      </div>
+                      <div style={{ marginTop: 6, fontSize: 13, color: "#222" }}>{friendly}</div>
                     </div>
                   );
                 })}
@@ -306,12 +377,8 @@ export default function ProductDetail() {
           </div>
 
           <div style={{ marginTop: 18 }}>
-            <Link to={`/admin/products/${id}/edit`}>
-              <button>Edit product</button>
-            </Link>
-            <span style={{ marginLeft: 12 }}>
-              <Link to="/admin/products">Back to list</Link>
-            </span>
+            <Link to={`/admin/products/${id}/edit`}><button>Edit product</button></Link>
+            <span style={{ marginLeft: 12 }}><Link to="/admin/products">Back to list</Link></span>
           </div>
         </div>
       </div>
