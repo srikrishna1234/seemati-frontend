@@ -1,31 +1,43 @@
 // src/admin/AdminPage.jsx
 import React, { useEffect } from "react";
-import AdminProductList from "./AdminProductList.jsx"; // exact filename (case-sensitive)
- 
-/**
- * AdminPage.jsx
- * - Thin wrapper page that renders AdminProductList.
- * - Adds console logs so we can confirm this page mounts the expected component.
- * - Use this full-file replacement to avoid ambiguous imports / wrong file being bundled.
- */
+import { Routes, Route, Link, useLocation } from "react-router-dom";
+
+import AdminProductList from "./AdminProductList.jsx";
+import AdminProductEdit from "./AdminProductEdit.jsx"; // ensure this file exists (or change to .js)
+import AdminAnnouncements from "./AdminAnnouncements.jsx"; // optional
+
 export default function AdminPage() {
+  const loc = useLocation();
+
   useEffect(() => {
-    console.debug("[AdminPage] mounted");
+    console.debug("[AdminPage] mounted, location:", loc.pathname);
     return () => console.debug("[AdminPage] unmounted");
-  }, []);
+  }, [loc.pathname]);
 
   return (
-    <main style={{ padding: 20 }}>
-      <div style={{ maxWidth: 1200, margin: "0 auto" }}>
-        <div style={{ marginBottom: 24 }}>
+    <div style={{ padding: 18 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
+        <div>
           <h1 style={{ margin: 0 }}>Admin</h1>
+          <div style={{ fontSize: 13, color: "#666" }}>Manage products and site content</div>
         </div>
 
-        {/* Keep the AdminProductList import very explicit */}
-        <section id="admin-products-section">
-          <AdminProductList />
-        </section>
+        <div>
+          <Link to="/" style={{ marginRight: 12 }}>Back to site</Link>
+          <Link to="/admin/products" style={{ marginRight: 8 }}>Products</Link>
+          <Link to="/admin/announcements">Announcements</Link>
+        </div>
       </div>
-    </main>
+
+      <div style={{ background: "#fff", borderRadius: 6, padding: 8 }}>
+        <Routes>
+          <Route path="products" element={<AdminProductList />} />
+          <Route path="products/add" element={<AdminProductEdit />} />
+          <Route path="products/:id/edit" element={<AdminProductEdit />} />
+          <Route path="announcements" element={<AdminAnnouncements />} />
+          <Route path="" element={<AdminProductList />} />
+        </Routes>
+      </div>
+    </div>
   );
 }
