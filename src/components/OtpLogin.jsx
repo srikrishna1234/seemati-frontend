@@ -1,26 +1,16 @@
 // src/components/OtpLogin.jsx
 import React, { useState, useRef } from "react";
-import api from "../api/axiosInstance"; // your shared axios instance
-
-/**
- * OtpLogin
- * Uses backend endpoints:
- *  - POST /api/auth/send-otp   { phone }
- *  - POST /api/auth/verify-otp { phone, otp }
- *
- * Accepts 6-digit OTPs (MSG91 default).
- */
+import api from "../api/axiosInstance";
 
 export default function OtpLogin() {
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
-  const [sent, setSent] = useState(false); // whether send-otp succeeded
+  const [sent, setSent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const otpRef = useRef(null);
 
-  // normalize to 10-digit local (no country code)
   function normalizePhone(p) {
     if (!p) return "";
     const t = String(p).trim();
@@ -28,7 +18,7 @@ export default function OtpLogin() {
     if (digits.length === 10) return digits;
     if (digits.length === 12 && digits.startsWith("91")) return digits.slice(2);
     if (digits.length === 11 && digits.startsWith("0")) return digits.slice(1);
-    return digits; // fallback
+    return digits;
   }
 
   function validPhone(p) {
@@ -44,7 +34,6 @@ export default function OtpLogin() {
       setError("Enter a valid 10-digit phone number.");
       return;
     }
-
     setLoading(true);
     setStatus("Sending OTP…");
     try {
@@ -53,22 +42,14 @@ export default function OtpLogin() {
       const data = resp && resp.data ? resp.data : {};
       if (data && data.ok) {
         setSent(true);
-        // prefer server message (can include "OTP sent via MSG91" or bypass info)
-        setStatus(data.message || "OTP sent. Enter the code to verify.");
-        if (data.bypass) {
-          // if bypass, server may indicate test code; don't show secret unless intended
-          setStatus((prev) => `${prev} (Test code: ${process.env.REACT_APP_OTP_TEST_CODE || "1234"})`);
-        }
+        setStatus(data.message || "OTP sent. Enter the code.");
+        if (data.bypass) setStatus(prev => `${prev} (Test code: ${process.env.REACT_APP_OTP_TEST_CODE || "1234"})`);
         setTimeout(() => otpRef.current && otpRef.current.focus(), 200);
       } else {
         setError("Failed to send OTP: " + (data && data.message ? data.message : "Unknown error"));
       }
     } catch (err) {
-      console.error("sendOtp error:", err);
-      const msg =
-        err.response && err.response.data && err.response.data.message
-          ? err.response.data.message
-          : err.message || "Network error";
+      const msg = err.response && err.response.data && err.response.data.message ? err.response.data.message : err.message || "Network error";
       setError("Failed to send OTP: " + msg);
     } finally {
       setLoading(false);
@@ -83,11 +64,9 @@ export default function OtpLogin() {
       return;
     }
     if (!otp || !/^\d{4,6}$/.test(String(otp).trim())) {
-      // allow 4-6 digits for compatibility (6 is standard)
       setError("Enter the OTP code (4-6 digits).");
       return;
     }
-
     setLoading(true);
     setStatus("Verifying…");
     try {
@@ -96,17 +75,12 @@ export default function OtpLogin() {
       const data = resp && resp.data ? resp.data : {};
       if (data && data.ok) {
         setStatus("Verified — redirecting to admin...");
-        // server sets cookie; redirect to admin products
         window.location.href = "/admin/products";
       } else {
         setError("Invalid OTP: " + (data && data.message ? data.message : "Please try again"));
       }
     } catch (err) {
-      console.error("verifyOtp error:", err);
-      const msg =
-        err.response && err.response.data && err.response.data.message
-          ? err.response.data.message
-          : err.message || "Network error";
+      const msg = err.response && err.response.data && err.response.data.message ? err.response.data.message : err.message || "Network error";
       setError("Verify failed: " + msg);
     } finally {
       setLoading(false);
@@ -129,22 +103,8 @@ export default function OtpLogin() {
       </div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-        <button onClick={sendOtp} disabled={loading}>
-          {loading ? "Working…" : "Send OTP"}
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setPhone("");
-            setOtp("");
-            setSent(false);
-            setError("");
-            setStatus("");
-          }}
-          disabled={loading}
-        >
-          Reset
-        </button>
+        <button onClick={sendOtp} disabled={loading}>{loading ? "Working…" : "Send OTP"}</button>
+        <button type="button" onClick={() => { setPhone(""); setOtp(""); setSent(false); setError(""); setStatus(""); }} disabled={loading}>Reset</button>
       </div>
 
       {sent && (
@@ -163,38 +123,17 @@ export default function OtpLogin() {
           </div>
 
           <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-            <button onClick={verifyOtp} disabled={loading}>
-              {loading ? "Working…" : "Verify OTP"}
-            </button>
-            <button
-              onClick={() => {
-                // allow re-send
-                setSent(false);
-                setOtp("");
-                setStatus("");
-                setError("");
-              }}
-              disabled={loading}
-            >
-              Change number
-            </button>
+            <button onClick={verifyOtp} disabled={loading}>{loading ? "Working…" : "Verify OTP"}</button>
+            <button onClick={() => { setSent(false); setOtp(""); setStatus(""); setError(""); }} disabled={loading}>Change number</button>
           </div>
         </>
       )}
 
-      {status && (
-        <div style={{ marginTop: 8, color: "#0a6", background: "#f2fff6", padding: 8, borderRadius: 4 }}>
-          <strong>Status:</strong> {status}
-        </div>
-      )}
-      {error && (
-        <div style={{ marginTop: 8, color: "#900", background: "#fff6f6", padding: 8, borderRadius: 4 }}>
-          <strong>Error:</strong> {error}
-        </div>
-      )}
+      {status && <div style={{ marginTop: 8, color: "#0a6", background: "#f2fff6", padding: 8, borderRadius: 4 }}><strong>Status:</strong> {status}</div>}
+      {error && <div style={{ marginTop: 8, color: "#900", background: "#fff6f6", padding: 8, borderRadius: 4 }}><strong>Error:</strong> {error}</div>}
 
       <div style={{ marginTop: 12, fontSize: 13, color: "#666" }}>
-        Note: OTP is 6 digits (MSG91 default). For local testing, server may use an OTP bypass code (default <code>1234</code>).
+        Note: OTP is 6 digits by default (MSG91). For local testing, server may use an OTP bypass code (default <code>1234</code>).
       </div>
     </div>
   );
