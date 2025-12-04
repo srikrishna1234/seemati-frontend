@@ -4,11 +4,11 @@ import api from "../api/axiosInstance"; // your shared axios instance
 
 /**
  * OtpLogin
- * - Uses backend endpoints:
- *    POST /api/auth/send-otp   { phone }
- *    POST /api/auth/verify-otp { phone, otp }
- * - Shows status, loading states, and handles OTP_BYPASS messaging.
- * - Redirects to /admin/products on successful login (server sets cookie).
+ * Uses backend endpoints:
+ *  - POST /api/auth/send-otp   { phone }
+ *  - POST /api/auth/verify-otp { phone, otp }
+ *
+ * Accepts 6-digit OTPs (MSG91 default).
  */
 
 export default function OtpLogin() {
@@ -20,11 +20,10 @@ export default function OtpLogin() {
   const [error, setError] = useState("");
   const otpRef = useRef(null);
 
-  // basic phone validation (10 digits, allow +91 prefix)
+  // normalize to 10-digit local (no country code)
   function normalizePhone(p) {
     if (!p) return "";
     const t = String(p).trim();
-    // allow +91 or leading 0
     const digits = t.replace(/\D/g, "");
     if (digits.length === 10) return digits;
     if (digits.length === 12 && digits.startsWith("91")) return digits.slice(2);
@@ -54,12 +53,12 @@ export default function OtpLogin() {
       const data = resp && resp.data ? resp.data : {};
       if (data && data.ok) {
         setSent(true);
+        // prefer server message (can include "OTP sent via MSG91" or bypass info)
         setStatus(data.message || "OTP sent. Enter the code to verify.");
-        // if bypass info returned, show it prominently
         if (data.bypass) {
+          // if bypass, server may indicate test code; don't show secret unless intended
           setStatus((prev) => `${prev} (Test code: ${process.env.REACT_APP_OTP_TEST_CODE || "1234"})`);
         }
-        // autofocus OTP input when available
         setTimeout(() => otpRef.current && otpRef.current.focus(), 200);
       } else {
         setError("Failed to send OTP: " + (data && data.message ? data.message : "Unknown error"));
@@ -83,8 +82,9 @@ export default function OtpLogin() {
       setError("Enter a valid phone number first.");
       return;
     }
-    if (!otp || !/^\d+$/.test(String(otp).trim())) {
-      setError("Enter the OTP code.");
+    if (!otp || !/^\d{4,6}$/.test(String(otp).trim())) {
+      // allow 4-6 digits for compatibility (6 is standard)
+      setError("Enter the OTP code (4-6 digits).");
       return;
     }
 
@@ -155,9 +155,10 @@ export default function OtpLogin() {
               ref={otpRef}
               value={otp}
               onChange={(e) => setOtp(e.target.value)}
-              placeholder="OTP code"
+              placeholder="OTP code (6 digits)"
               style={{ width: "100%", padding: 8, boxSizing: "border-box" }}
               disabled={loading}
+              maxLength={6}
             />
           </div>
 
@@ -193,7 +194,7 @@ export default function OtpLogin() {
       )}
 
       <div style={{ marginTop: 12, fontSize: 13, color: "#666" }}>
-        Note: For testing the server may use an OTP bypass code (default <code>1234</code>).
+        Note: OTP is 6 digits (MSG91 default). For local testing, server may use an OTP bypass code (default <code>1234</code>).
       </div>
     </div>
   );
