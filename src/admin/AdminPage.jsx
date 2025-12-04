@@ -4,7 +4,7 @@
 
 import React, { useEffect } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
-import OtpLogin from "../pages/OtpLogin.jsx";
+import OtpLogin from "../pages/OtpLogin";
 
 /**
  * AdminPage
