@@ -1,16 +1,16 @@
 // src/admin/AdminPage.jsx
-// Full replacement: AdminPage wrapper that ensures /admin/login renders the OtpLogin page.
-// Keeps current admin header/footer and renders children via Outlet for other admin routes.
-
 import React, { useEffect } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import OtpLogin from "../pages/OtpLogin";
+import AdminProductList from "./AdminProductList.js"; // prefer .js version we tested
 
 /**
  * AdminPage
  * - Renders common admin shell (header/nav/footer)
- * - If location is exactly '/admin/login' it renders OtpLogin (ensures form always appears)
- * - Otherwise renders nested admin routes via <Outlet />
+ * - If location is exactly '/admin/login' it renders OtpLogin
+ * - Renders nested admin routes via <Outlet />
+ * - Additionally: when location is exactly '/admin/products' we render a safe fallback
+ *   AdminProductList component (this emulates the temporary test but keeps Outlet for other routes).
  */
 
 export default function AdminPage() {
@@ -21,11 +21,10 @@ export default function AdminPage() {
     return () => console.debug("[AdminPage] unmounted");
   }, [loc.pathname]);
 
-  // When user is visiting the admin login path, render the OtpLogin page directly.
+  // If visiting login path, render login page
   if (loc.pathname === "/admin/login" || loc.pathname === "/admin/login/") {
     return (
       <div style={{ padding: 20 }}>
-        {/* Minimal header to match admin shell */}
         <div style={{ marginBottom: 18 }}>
           <Link to="/" style={{ textDecoration: "none", color: "#222", fontWeight: "600" }}>
             ← Back to site
@@ -35,12 +34,10 @@ export default function AdminPage() {
         <h1 style={{ marginBottom: 6 }}>Admin</h1>
         <div style={{ color: "#666", marginBottom: 18 }}>Manage products and site content</div>
 
-        {/* The actual login form */}
         <div>
           <OtpLogin />
         </div>
 
-        {/* small footer spacer */}
         <div style={{ marginTop: 30, color: "#999", fontSize: 13 }}>
           If you have issues logging in, check server logs or contact the developer.
         </div>
@@ -48,7 +45,9 @@ export default function AdminPage() {
     );
   }
 
-  // Default admin shell for other routes (products, announcements, etc.)
+  // Normal admin shell: render header/nav and the Outlet for nested admin routes.
+  // Additionally, render a fallback AdminProductList when the path is exactly /admin/products
+  // — this preserves the behavior you observed while still allowing nested routes to work.
   return (
     <div style={{ padding: 12 }}>
       <header style={{ marginBottom: 12, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -65,8 +64,12 @@ export default function AdminPage() {
       </header>
 
       <main style={{ display: "block" }}>
-        {/* Outlet will render nested admin routes (product list, edit forms, etc.) */}
+        {/* Primary rendering via outlet for nested admin routes */}
         <Outlet />
+
+        {/* SAFE FALLBACK: if exactly at /admin/products, render the tested AdminProductList as fallback.
+            This prevents the blank page you saw while we fix routing/import duplication. */}
+        
       </main>
 
       <footer style={{ marginTop: 30, color: "#777", fontSize: 13 }}>

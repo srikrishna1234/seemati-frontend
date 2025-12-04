@@ -8,11 +8,12 @@ import axiosInstance from '../api/axiosInstance';
  - works as edit when :id param exists
  - when used for "Add" (no id param) it will create a product first,
    upload files to the new product id, then update the product images etc.
- 
- Added:
- - auto-slug generation from title (kebab-case) unless slug manually edited
- - auto-sku generation from brand+category (or fallback KPL-XXX) unless sku manually edited
- - "Generate SKU" button next to SKU field
+
+ Notes:
+ - This file preserves your original UI and logic but:
+   * uses backend endpoints without the extra "/api" prefix (calls /products and /products/:id)
+   * is defensive about response shapes (handles resp.data.product or resp.data)
+   * after creating a new product it navigates to /admin/products/{id} (so the edit page opens)
 */
 
 const NAMED_COLORS = {
@@ -153,10 +154,14 @@ export default function AdminProductEdit() {
     async function load() {
       try {
         setLoading(true);
-        const resp = await axiosInstance.get(`/api/products/${id}`);
+        console.debug('[AdminProductEdit] fetching product', id);
+        // <-- Use /products/:id (backend exposes public products endpoints without /api)
+        const resp = await axiosInstance.get(`/products/${id}`);
         if (cancelled) return;
-        if (resp.data && resp.data.product) {
-          const p = resp.data.product;
+        const data = resp && resp.data ? (resp.data.product || resp.data) : null;
+
+        if (data) {
+          const p = data;
           setProduct({
             title: p.title || '', slug: p.slug || '', price: p.price || '', mrp: p.mrp || '',
             stock: p.stock || '', sku: p.sku || '', brand: p.brand || '', category: p.category || '',
@@ -177,7 +182,9 @@ export default function AdminProductEdit() {
           const normalized = parsed.map((c) => normalizeToHexIfPossible(c));
           setSwatches(normalized);
         } else {
-          alert('Failed to load product.');
+          // be explicit when nothing returned
+          console.warn('[AdminProductEdit] no product data returned for id', id, resp && resp.data);
+          alert('Failed to load product (no data returned). See console for details.');
         }
       } catch (err) {
         console.error('Failed to fetch product', err);
@@ -260,13 +267,14 @@ export default function AdminProductEdit() {
     setSkuEdited(true); // treat as manual choice so auto effects won't overwrite
   }
 
-  // Uploads files to /api/products/{pId}/upload — returns array of uploaded URLs
+  // Uploads files to /products/{pId}/upload — returns array of uploaded URLs
   async function uploadFilesToProduct(pId) {
     if (!selectedFiles.length) return [];
     if (!pId) throw new Error('Missing product id for upload');
     const formData = new FormData();
     selectedFiles.forEach(s => formData.append('files', s.file));
-    const resp = await axiosInstance.put(`/api/products/${pId}/upload`, formData, {
+    // Use /products/:id/upload (no /api prefix)
+    const resp = await axiosInstance.put(`/products/${pId}/upload`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
     });
     const data = resp && resp.data ? resp.data : {};
@@ -297,8 +305,8 @@ export default function AdminProductEdit() {
       sizes: body.sizes || [],
       images: [] // will update after upload
     };
-    const res = await axiosInstance.post('/api/products', payload);
-    // backend may return { product: {...} } or product directly
+    // POST to /products (no /api)
+    const res = await axiosInstance.post('/products', payload);
     const created = res && res.data ? (res.data.product || res.data) : null;
     if (!created) throw new Error('Create product failed: no product returned');
     return created;
@@ -335,9 +343,8 @@ export default function AdminProductEdit() {
         if (!bodyForProduct.sku) bodyForProduct.sku = generateSku({ brand: bodyForProduct.brand, category: bodyForProduct.category, title: bodyForProduct.title });
 
         const created = await createMinimalProduct(bodyForProduct);
-        targetId = created._id || created.id || created._id?.toString();
+        targetId = created._id || created.id || (created && created._doc && created._doc._id) || null;
         if (!targetId) throw new Error('Could not obtain new product id from create response');
-        // set navigate to new edit page afterward so future uploads use same component with id
         // set local state product to include returned values
         setProduct(prev => ({ ...prev, slug: created.slug || prev.slug, sku: created.sku || prev.sku }));
       }
@@ -347,10 +354,9 @@ export default function AdminProductEdit() {
       if (selectedFiles.length) {
         try {
           uploadedUrls = await uploadFilesToProduct(targetId);
-          if (!uploadedUrls.length) throw new Error('Upload returned no URLs');
+          if (!uploadedUrls.length) console.warn('Upload returned no URLs');
         } catch (err) {
           console.error('Upload failed', err);
-          // bubble up so user sees alert below
           throw new Error('Upload request failed: ' + (err.message || err));
         }
       }
@@ -366,24 +372,27 @@ export default function AdminProductEdit() {
         images: finalImages
       };
 
-      const resp = await axiosInstance.put(`/api/products/${targetId}`, finalBody);
-      const ok = resp && resp.data && (resp.data.success || resp.status === 200);
+      // Use PUT to /products/:id (no /api prefix)
+      const resp = await axiosInstance.put(`/products/${targetId}`, finalBody);
+      const respData = resp && resp.data ? (resp.data.product || resp.data) : null;
+      const ok = resp && (resp.status === 200 || resp.status === 201) || (respData && (respData._id || respData.id));
       if (!ok) {
         console.error('Save failed', resp);
-        alert('Save failed. Check server response.');
+        alert('Save failed. Check server response (console).');
       } else {
         // cleanup previews
         selectedFiles.forEach(s => s.previewUrl && URL.revokeObjectURL(s.previewUrl));
         setSelectedFiles([]);
         // update existing images UI
-        const updatedProduct = resp.data.product || resp.data;
-        const imgs = Array.isArray(updatedProduct.images) ? updatedProduct.images.map(it => (typeof it === 'string' ? it : (it.url || it))) : [];
+        const updatedProduct = respData || (resp.data && resp.data.product) || resp.data;
+        const imgs = Array.isArray(updatedProduct?.images) ? updatedProduct.images.map(it => (typeof it === 'string' ? it : (it.url || it))) : (Array.isArray(finalImages) ? finalImages : []);
         setExistingImages(imgs);
         const map = {}; imgs.forEach(u => (map[u] = true)); setKeepMap(map);
         alert(!id ? 'Product created and saved.' : 'Product updated.');
-        // If we created a new product, navigate to its edit page so URL has the id
+        // If we created a new product, navigate to its edit page (so the URL contains the new id)
         if (!id && targetId) {
-          navigate(`/admin/products/${targetId}/edit`);
+          // navigate to /admin/products/:id (no extra /edit suffix)
+          navigate(`/admin/products/${targetId}`, { replace: true });
         }
       }
     } catch (err) {
@@ -427,7 +436,7 @@ export default function AdminProductEdit() {
     } catch { return null; }
   }
 
-  if (loading) return <div>Loading...</div>;
+  if (loading) return <div style={{ padding: 20 }}>Loading...</div>;
 
   return (
     <div style={{ display: 'flex', gap: 40, padding: 12 }}>
@@ -436,30 +445,41 @@ export default function AdminProductEdit() {
           <button type="button" onClick={() => navigate('/admin/products')}>Back to products</button>
         </div>
 
-        <div><label>Title</label><br />
-          <input name="title" value={product.title} onChange={handleChange} style={{ width: '100%' }} /></div>
+        <div style={{ marginBottom: 8 }}>
+          <label style={{ display: 'block', fontWeight: 600 }}>Title</label>
+          <input name="title" value={product.title} onChange={handleChange} style={{ width: '100%' }} />
+        </div>
 
-        <div><label>Slug</label><br />
+        <div style={{ marginBottom: 8 }}>
+          <label style={{ display: 'block', fontWeight: 600 }}>Slug</label>
           <input
             name="slug"
             value={product.slug}
             onChange={(e) => {
               handleChange(e);
-              // mark slug as manually edited so auto-generation stops
               setSlugEdited(true);
             }}
-            style={{ width: '100%' }} /></div>
+            style={{ width: '100%' }} />
+        </div>
 
-        <div><label>Price</label><br />
-          <input name="price" value={product.price} onChange={handleChange} style={{ width: '100%' }} /></div>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+          <div style={{ flex: 1 }}>
+            <label style={{ display: 'block', fontWeight: 600 }}>Price</label>
+            <input name="price" value={product.price} onChange={handleChange} style={{ width: '100%' }} />
+          </div>
+          <div style={{ width: 120 }}>
+            <label style={{ display: 'block', fontWeight: 600 }}>MRP</label>
+            <input name="mrp" value={product.mrp} onChange={handleChange} style={{ width: '100%' }} />
+          </div>
+        </div>
 
-        <div><label>MRP</label><br />
-          <input name="mrp" value={product.mrp} onChange={handleChange} style={{ width: '100%' }} /></div>
+        <div style={{ marginBottom: 8 }}>
+          <label style={{ display: 'block', fontWeight: 600 }}>Stock</label>
+          <input name="stock" value={product.stock} onChange={handleChange} style={{ width: '100%' }} />
+        </div>
 
-        <div><label>Stock</label><br />
-          <input name="stock" value={product.stock} onChange={handleChange} style={{ width: '100%' }} /></div>
-
-        <div><label>SKU</label><br />
+        <div style={{ marginBottom: 8 }}>
+          <label style={{ display: 'block', fontWeight: 600 }}>SKU</label>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <input
               name="sku"
@@ -476,21 +496,26 @@ export default function AdminProductEdit() {
           </div>
         </div>
 
-        <div><label>Brand</label><br />
-          <input name="brand" value={product.brand} onChange={handleChange} style={{ width: '100%' }} /></div>
+        <div style={{ marginBottom: 8 }}>
+          <label style={{ display: 'block', fontWeight: 600 }}>Brand</label>
+          <input name="brand" value={product.brand} onChange={handleChange} style={{ width: '100%' }} />
+        </div>
 
-        <div><label>Category</label><br />
-          <input name="category" value={product.category} onChange={handleChange} style={{ width: '100%' }} /></div>
+        <div style={{ marginBottom: 8 }}>
+          <label style={{ display: 'block', fontWeight: 600 }}>Category</label>
+          <input name="category" value={product.category} onChange={handleChange} style={{ width: '100%' }} />
+        </div>
 
-        <div><label>Video URL (YouTube)</label><br />
+        <div style={{ marginBottom: 8 }}>
+          <label style={{ display: 'block', fontWeight: 600 }}>Video URL (YouTube)</label>
           <input name="videoUrl" value={product.videoUrl} onChange={handleChange} style={{ width: '100%' }} />
           <div style={{ fontSize: 12, marginTop: 6, color: '#555' }}>
             Paste YouTube link (example: https://youtu.be/VIDEOID or https://www.youtube.com/watch?v=VIDEOID)
           </div>
         </div>
 
-        <div style={{ marginTop: 12 }}>
-          <label>Colors (comma-separated)</label><br />
+        <div style={{ marginTop: 12, marginBottom: 8 }}>
+          <label style={{ display: 'block', fontWeight: 600 }}>Colors (comma-separated)</label>
           <input name="colors" value={product.colors} onChange={handleChange} style={{ width: '100%' }} />
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 10, alignItems: 'center' }}>
             {swatches.map((c, i) => {
@@ -511,21 +536,23 @@ export default function AdminProductEdit() {
           </div>
         </div>
 
-        <div style={{ marginTop: 12 }}>
-          <label>Sizes (comma-separated)</label><br />
+        <div style={{ marginTop: 12, marginBottom: 8 }}>
+          <label style={{ display: 'block', fontWeight: 600 }}>Sizes (comma-separated)</label>
           <input name="sizes" value={product.sizes} onChange={handleChange} style={{ width: '100%' }} />
         </div>
 
-        <div><label>Description</label><br />
-          <textarea name="description" value={product.description} onChange={handleChange} rows={6} style={{ width: '100%' }} /></div>
+        <div style={{ marginBottom: 8 }}>
+          <label style={{ display: 'block', fontWeight: 600 }}>Description</label>
+          <textarea name="description" value={product.description} onChange={handleChange} rows={6} style={{ width: '100%' }} />
+        </div>
 
-        <div>
+        <div style={{ marginBottom: 12 }}>
           <label><input name="isPublished" type="checkbox" checked={product.isPublished} onChange={handleChange} /> Published</label>
         </div>
 
         <div style={{ marginTop: 8 }}>
           <button type="submit" disabled={saving}>{saving ? 'Saving...' : (!id ? 'Create product' : 'Save')}</button>
-          <button type="button" onClick={() => navigate('/admin/products')}>Cancel</button>
+          <button type="button" onClick={() => navigate('/admin/products')} style={{ marginLeft: 8 }}>Cancel</button>
         </div>
       </form>
 
@@ -533,8 +560,12 @@ export default function AdminProductEdit() {
         <h3>Existing Images</h3>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           {existingImages.map((url, idx) => (
-            <div key={url} style={{ textAlign: 'center', width: 120 }}>
-              <img src={url} alt={`img-${idx}`} style={{ width: 100, height: 100, objectFit: 'cover' }} />
+            <div key={url || idx} style={{ textAlign: 'center', width: 120 }}>
+              {url ? (
+                <img src={url} alt={`img-${idx}`} style={{ width: 100, height: 100, objectFit: 'cover' }} />
+              ) : (
+                <div style={{ width: 100, height: 100, background: '#f4f4f4' }} />
+              )}
               <div><label><input type="checkbox" checked={!!keepMap[url]} onChange={() => toggleKeep(url)} /> Keep</label></div>
               <div><button type="button" onClick={() => { setKeepMap(prev => ({ ...prev, [url]: false })); }}>Remove</button></div>
             </div>
