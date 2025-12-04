@@ -2,14 +2,15 @@
 import React, { useEffect, useMemo, useState } from "react";
 import ShopProductCard from "./shopProductCard";
 import { Helmet } from "react-helmet";
+import axiosInstance from "../api/axiosInstance";
 
 /**
- * ShopProducts (updated)
+ * ShopProducts (robust)
  *
- * - Keeps your original fetch logic (/api/products, fallback to /products).
- * - Client-side search, pagination and friendly loading/error UI (unchanged behavior).
- * - Adds `preview` prop: when preview=true it shows only the first 4 items and hides pagination/search UI.
- * - Adds a page <title> via react-helmet.
+ * - Uses axiosInstance (respects baseURL) and detects whether baseURL already contains '/api'
+ *   to avoid double '/api/api' problems in different environments.
+ * - Falls back to fetch('/api/products') if axios fails (keeps dev workflow working).
+ * - Keeps existing UI (search, pagination, preview) and error messaging.
  */
 
 const PAGE_SIZE = 12;
@@ -29,30 +30,48 @@ export default function ShopProducts({ preview = false }) {
 
     async function load() {
       try {
-        const res = await fetch("/api/products", { credentials: "include" });
-        if (!mounted) return;
-        if (!res.ok) {
-          console.warn("ShopProducts: /api/products returned", res.status);
-          if (res.status === 404) {
-            const res2 = await fetch("/products", { credentials: "include" });
-            if (!mounted) return;
-            if (!res2.ok) throw new Error(`Fallback /products returned ${res2.status}`);
-            const data2 = await res2.json();
-            setProducts(normalizeArray(data2));
-            setLoading(false);
-            return;
-          }
-          throw new Error(`Fetch failed: ${res.status}`);
+        // detect axios baseURL ending with '/api' to avoid double prefixing
+        let base = "";
+        try {
+          base = (axiosInstance && axiosInstance.defaults && axiosInstance.defaults.baseURL) || "";
+        } catch (e) {
+          base = "";
+        }
+        const baseHasApi = typeof base === "string" && /\/api\/?$/.test(base);
+
+        const endpoint = baseHasApi ? "/products" : "/api/products"; // axiosInstance will prepend baseURL
+
+        // Use axiosInstance so it respects production baseURL or dev host
+        try {
+          const resp = await axiosInstance.get(endpoint);
+          if (!mounted) return;
+          const data = resp && resp.data ? resp.data : null;
+          setProducts(normalizeArray(data));
+          setLoading(false);
+          return;
+        } catch (err) {
+          console.warn("ShopProducts: axios failed", err && err.message);
+          // continue to fallback to fetch below
         }
 
-        const data = await res.json();
-        if (!mounted) return;
-        setProducts(normalizeArray(data));
+        // Fallback: try fetch to /api/products (dev server commonly expects this)
+        try {
+          const fResp = await fetch("/api/products", { credentials: "include" });
+          if (!mounted) return;
+          if (!fResp.ok) throw new Error(`Fallback fetch /api/products returned ${fResp.status}`);
+          const json = await fResp.json();
+          setProducts(normalizeArray(json));
+          setLoading(false);
+          return;
+        } catch (fErr) {
+          console.warn("ShopProducts: fetch fallback failed", fErr && fErr.message);
+          throw fErr;
+        }
       } catch (err) {
         console.error("ShopProducts fetch error:", err);
         if (!mounted) return;
         setError(
-          "Unable to load products. Check that the dev server is running and that /api/products responds. See console for details."
+          "Unable to load products. Check that the backend is running and that /api/products responds. See console for details."
         );
         setProducts([]);
       } finally {
