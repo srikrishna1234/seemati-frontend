@@ -11,6 +11,9 @@ import { useAuth } from "../auth/AuthProvider";
  *    POST /api/auth/verify-otp { phone, otp }
  * - Server sets auth cookie on verify; frontend may optionally save user via saveTokenAndUser.
  * - Redirects to /admin/products on successful login.
+ *
+ * NOTE: This file contains a debug banner "DEBUG: OTP_PAGE_LOADED" to confirm the component
+ * is present in the deployed bundle. Remove that banner after debugging.
  */
 
 export default function OtpLogin() {
@@ -116,6 +119,20 @@ export default function OtpLogin() {
 
   return (
     <div style={{ maxWidth: 520, margin: "24px auto", padding: 12 }}>
+      {/* DEBUG BANNER — visible indicator that this page component is loaded in runtime */}
+      <div
+        style={{
+          background: "yellow",
+          color: "#000",
+          padding: 10,
+          fontWeight: 700,
+          textAlign: "center",
+          marginBottom: 12,
+        }}
+      >
+        DEBUG: OTP_PAGE_LOADED
+      </div>
+
       <h2 style={{ marginTop: 0 }}>OTP Login</h2>
 
       <div style={{ marginBottom: 12 }}>
