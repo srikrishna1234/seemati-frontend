@@ -1,6 +1,5 @@
-﻿// backend/src/routes/auth.cjs
-// CommonJS full replacement for auth routes with safe OTP-bypass toggle
-
+﻿// backend/src/routes/authRoutes.cjs
+// Auth routes — robust handling for MSG91-based OTP send + verify
 'use strict';
 
 const express = require('express');
@@ -25,16 +24,24 @@ try {
 }
 
 // Try to load a real OTP verifier if present
-let verifyOtpReal = null;
+// Expect exports: sendOtp(phone) -> {success:boolean,...}, verifyOtp(phone,otp) -> {success:boolean,...}
+let otpModule = null;
 let sendOtpReal = null;
+let verifyOtpReal = null;
+
 try {
-  const mod = require('../utils/otpVerifier');
-  // support both direct function export or object with verifyOtp/sendOtp
-  if (typeof mod === 'function') verifyOtpReal = mod;
-  else if (mod && typeof mod.verifyOtp === 'function') verifyOtpReal = mod.verifyOtp;
-  if (mod && typeof mod.sendOtp === 'function') sendOtpReal = mod.sendOtp;
+  otpModule = require('../utils/otpVerifier');
+  if (otpModule) {
+    if (typeof otpModule === 'function') {
+      // legacy: module exported a single verify function (unlikely in our setup)
+      verifyOtpReal = otpModule;
+    } else {
+      if (typeof otpModule.sendOtp === 'function') sendOtpReal = otpModule.sendOtp;
+      if (typeof otpModule.verifyOtp === 'function') verifyOtpReal = otpModule.verifyOtp;
+    }
+  }
+  if (sendOtpReal || verifyOtpReal) console.log('[AuthRoutes] otpVerifier loaded.');
 } catch (e) {
-  // not present — we'll rely on OTP_BYPASS flag below
   console.warn('[AuthRoutes] OTP verifier module not found; OTP_BYPASS available for testing.');
 }
 
@@ -43,10 +50,16 @@ const OTP_BYPASS = String(process.env.OTP_BYPASS || 'false').toLowerCase() === '
 const OTP_TEST_CODE = process.env.OTP_TEST_CODE || '1234';
 
 // Helper: verifies OTP using real verifier if available, otherwise checks bypass config
+// Returns boolean
 async function verifyOtp(phone, otp) {
   if (verifyOtpReal) {
     try {
-      return await verifyOtpReal(phone, otp);
+      const r = await verifyOtpReal(phone, otp);
+      // support both boolean returns and { success: boolean } returns
+      if (typeof r === 'boolean') return r;
+      if (r && typeof r === 'object') return !!r.success;
+      // fallback: truthy object -> success
+      return !!r;
     } catch (e) {
       console.error('[AuthRoutes] verifyOtpReal error:', e && e.message ? e.message : e);
       return false;
@@ -63,23 +76,34 @@ async function verifyOtp(phone, otp) {
 }
 
 // Helper: send OTP using real provider if available, otherwise return bypass message/status
+// Returns normalized object: { success: boolean, message?, bypass?, raw?, txnId? }
 async function sendOtp(phone) {
   if (sendOtpReal) {
     try {
-      return await sendOtpReal(phone); // should return truthy on success
+      const r = await sendOtpReal(phone);
+      // normalize return
+      if (typeof r === 'boolean') {
+        return r ? { success: true } : { success: false };
+      }
+      if (r && typeof r === 'object') {
+        // ensure boolean success field exists
+        if (typeof r.success === 'boolean') return r;
+        // older implementations may return raw provider data -> treat truthy as success
+        return { success: true, raw: r };
+      }
+      return { success: Boolean(r) };
     } catch (e) {
       console.error('[AuthRoutes] sendOtpReal error:', e && e.message ? e.message : e);
-      return false;
+      return { success: false, message: 'Provider error', raw: e && (e.response ? e.response.data : e.message) };
     }
   }
 
   // No real sender: allow bypass only when enabled
   if (OTP_BYPASS) {
-    // do not actually send SMS — just inform caller that bypass is active
-    return { bypass: true, message: `OTP bypass enabled. Use code ${OTP_TEST_CODE}` };
+    return { success: true, bypass: true, message: `OTP bypass enabled. Use code ${OTP_TEST_CODE}` };
   }
 
-  return false;
+  return { success: false, message: 'OTP provider not configured on server' };
 }
 
 // Helper: create JWT
@@ -104,30 +128,26 @@ function makeCookieOptions() {
 /**
  * POST /api/auth/send-otp
  * Body: { phone }
- *
- * Returns:
- * - { ok:true, message } when sent or bypass note when OTP_BYPASS is on
- * - 400 when phone missing
- * - 500 when sending not configured
  */
 router.post('/send-otp', async (req, res) => {
   try {
     const { phone } = req.body || {};
     if (!phone) return res.status(400).json({ ok: false, message: 'Phone number required' });
 
-    const sent = await sendOtp(phone);
-    if (!sent) {
-      // Not configured and bypass not available
-      return res.status(501).json({ ok: false, message: 'OTP send not configured on server' });
+    const result = await sendOtp(phone);
+
+    // If provider indicates success
+    if (result && result.success) {
+      const payload = { ok: true, message: result.message || 'OTP sent' };
+      if (result.bypass) payload.bypass = true;
+      if (result.txnId) payload.txnId = result.txnId;
+      return res.json(payload);
     }
 
-    // If sendOtp returned an object (bypass info), include that in response
-    if (typeof sent === 'object') {
-      return res.json({ ok: true, message: sent.message || 'OTP bypass active', bypass: !!sent.bypass });
-    }
-
-    // success
-    return res.json({ ok: true, message: 'OTP sent' });
+    // Not configured or failed
+    const msg = result && result.message ? result.message : 'Failed to send OTP';
+    const status = msg.toLowerCase().includes('configured') ? 501 : 500;
+    return res.status(status).json({ ok: false, message: msg, details: result && result.raw ? result.raw : undefined });
   } catch (err) {
     console.error('[AuthRoutes] /send-otp error:', err && err.message ? err.message : err);
     return res.status(500).json({ ok: false, message: 'Server error' });
@@ -147,9 +167,24 @@ router.post('/verify-otp', async (req, res) => {
       return res.status(400).json({ ok: false, message: 'Phone and OTP are required' });
     }
 
-    const ok = await verifyOtp(phone, otp);
-    if (!ok) {
-      return res.status(401).json({ ok: false, message: 'Invalid OTP' });
+    // If verifyOtpReal exists and returns a structured object, interpret it
+    if (verifyOtpReal) {
+      try {
+        const r = await verifyOtpReal(phone, otp);
+        // r may be boolean or { success:true }
+        const ok = (typeof r === 'boolean') ? r : (r && typeof r === 'object' ? !!r.success : !!r);
+        if (!ok) {
+          const msg = r && r.message ? r.message : 'Invalid OTP';
+          return res.status(401).json({ ok: false, message: msg, details: r && r.raw ? r.raw : undefined });
+        }
+      } catch (e) {
+        console.error('[AuthRoutes] verifyOtpReal error:', e && e.message ? e.message : e);
+        return res.status(500).json({ ok: false, message: 'OTP verification failed' });
+      }
+    } else {
+      // fallback to OTP_BYPASS behavior
+      const ok = OTP_BYPASS ? String(otp) === String(OTP_TEST_CODE) : false;
+      if (!ok) return res.status(401).json({ ok: false, message: 'Invalid OTP' });
     }
 
     const userPayload = {
@@ -188,8 +223,9 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ ok: false, message: 'Phone and OTP are required' });
     }
 
-    const ok = await verifyOtp(phone, otp);
-    if (!ok) {
+    // reuse verify logic
+    const verified = await verifyOtp(phone, otp);
+    if (!verified) {
       return res.status(401).json({ ok: false, message: 'Invalid OTP' });
     }
 
