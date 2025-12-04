@@ -1,68 +1,200 @@
 // src/components/OtpLogin.jsx
-import React, { useState } from "react";
-import api from "../api/axiosInstance"; // <-- Use shared axios instance
+import React, { useState, useRef } from "react";
+import api from "../api/axiosInstance"; // your shared axios instance
+
+/**
+ * OtpLogin
+ * - Uses backend endpoints:
+ *    POST /api/auth/send-otp   { phone }
+ *    POST /api/auth/verify-otp { phone, otp }
+ * - Shows status, loading states, and handles OTP_BYPASS messaging.
+ * - Redirects to /admin/products on successful login (server sets cookie).
+ */
 
 export default function OtpLogin() {
   const [phone, setPhone] = useState("");
-  const [code, setCode] = useState("");
+  const [otp, setOtp] = useState("");
+  const [sent, setSent] = useState(false); // whether send-otp succeeded
+  const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
+  const [error, setError] = useState("");
+  const otpRef = useRef(null);
 
-  const sendOtp = async () => {
+  // basic phone validation (10 digits, allow +91 prefix)
+  function normalizePhone(p) {
+    if (!p) return "";
+    const t = String(p).trim();
+    // allow +91 or leading 0
+    const digits = t.replace(/\D/g, "");
+    if (digits.length === 10) return digits;
+    if (digits.length === 12 && digits.startsWith("91")) return digits.slice(2);
+    if (digits.length === 11 && digits.startsWith("0")) return digits.slice(1);
+    return digits; // fallback
+  }
+
+  function validPhone(p) {
+    const n = normalizePhone(p);
+    return /^[0-9]{10}$/.test(n);
+  }
+
+  async function sendOtp() {
+    setError("");
+    setStatus("");
+    setOtp("");
+    if (!validPhone(phone)) {
+      setError("Enter a valid 10-digit phone number.");
+      return;
+    }
+
+    setLoading(true);
+    setStatus("Sending OTP…");
     try {
-      setStatus("Sending OTP...");
-      const resp = await api.post("/otp/send", { phone });  // <-- FIXED (no /api)
-      if (resp.data.ok) {
-        setStatus("OTP sent successfully!");
+      const body = { phone: normalizePhone(phone) };
+      const resp = await api.post("/api/auth/send-otp", body, { withCredentials: true });
+      const data = resp && resp.data ? resp.data : {};
+      if (data && data.ok) {
+        setSent(true);
+        setStatus(data.message || "OTP sent. Enter the code to verify.");
+        // if bypass info returned, show it prominently
+        if (data.bypass) {
+          setStatus((prev) => `${prev} (Test code: ${process.env.REACT_APP_OTP_TEST_CODE || "1234"})`);
+        }
+        // autofocus OTP input when available
+        setTimeout(() => otpRef.current && otpRef.current.focus(), 200);
       } else {
-        setStatus("Failed: " + (resp.data.message || "Unknown error"));
+        setError("Failed to send OTP: " + (data && data.message ? data.message : "Unknown error"));
       }
     } catch (err) {
-      console.error("OTP send error:", err);
-      setStatus("Request failed: " + err.message);
+      console.error("sendOtp error:", err);
+      const msg =
+        err.response && err.response.data && err.response.data.message
+          ? err.response.data.message
+          : err.message || "Network error";
+      setError("Failed to send OTP: " + msg);
+    } finally {
+      setLoading(false);
     }
-  };
+  }
 
-  const verifyOtp = async () => {
+  async function verifyOtp() {
+    setError("");
+    setStatus("");
+    if (!validPhone(phone)) {
+      setError("Enter a valid phone number first.");
+      return;
+    }
+    if (!otp || !/^\d+$/.test(String(otp).trim())) {
+      setError("Enter the OTP code.");
+      return;
+    }
+
+    setLoading(true);
+    setStatus("Verifying…");
     try {
-      setStatus("Verifying...");
-      const resp = await api.post("/otp/verify", { phone, code }); // <-- FIXED
-      if (resp.data.ok) {
-        setStatus("OTP Verified! You are logged in.");
+      const body = { phone: normalizePhone(phone), otp: String(otp).trim() };
+      const resp = await api.post("/api/auth/verify-otp", body, { withCredentials: true });
+      const data = resp && resp.data ? resp.data : {};
+      if (data && data.ok) {
+        setStatus("Verified — redirecting to admin...");
+        // server sets cookie; redirect to admin products
         window.location.href = "/admin/products";
       } else {
-        setStatus("Invalid OTP");
+        setError("Invalid OTP: " + (data && data.message ? data.message : "Please try again"));
       }
     } catch (err) {
-      console.error("Verify error:", err);
-      setStatus("Request failed: " + err.message);
+      console.error("verifyOtp error:", err);
+      const msg =
+        err.response && err.response.data && err.response.data.message
+          ? err.response.data.message
+          : err.message || "Network error";
+      setError("Verify failed: " + msg);
+    } finally {
+      setLoading(false);
     }
-  };
+  }
 
   return (
-    <div style={{ padding: "30px" }}>
-      <h2>OTP Login</h2>
+    <div style={{ padding: 24, maxWidth: 420 }}>
+      <h2 style={{ marginTop: 0 }}>Admin login</h2>
 
-      <label>Phone</label>
-      <input
-        value={phone}
-        onChange={(e) => setPhone(e.target.value)}
-        style={{ width: "300px", display: "block", marginBottom: "10px" }}
-      />
+      <div style={{ marginBottom: 12 }}>
+        <label style={{ display: "block", marginBottom: 6 }}>Mobile number</label>
+        <input
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          placeholder="10-digit mobile (eg. 9042163246)"
+          style={{ width: "100%", padding: 8, boxSizing: "border-box" }}
+          disabled={loading}
+        />
+      </div>
 
-      <button onClick={sendOtp}>Send OTP</button>
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        <button onClick={sendOtp} disabled={loading}>
+          {loading ? "Working…" : "Send OTP"}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setPhone("");
+            setOtp("");
+            setSent(false);
+            setError("");
+            setStatus("");
+          }}
+          disabled={loading}
+        >
+          Reset
+        </button>
+      </div>
 
-      <br /><br />
+      {sent && (
+        <>
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ display: "block", marginBottom: 6 }}>Enter OTP</label>
+            <input
+              ref={otpRef}
+              value={otp}
+              onChange={(e) => setOtp(e.target.value)}
+              placeholder="OTP code"
+              style={{ width: "100%", padding: 8, boxSizing: "border-box" }}
+              disabled={loading}
+            />
+          </div>
 
-      <label>OTP</label>
-      <input
-        value={code}
-        onChange={(e) => setCode(e.target.value)}
-        style={{ width: "300px", display: "block", marginBottom: "10px" }}
-      />
+          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+            <button onClick={verifyOtp} disabled={loading}>
+              {loading ? "Working…" : "Verify OTP"}
+            </button>
+            <button
+              onClick={() => {
+                // allow re-send
+                setSent(false);
+                setOtp("");
+                setStatus("");
+                setError("");
+              }}
+              disabled={loading}
+            >
+              Change number
+            </button>
+          </div>
+        </>
+      )}
 
-      <button onClick={verifyOtp}>Verify OTP</button>
+      {status && (
+        <div style={{ marginTop: 8, color: "#0a6", background: "#f2fff6", padding: 8, borderRadius: 4 }}>
+          <strong>Status:</strong> {status}
+        </div>
+      )}
+      {error && (
+        <div style={{ marginTop: 8, color: "#900", background: "#fff6f6", padding: 8, borderRadius: 4 }}>
+          <strong>Error:</strong> {error}
+        </div>
+      )}
 
-      <p><b>Status:</b> {status}</p>
+      <div style={{ marginTop: 12, fontSize: 13, color: "#666" }}>
+        Note: For testing the server may use an OTP bypass code (default <code>1234</code>).
+      </div>
     </div>
   );
 }
