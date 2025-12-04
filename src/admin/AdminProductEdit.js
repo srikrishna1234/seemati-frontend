@@ -8,6 +8,10 @@ import axiosInstance from '../api/axiosInstance';
  - works as edit when :id param exists
  - when used for "Add" (no id param) it will create a product first,
    upload files to the new product id, then update the product images etc.
+ 
+ Added:
+ - auto-slug generation from title (kebab-case) unless slug manually edited
+ - auto-sku generation from brand+category (or fallback KPL-XXX) unless sku manually edited
 */
 
 const NAMED_COLORS = {
@@ -50,6 +54,41 @@ function nearestColorName(hex) {
   } catch { return ''; }
 }
 
+// slug helper
+function makeSlug(text) {
+  if (!text) return "";
+  return String(text)
+    .toLowerCase()
+    .trim()
+    .replace(/['"]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-+/g, "-");
+}
+
+// sku helper
+function sanitizeAlnum(s = "") {
+  return String(s || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
+}
+function generateSku({ brand, category, title }) {
+  const b = sanitizeAlnum(brand || "");
+  const c = sanitizeAlnum(category || "");
+  let prefix = "KPL";
+  if (b && c) {
+    const pb = b.slice(0, 3);
+    const pc = c.slice(0, 3);
+    prefix = `${pb}-${pc}`;
+  } else if (b) {
+    prefix = `${b.slice(0, 3)}`;
+  } else if (c) {
+    prefix = `${c.slice(0, 3)}`;
+  } else if (title) {
+    prefix = sanitizeAlnum(title).slice(0, 3) || "KPL";
+  }
+  const counter = String(Math.abs(Date.now()) % 1000).padStart(3, "0");
+  return `${prefix}-${counter}`;
+}
+
 export default function AdminProductEdit() {
   const { id } = useParams(); // may be undefined for "add"
   const navigate = useNavigate();
@@ -64,6 +103,10 @@ export default function AdminProductEdit() {
     brand: '', category: '', videoUrl: '', colors: '', sizes: '',
     description: '', isPublished: false
   });
+
+  // flags to track manual edits so we don't override
+  const [slugEdited, setSlugEdited] = useState(false);
+  const [skuEdited, setSkuEdited] = useState(false);
 
   const [existingImages, setExistingImages] = useState([]);
   const [keepMap, setKeepMap] = useState({});
@@ -96,6 +139,13 @@ export default function AdminProductEdit() {
       setExistingImages([]);
       setKeepMap({});
       setSwatches([]);
+      // try to seed defaults (sku/slug) based on empty product state (no manual edits)
+      setProduct(prev => {
+        const seeded = { ...prev };
+        if (!seeded.slug && seeded.title) seeded.slug = makeSlug(seeded.title);
+        if (!seeded.sku) seeded.sku = generateSku({ brand: seeded.brand, category: seeded.category, title: seeded.title });
+        return seeded;
+      });
       return () => { cancelled = true; };
     }
 
@@ -113,6 +163,10 @@ export default function AdminProductEdit() {
             sizes: Array.isArray(p.sizes) ? p.sizes.join(', ') : (p.sizes || ''), description: p.description || '',
             isPublished: !!p.isPublished
           });
+
+          // if slug or sku exist in product we treat them as manually set (don't overwrite)
+          if (p.slug) setSlugEdited(true);
+          if (p.sku) setSkuEdited(true);
 
           const imgs = Array.isArray(p.images) ? p.images.map(it => (typeof it === 'string' ? it : (it.url || it))) : [];
           setExistingImages(imgs);
@@ -148,10 +202,31 @@ export default function AdminProductEdit() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [swatches]);
 
+  // Auto-generate slug from title when title changes unless slugEdited
+  useEffect(() => {
+    if (!slugEdited) {
+      setProduct(prev => ({ ...prev, slug: makeSlug(prev.title || "") }));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [product.title, slugEdited]);
+
+  // Auto-generate sku when brand/category/title change unless skuEdited
+  useEffect(() => {
+    if (!skuEdited) {
+      const s = generateSku({ brand: product.brand, category: product.category, title: product.title });
+      setProduct(prev => ({ ...prev, sku: s }));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [product.brand, product.category, product.title, skuEdited]);
+
   function handleChange(e) {
     const { name, value, checked } = e.target;
     if (name === 'isPublished') setProduct(prev => ({ ...prev, isPublished: !!checked }));
     else {
+      // If user edits slug or sku manually, mark them edited so auto-generation stops
+      if (name === 'slug') setSlugEdited(true);
+      if (name === 'sku') setSkuEdited(true);
+
       setProduct(prev => ({ ...prev, [name]: value }));
       if (name === 'colors') {
         const arr = parseColorsInputToArray(value).map(c => normalizeToHexIfPossible(c));
@@ -247,12 +322,16 @@ export default function AdminProductEdit() {
 
       // If no id present, create a minimal product first
       if (!targetId) {
+        // Ensure we have a slug & sku before creating (if not manual, auto-generate here too)
+        if (!bodyForProduct.slug) bodyForProduct.slug = makeSlug(bodyForProduct.title || "");
+        if (!bodyForProduct.sku) bodyForProduct.sku = generateSku({ brand: bodyForProduct.brand, category: bodyForProduct.category, title: bodyForProduct.title });
+
         const created = await createMinimalProduct(bodyForProduct);
         targetId = created._id || created.id || created._id?.toString();
         if (!targetId) throw new Error('Could not obtain new product id from create response');
         // set navigate to new edit page afterward so future uploads use same component with id
         // set local state product to include returned values
-        setProduct(prev => ({ ...prev, slug: created.slug || prev.slug }));
+        setProduct(prev => ({ ...prev, slug: created.slug || prev.slug, sku: created.sku || prev.sku }));
       }
 
       // If selected files exist, upload them to the product upload endpoint
@@ -353,7 +432,15 @@ export default function AdminProductEdit() {
           <input name="title" value={product.title} onChange={handleChange} style={{ width: '100%' }} /></div>
 
         <div><label>Slug</label><br />
-          <input name="slug" value={product.slug} onChange={handleChange} style={{ width: '100%' }} /></div>
+          <input
+            name="slug"
+            value={product.slug}
+            onChange={(e) => {
+              handleChange(e);
+              // mark slug as manually edited so auto-generation stops
+              setSlugEdited(true);
+            }}
+            style={{ width: '100%' }} /></div>
 
         <div><label>Price</label><br />
           <input name="price" value={product.price} onChange={handleChange} style={{ width: '100%' }} /></div>
@@ -365,7 +452,14 @@ export default function AdminProductEdit() {
           <input name="stock" value={product.stock} onChange={handleChange} style={{ width: '100%' }} /></div>
 
         <div><label>SKU</label><br />
-          <input name="sku" value={product.sku} onChange={handleChange} style={{ width: '100%' }} /></div>
+          <input
+            name="sku"
+            value={product.sku}
+            onChange={(e) => {
+              handleChange(e);
+              setSkuEdited(true);
+            }}
+            style={{ width: '100%' }} /></div>
 
         <div><label>Brand</label><br />
           <input name="brand" value={product.brand} onChange={handleChange} style={{ width: '100%' }} /></div>

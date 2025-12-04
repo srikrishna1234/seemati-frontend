@@ -10,6 +10,10 @@ import axiosInstance from "../api/axiosInstance";
  * - previews for selected files and upload to backend
  * - video preview (YouTube)
  *
+ * Auto behavior added:
+ * - auto-slug generated from title (kebab-case) unless slug manually edited
+ * - auto-sku generated from brand+category (or fallback prefix KPL) unless sku manually edited
+ *
  * API assumptions:
  * - POST /api/products/upload  (multipart/form-data) returns { uploaded: [ {url, key}, ... ] } OR an array
  * - POST /api/products  creates product and returns { success: true, product: {...} } or product object
@@ -124,6 +128,41 @@ function getYouTubeEmbedUrl(raw) {
   return null;
 }
 
+// slug helper
+function makeSlug(text) {
+  if (!text) return "";
+  return String(text)
+    .toLowerCase()
+    .trim()
+    .replace(/['"]/g, "") // remove quotes
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-+/g, "-");
+}
+
+// sku helper
+function sanitizeAlnum(s = "") {
+  return String(s || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
+}
+function generateSku({ brand, category }) {
+  // Use first 3 chars of brand and category if available
+  const b = sanitizeAlnum(brand || "");
+  const c = sanitizeAlnum(category || "");
+  let prefix = "KPL"; // fallback prefix
+  if (b && c) {
+    const pb = b.slice(0, 3);
+    const pc = c.slice(0, 3);
+    prefix = `${pb}-${pc}`;
+  } else if (b) {
+    prefix = `${b.slice(0, 3)}`;
+  } else if (c) {
+    prefix = `${c.slice(0, 3)}`;
+  }
+  // 3-digit counter from timestamp (low collision risk for quick admin actions)
+  const counter = String(Math.abs(Date.now()) % 1000).padStart(3, "0");
+  return `${prefix}-${counter}`;
+}
+
 export default function AddProduct() {
   const navigate = useNavigate();
 
@@ -138,6 +177,10 @@ export default function AddProduct() {
   const [brand, setBrand] = useState("");
   const [category, setCategory] = useState("");
   const [videoUrl, setVideoUrl] = useState("");
+
+  // Flags to avoid overriding manual edits
+  const [slugEdited, setSlugEdited] = useState(false);
+  const [skuEdited, setSkuEdited] = useState(false);
 
   // colors as text input + swatches array synced
   const [colorsInput, setColorsInput] = useState("");
@@ -180,6 +223,26 @@ export default function AddProduct() {
     setColorsInput(s);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [swatches]);
+
+  // --- Auto-slug and auto-sku effects ---
+
+  // Generate slug from title when title changes unless slug edited manually
+  useEffect(() => {
+    if (!slugEdited) {
+      const s = makeSlug(title);
+      setSlug(s);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [title]);
+
+  // Generate SKU when brand or category (or title as fallback) changes unless sku edited manually
+  useEffect(() => {
+    if (!skuEdited) {
+      const gen = generateSku({ brand: brand || title, category });
+      setSku(gen);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [brand, category, title]);
 
   // file selection handler - create previews
   function onFilesChange(e) {
@@ -270,7 +333,7 @@ export default function AddProduct() {
     setUploadedImages(prev => prev.filter((_, i) => i !== index));
   }
 
-  // create product handler
+  // Create product handler
   async function handleCreateProduct(e) {
     e?.preventDefault?.();
     setMessage("");
@@ -351,12 +414,26 @@ export default function AddProduct() {
       <form onSubmit={handleCreateProduct}>
         <div style={{ marginBottom: 8 }}>
           <label style={{ display: "block", marginBottom: 4 }}>Title</label>
-          <input value={title} onChange={(e) => setTitle(e.target.value)} style={{ width: "100%" }} />
+          <input
+            value={title}
+            onChange={(e) => {
+              setTitle(e.target.value);
+            }}
+            style={{ width: "100%" }}
+          />
         </div>
 
         <div style={{ marginBottom: 8 }}>
           <label style={{ display: "block", marginBottom: 4 }}>Slug</label>
-          <input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="example-product-slug" style={{ width: "100%" }} />
+          <input
+            value={slug}
+            onChange={(e) => {
+              setSlug(e.target.value);
+              setSlugEdited(true); // manual override
+            }}
+            placeholder="example-product-slug"
+            style={{ width: "100%" }}
+          />
         </div>
 
         <div style={{ display: "flex", gap: 12 }}>
@@ -377,15 +454,31 @@ export default function AddProduct() {
         <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
           <div style={{ flex: 1 }}>
             <label style={{ display: "block", marginBottom: 4 }}>SKU</label>
-            <input value={sku} onChange={(e) => setSku(e.target.value)} />
+            <input
+              value={sku}
+              onChange={(e) => {
+                setSku(e.target.value);
+                setSkuEdited(true);
+              }}
+            />
           </div>
           <div style={{ flex: 1 }}>
             <label style={{ display: "block", marginBottom: 4 }}>Brand</label>
-            <input value={brand} onChange={(e) => setBrand(e.target.value)} />
+            <input
+              value={brand}
+              onChange={(e) => {
+                setBrand(e.target.value);
+              }}
+            />
           </div>
           <div style={{ flex: 1 }}>
             <label style={{ display: "block", marginBottom: 4 }}>Category</label>
-            <input value={category} onChange={(e) => setCategory(e.target.value)} />
+            <input
+              value={category}
+              onChange={(e) => {
+                setCategory(e.target.value);
+              }}
+            />
           </div>
         </div>
 
