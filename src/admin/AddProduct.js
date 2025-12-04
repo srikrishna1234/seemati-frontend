@@ -10,15 +10,10 @@ import axiosInstance from "../api/axiosInstance";
  * - previews for selected files and upload to backend
  * - video preview (YouTube)
  *
- * Auto behavior added:
+ * Auto behavior:
  * - auto-slug generated from title (kebab-case) unless slug manually edited
- * - auto-sku generated from brand+category (or fallback prefix KPL) unless sku manually edited
- *
- * API assumptions:
- * - POST /api/products/upload  (multipart/form-data) returns { uploaded: [ {url, key}, ... ] } OR an array
- * - POST /api/products  creates product and returns { success: true, product: {...} } or product object
- *
- * If your backend endpoints differ, adjust the axiosInstance.post URLs below.
+ * - auto-sku generated from brand+category (or fallback KPL) unless sku manually edited
+ * - "Generate SKU" button added next to SKU field
  */
 
 // Named color map for suggestions (same-ish list as edit page)
@@ -144,8 +139,7 @@ function makeSlug(text) {
 function sanitizeAlnum(s = "") {
   return String(s || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
 }
-function generateSku({ brand, category }) {
-  // Use first 3 chars of brand and category if available
+function generateSku({ brand, category, title }) {
   const b = sanitizeAlnum(brand || "");
   const c = sanitizeAlnum(category || "");
   let prefix = "KPL"; // fallback prefix
@@ -157,8 +151,9 @@ function generateSku({ brand, category }) {
     prefix = `${b.slice(0, 3)}`;
   } else if (c) {
     prefix = `${c.slice(0, 3)}`;
+  } else if (title) {
+    prefix = sanitizeAlnum(title).slice(0, 3) || "KPL";
   }
-  // 3-digit counter from timestamp (low collision risk for quick admin actions)
   const counter = String(Math.abs(Date.now()) % 1000).padStart(3, "0");
   return `${prefix}-${counter}`;
 }
@@ -333,7 +328,14 @@ export default function AddProduct() {
     setUploadedImages(prev => prev.filter((_, i) => i !== index));
   }
 
-  // Create product handler
+  // Generate SKU on demand (button)
+  function handleGenerateSku() {
+    const newSku = generateSku({ brand, category, title });
+    setSku(newSku);
+    setSkuEdited(true); // treat as manual choice so auto effects won't overwrite
+  }
+
+  // create product handler
   async function handleCreateProduct(e) {
     e?.preventDefault?.();
     setMessage("");
@@ -414,26 +416,12 @@ export default function AddProduct() {
       <form onSubmit={handleCreateProduct}>
         <div style={{ marginBottom: 8 }}>
           <label style={{ display: "block", marginBottom: 4 }}>Title</label>
-          <input
-            value={title}
-            onChange={(e) => {
-              setTitle(e.target.value);
-            }}
-            style={{ width: "100%" }}
-          />
+          <input value={title} onChange={(e) => setTitle(e.target.value)} style={{ width: "100%" }} />
         </div>
 
         <div style={{ marginBottom: 8 }}>
           <label style={{ display: "block", marginBottom: 4 }}>Slug</label>
-          <input
-            value={slug}
-            onChange={(e) => {
-              setSlug(e.target.value);
-              setSlugEdited(true); // manual override
-            }}
-            placeholder="example-product-slug"
-            style={{ width: "100%" }}
-          />
+          <input value={slug} onChange={(e) => { setSlug(e.target.value); setSlugEdited(true); }} placeholder="example-product-slug" style={{ width: "100%" }} />
         </div>
 
         <div style={{ display: "flex", gap: 12 }}>
@@ -454,31 +442,21 @@ export default function AddProduct() {
         <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
           <div style={{ flex: 1 }}>
             <label style={{ display: "block", marginBottom: 4 }}>SKU</label>
-            <input
-              value={sku}
-              onChange={(e) => {
-                setSku(e.target.value);
-                setSkuEdited(true);
-              }}
-            />
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input value={sku} onChange={(e) => { setSku(e.target.value); setSkuEdited(true); }} />
+              <button type="button" onClick={handleGenerateSku}>Generate SKU</button>
+            </div>
+            <div style={{ fontSize: 12, color: "#555", marginTop: 6 }}>
+              Format: BRAND-CTG-XXX or fallback KPL-XXX (XXX = 3-digit counter)
+            </div>
           </div>
           <div style={{ flex: 1 }}>
             <label style={{ display: "block", marginBottom: 4 }}>Brand</label>
-            <input
-              value={brand}
-              onChange={(e) => {
-                setBrand(e.target.value);
-              }}
-            />
+            <input value={brand} onChange={(e) => setBrand(e.target.value)} />
           </div>
           <div style={{ flex: 1 }}>
             <label style={{ display: "block", marginBottom: 4 }}>Category</label>
-            <input
-              value={category}
-              onChange={(e) => {
-                setCategory(e.target.value);
-              }}
-            />
+            <input value={category} onChange={(e) => setCategory(e.target.value)} />
           </div>
         </div>
 

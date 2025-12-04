@@ -12,6 +12,7 @@ import axiosInstance from '../api/axiosInstance';
  Added:
  - auto-slug generation from title (kebab-case) unless slug manually edited
  - auto-sku generation from brand+category (or fallback KPL-XXX) unless sku manually edited
+ - "Generate SKU" button next to SKU field
 */
 
 const NAMED_COLORS = {
@@ -252,6 +253,13 @@ export default function AdminProductEdit() {
   }
   function toggleKeep(url) { setKeepMap(prev => ({ ...prev, [url]: !prev[url] })); }
 
+  // Generate SKU on demand (button)
+  function handleGenerateSku() {
+    const newSku = generateSku({ brand: product.brand, category: product.category, title: product.title });
+    setProduct(prev => ({ ...prev, sku: newSku }));
+    setSkuEdited(true); // treat as manual choice so auto effects won't overwrite
+  }
+
   // Uploads files to /api/products/{pId}/upload — returns array of uploaded URLs
   async function uploadFilesToProduct(pId) {
     if (!selectedFiles.length) return [];
@@ -452,14 +460,21 @@ export default function AdminProductEdit() {
           <input name="stock" value={product.stock} onChange={handleChange} style={{ width: '100%' }} /></div>
 
         <div><label>SKU</label><br />
-          <input
-            name="sku"
-            value={product.sku}
-            onChange={(e) => {
-              handleChange(e);
-              setSkuEdited(true);
-            }}
-            style={{ width: '100%' }} /></div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input
+              name="sku"
+              value={product.sku}
+              onChange={(e) => {
+                handleChange(e);
+                setSkuEdited(true);
+              }}
+              style={{ width: '100%' }} />
+            <button type="button" onClick={handleGenerateSku}>Generate SKU</button>
+          </div>
+          <div style={{ fontSize: 12, color: '#555', marginTop: 6 }}>
+            Format: BRAND-CTG-XXX or fallback KPL-XXX (XXX = 3-digit counter)
+          </div>
+        </div>
 
         <div><label>Brand</label><br />
           <input name="brand" value={product.brand} onChange={handleChange} style={{ width: '100%' }} /></div>
