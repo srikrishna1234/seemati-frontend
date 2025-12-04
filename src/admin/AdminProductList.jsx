@@ -1,179 +1,167 @@
 // src/admin/AdminProductList.jsx
 import React, { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 
-const BACKEND_ORIGIN = "https://seemati-backend.onrender.com";
-const RELATIVE_PATH = "/admin-api/products";
+// Try to import your shared axios instance if it exists.
+// If not present, the component will still work via fetch().
+let axios;
+try {
+  // adjust path if your axios instance is at a different path
+  // you previously had api/axiosInstance.js — keep that same path
+  // eslint-disable-next-line import/no-unresolved
+  axios = require("../api/axiosInstance").default;
+} catch (err) {
+  axios = null;
+  // no-op; we'll fallback to fetch
+}
 
 export default function AdminProductList() {
   const [products, setProducts] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  console.log("[AdminProductList] render - products:", products);
+
   useEffect(() => {
+    console.log("[AdminProductList] mounted, starting fetchProducts");
     let cancelled = false;
 
-    async function fetchJson(url, opts = {}) {
-      const res = await fetch(url, { method: "GET", credentials: "include", ...opts });
-      const ct = res.headers.get("content-type") || "";
-      const text = await res.text();
-
-      if (ct.includes("application/json")) {
-        try {
-          return { status: res.status, json: JSON.parse(text), rawText: text };
-        } catch (err) {
-          throw new Error("Invalid JSON from " + url + " — parse error");
-        }
-      }
-
-      const t = (text || "").trim();
-      const looksLikeHtml = t.startsWith("<") || t.toLowerCase().startsWith("<!doctype");
-      return { status: res.status, json: null, rawText: text, looksLikeHtml };
-    }
-
-    async function load() {
+    async function fetchProducts() {
       setLoading(true);
       setError(null);
 
-      try {
-        console.debug("[AdminProductList] trying relative path:", RELATIVE_PATH);
-        const r1 = await fetchJson(RELATIVE_PATH);
+      // Try to get auth token commonly saved after OTP login
+      const token =
+        (typeof window !== "undefined" && localStorage.getItem("token")) ||
+        (typeof window !== "undefined" && localStorage.getItem("authToken")) ||
+        null;
+      console.log("[AdminProductList] token from localStorage:", token);
 
-        if (r1.json) {
-          console.debug("[AdminProductList] got JSON from relative path", r1);
-          const arr = r1.json.products || r1.json.data || r1.json.items || r1.json || [];
-          if (!cancelled) {
-            setProducts(Array.isArray(arr) ? arr : []);
-            setLoading(false);
-          }
-          return;
-        }
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-        if (r1.looksLikeHtml) {
-          console.warn("[AdminProductList] relative path returned HTML (frontend served index), falling back to backend origin");
-          const backendUrl = BACKEND_ORIGIN + RELATIVE_PATH;
-          console.debug("[AdminProductList] trying backend URL:", backendUrl);
-          const r2 = await fetchJson(backendUrl);
-
-          if (r2.json) {
-            console.debug("[AdminProductList] got JSON from backend origin", r2);
-            const arr = r2.json.products || r2.json.data || r2.json.items || r2.json || [];
-            if (!cancelled) {
-              setProducts(Array.isArray(arr) ? arr : []);
-              setLoading(false);
+      // First try axios (if available)
+      if (axios) {
+        try {
+          console.log("[AdminProductList] Using axios to GET /admin/products (or /api/admin/products)");
+          // Attempt common endpoints. Adjust if your backend path differs.
+          const endpointsToTry = [
+            "/api/admin/products",
+            "/admin/products",
+            "/api/products",
+            "/products",
+          ];
+          let res = null;
+          for (const ep of endpointsToTry) {
+            try {
+              console.log("[AdminProductList] trying axios GET", ep);
+              // axios may have baseURL set already
+              res = await axios.get(ep, { headers });
+              if (res && (res.data || res.status === 200)) {
+                console.log("[AdminProductList] axios success from", ep, res);
+                break;
+              }
+            } catch (e) {
+              console.warn("[AdminProductList] axios try failed for", ep, e && e.message);
+              // continue trying other endpoints
             }
-            return;
-          } else {
-            throw new Error("Backend origin did not return JSON. Check backend logs.");
           }
+          if (!res) {
+            throw new Error("No axios response from any endpoint tried");
+          }
+          if (!cancelled) setProducts(Array.isArray(res.data) ? res.data : res.data.products || []);
+        } catch (err) {
+          console.error("[AdminProductList] axios error:", err);
+          if (!cancelled) setError(err.message || "Axios error");
+        } finally {
+          if (!cancelled) setLoading(false);
         }
+        return;
+      }
 
-        console.error("[AdminProductList] unexpected response at relative path:", r1);
-        throw new Error("Unexpected response from relative path");
-      } catch (err) {
-        console.error("[AdminProductList] load error:", err);
-        if (!cancelled) {
-          setError(err.message || "Unknown error");
-          setProducts([]);
-          setLoading(false);
+      // Fallback: use fetch()
+      try {
+        console.log("[AdminProductList] axios not available. Using fetch fallback to /api/admin/products");
+        const resp = await fetch("/api/admin/products", {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+            ...headers,
+          },
+        });
+        console.log("[AdminProductList] fetch response status:", resp.status);
+        if (!resp.ok) {
+          const text = await resp.text().catch(() => null);
+          throw new Error(`Fetch failed: ${resp.status} ${text || resp.statusText}`);
         }
+        const data = await resp.json().catch(() => null);
+        console.log("[AdminProductList] fetch data:", data);
+        if (!cancelled) setProducts(Array.isArray(data) ? data : data.products || []);
+      } catch (err) {
+        console.error("[AdminProductList] fetch error:", err);
+        if (!cancelled) setError(err.message || "Fetch error");
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     }
 
-    load();
+    fetchProducts();
+
     return () => {
       cancelled = true;
+      console.log("[AdminProductList] unmounted / cancelled");
     };
-  }, []);
+  }, []); // run once on mount
 
-  const safe = (v) => (v === undefined || v === null ? "" : v);
+  if (loading) {
+    return (
+      <div style={{ padding: 24 }}>
+        <h2>Admin — Products</h2>
+        <p>Loading products… (check Console for logs)</p>
+      </div>
+    );
+  }
 
-  const getThumbnailUrl = (p) => {
-    if (p && typeof p.thumbnail === "string" && p.thumbnail.trim()) {
-      return p.thumbnail.trim();
-    }
-    if (p && Array.isArray(p.images) && p.images.length > 0 && p.images[0].url) {
-      return p.images[0].url;
-    }
-    return null;
-  };
+  if (error) {
+    return (
+      <div style={{ padding: 24 }}>
+        <h2>Admin — Products</h2>
+        <p style={{ color: "red" }}>Error loading products: {String(error)}</p>
+        <p>Open DevTools Console → Network to verify requests. Also check localStorage token keys.</p>
+      </div>
+    );
+  }
+
+  if (!products || products.length === 0) {
+    return (
+      <div style={{ padding: 24 }}>
+        <h2>Admin — Products</h2>
+        <p>No products found (empty array). If you expect products, check that the API endpoint is correct and that the user is authenticated.</p>
+      </div>
+    );
+  }
 
   return (
-    <div style={{ padding: 20 }}>
-      <h1>Products</h1>
-      <div style={{ marginBottom: 8 }}>
-        <Link to="/admin/products/add">
-          <button>Add product</button>
-        </Link>
-      </div>
-
-      {loading && <div>Loading products…</div>}
-      {error && <div style={{ color: "crimson" }}>Error loading products: {error}</div>}
-      {!loading && (!products || products.length === 0) && <div>No products found.</div>}
-
-      {!loading && products && products.length > 0 && (
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd", width: 90 }}>
-                  Thumbnail
-                </th>
-                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>
-                  Title
-                </th>
-                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>
-                  Price
-                </th>
-                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>
-                  Stock
-                </th>
-                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>
-                  Category
-                </th>
-                <th style={{ textAlign: "left", padding: "12px 8px", borderBottom: "1px solid #ddd" }}>
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {products.map((p, i) => {
-                const id = p._id || p.id || `${i}`;
-                const thumbUrl = getThumbnailUrl(p);
-
-                return (
-                  <tr key={id}>
-                    <td style={{ padding: "8px 8px", borderBottom: "1px solid #f0f0f0", verticalAlign: "middle" }}>
-                      {thumbUrl ? (
-                        <img
-                          src={thumbUrl}
-                          alt={safe(p.title) || "Product thumbnail"}
-                          style={{ width: 64, height: 64, objectFit: "cover", borderRadius: 4, border: "1px solid #eee" }}
-                          loading="lazy"
-                        />
-                      ) : (
-                        <span style={{ fontSize: 12, color: "#999" }}>No image</span>
-                      )}
-                    </td>
-                    <td style={{ padding: "10px 8px", borderBottom: "1px solid #f0f0f0" }}>{safe(p.title)}</td>
-                    <td style={{ padding: "10px 8px", borderBottom: "1px solid #f0f0f0" }}>{safe(p.price)}</td>
-                    <td style={{ padding: "10px 8px", borderBottom: "1px solid #f0f0f0" }}>{safe(p.stock)}</td>
-                    <td style={{ padding: "10px 8px", borderBottom: "1px solid #f0f0f0" }}>{safe(p.category)}</td>
-                    <td style={{ padding: "10px 8px", borderBottom: "1px solid #f0f0f0" }}>
-                      <Link to={`/admin/products/${id}/edit`}>
-                        <button>Edit</button>
-                      </Link>{" "}
-                      <a href={thumbUrl || (p.images && p.images[0] && p.images[0].url) || "#"} target="_blank" rel="noreferrer">
-                        <button>View</button>
-                      </a>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+    <div style={{ padding: 24 }}>
+      <h2>Admin — Products ({products.length})</h2>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr>
+            <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>SKU</th>
+            <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Name</th>
+            <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Category</th>
+            <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Price</th>
+          </tr>
+        </thead>
+        <tbody>
+          {products.map((p, i) => (
+            <tr key={p._id || p.id || i}>
+              <td style={{ padding: 8, borderBottom: "1px solid #f0f0f0" }}>{p.sku || p.code || "-"}</td>
+              <td style={{ padding: 8, borderBottom: "1px solid #f0f0f0" }}>{p.name || p.title || "-"}</td>
+              <td style={{ padding: 8, borderBottom: "1px solid #f0f0f0" }}>{p.category || p.cat || "-"}</td>
+              <td style={{ padding: 8, borderBottom: "1px solid #f0f0f0" }}>{p.price || p.mrp || "-"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
