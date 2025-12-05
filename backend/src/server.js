@@ -79,6 +79,37 @@ async function tryRequire(relPath) {
   }
 }
 
+function listRoutesFromApp(appInstance) {
+  const routes = [];
+  if (!appInstance || !appInstance._router || !Array.isArray(appInstance._router.stack)) {
+    return routes;
+  }
+
+  const stack = appInstance._router.stack;
+  stack.forEach((layer) => {
+    if (layer.route && layer.route.path) {
+      const methods = layer.route.methods ? Object.keys(layer.route.methods).join(',').toUpperCase() : '';
+      routes.push({ path: layer.route.path, methods });
+    } else if (layer.name === 'router' && layer.handle && layer.handle.stack) {
+      layer.handle.stack.forEach((handler) => {
+        if (handler.route && handler.route.path) {
+          const methods = handler.route.methods ? Object.keys(handler.route.methods).join(',').toUpperCase() : '';
+          routes.push({ path: handler.route.path, methods });
+        }
+      });
+    } else {
+      // fallback: include regexp representation if available
+      try {
+        if (layer && layer.regexp) {
+          routes.push({ path: String(layer.regexp), methods: '' });
+        }
+      } catch (e) {}
+    }
+  });
+
+  return routes;
+}
+
 async function main() {
   await connectMongo();
 
@@ -155,7 +186,7 @@ async function main() {
   } catch (e) { /* ignore */ }
 
   try {
-    const adminRoutes = await tryRequire('./routes/adminProduct.cjs') || await tryRequire('./routes/adminProduct.js');
+    const adminRoutes = await tryRequire('./routes/adminProduct.cjs') || await tryRequire('./routes/adminProduct.js') || await tryRequire('./routes/adminProduct');
     if (adminRoutes) {
       app.use('/admin-api', adminRoutes);
       console.log('[server] mounted adminProduct at /admin-api');
@@ -166,6 +197,18 @@ async function main() {
   app.get('/_health', (req, res) => res.json({ ok: true, uptime: process.uptime() }));
   app.get('/health', (req, res) => res.json({ ok: true, uptime: process.uptime() }));
 
+  // Debug endpoint to enumerate mounted routes (temporary)
+  app.get('/__routes', (req, res) => {
+    try {
+      const routes = listRoutesFromApp(app);
+      return res.json({ ok: true, routes });
+    } catch (err) {
+      console.error('[__routes] error:', err && (err.stack || err));
+      return res.status(500).json({ ok: false, error: 'Failed to enumerate routes' });
+    }
+  });
+
+  // preserve old behavior: any /api/* fallback 404
   app.use('/api', (req, res) => res.status(404).json({ error: 'API endpoint not found' }));
 
   app.use((err, req, res, next) => {

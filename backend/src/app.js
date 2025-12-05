@@ -4,9 +4,7 @@ const path = require('path');
 const cors = require('cors');
 
 const app = express();
-const path = require('path');
 const uploadRoutes = require('./routes/uploadRoutes');
-
 
 // NOTE: route imports - use paths relative to backend/src (this file)
 const orderRoutes = require("./routes/orders"); // fixed path
@@ -34,7 +32,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/products', uploadRoutes);
 app.use('/admin-api/products', uploadRoutes);
 
-// mount OTP routes
+// mount OTP routes (optional)
 try {
   // Expect file at backend/src/routes/otpRoutes.js
   const otpRoutes = require('./routes/otpRoutes');
@@ -54,6 +52,50 @@ try {
 
 // Health check
 app.get('/health', (req, res) => res.json({ ok: true }));
+
+/**
+ * Debug endpoint: return a best-effort list of mounted routes.
+ * Temporary — remove after debugging.
+ */
+function listRoutesFromApp(appInstance) {
+  const routes = [];
+  if (!appInstance || !appInstance._router || !Array.isArray(appInstance._router.stack)) {
+    return routes;
+  }
+
+  const stack = appInstance._router.stack;
+
+  stack.forEach((layer) => {
+    if (layer.route && layer.route.path) {
+      // routes registered directly on the app
+      const methods = layer.route.methods ? Object.keys(layer.route.methods).join(',').toUpperCase() : '';
+      routes.push({ path: layer.route.path, methods });
+    } else if (layer.name === 'router' && layer.handle && layer.handle.stack) {
+      // nested router — inspect its stack
+      layer.handle.stack.forEach((handler) => {
+        if (handler.route && handler.route.path) {
+          const methods = handler.route.methods ? Object.keys(handler.route.methods).join(',').toUpperCase() : '';
+          routes.push({ path: handler.route.path, methods });
+        }
+      });
+    } else if (layer.name && layer.name === 'bound dispatch' && layer.regexp) {
+      // best-effort fallback
+      routes.push({ path: String(layer.regexp), methods: '' });
+    }
+  });
+
+  return routes;
+}
+
+app.get('/__routes', (req, res) => {
+  try {
+    const routes = listRoutesFromApp(app);
+    return res.json({ ok: true, routes });
+  } catch (err) {
+    console.error('[__routes] error:', err && (err.stack || err));
+    return res.status(500).json({ ok: false, error: 'Failed to enumerate routes' });
+  }
+});
 
 // 404 for other /api/* endpoints
 app.use('/api', (req, res) => {
