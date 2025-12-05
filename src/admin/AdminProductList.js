@@ -38,9 +38,10 @@ export default function AdminProductList() {
       console.debug("[AdminProductList.js] baseHasApi:", baseHasApi);
 
       // endpoints to try (we avoid doubling /api if axios base already contains it)
+      // Prefer '/products' first because deployed backend exposes /api/products
       const endpoints = baseHasApi
-        ? ["/admin/products", "/products", "/products?page=1&limit=200"]
-        : ["/api/admin/products", "/api/products", "/api/products?page=1&limit=200"];
+        ? ["/products", "/admin/products", "/products?page=1&limit=200"]
+        : ["/api/products", "/api/admin/products", "/api/products?page=1&limit=200"];
 
       // Try endpoints using axios (respects baseURL)
       for (const ep of endpoints) {
@@ -49,19 +50,27 @@ export default function AdminProductList() {
           const res = await axios.get(ep, { headers });
           if (res && (res.status === 200 || res.data)) {
             const data = res.data;
-            const list = Array.isArray(data) ? data : data.products || data.products || [];
+            // res.data might be an array or an object { products: [...] } or { success: true, products: [...] }
+            const list = Array.isArray(data)
+              ? data
+              : Array.isArray(data?.products)
+              ? data.products
+              : Array.isArray(data?.data)
+              ? data.data
+              : [];
+
             console.debug("[AdminProductList.js] success from", ep, "count:", list.length);
             if (!cancelled) setProducts(list);
             setLoading(false);
             return;
           }
         } catch (e) {
-          console.warn("[AdminProductList.js] axios failed for", ep, e && e.message);
+          console.warn("[AdminProductList.js] axios failed for", ep, e && (e.message || e));
           // continue to next endpoint
         }
       }
 
-      // Fallback to fetch('/api/products') — matches your local dev where /api/products works
+      // Fallback to fetch('/api/products') — matches local dev or proxied setups
       try {
         console.debug("[AdminProductList.js] axios failed; falling back to fetch('/api/products')");
         const resp = await fetch("/api/products", {
@@ -77,7 +86,13 @@ export default function AdminProductList() {
           throw new Error(`Fetch failed: ${resp.status} ${txt || resp.statusText}`);
         }
         const json = await resp.json();
-        const list = Array.isArray(json) ? json : json.products || [];
+        const list = Array.isArray(json)
+          ? json
+          : Array.isArray(json?.products)
+          ? json.products
+          : Array.isArray(json?.data)
+          ? json.data
+          : [];
         console.debug("[AdminProductList.js] fetch success, count:", list.length);
         if (!cancelled) setProducts(list);
         setLoading(false);
