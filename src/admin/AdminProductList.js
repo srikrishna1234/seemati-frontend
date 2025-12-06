@@ -4,11 +4,11 @@ import { Link, useNavigate } from "react-router-dom";
 import axios from "../api/axiosInstance";
 
 /**
- * AdminProductList (single-file authoritative version)
- * - Shows SKU, thumbnail, name/title, slug, category, price, stock, published
- * - Edit, Delete, Preview, Add Product, Refresh actions
- * - Respects axios.defaults.baseURL to avoid double /api prefix
- * - Fallbacks to fetch() if needed
+ * AdminProductList (debug-friendly full replacement)
+ * - Tries axios relative endpoints first (respects axios.defaults.baseURL)
+ * - Falls back to direct fetch to https://api.seemati.in/api/products
+ * - Prints verbose console logs prefixed with [AdminProductList]
+ * - Keeps your existing UI: Edit/Delete/Preview etc.
  */
 
 export default function AdminProductList() {
@@ -18,10 +18,14 @@ export default function AdminProductList() {
   const [actionMsg, setActionMsg] = useState("");
   const navigate = useNavigate();
 
+  // Direct backend fallback (bypass Vercel rewrite) — used only for debugging
+  const BACKEND_FALLBACK_BASE = "https://api.seemati.in/api";
+
   useEffect(() => {
     let cancelled = false;
 
     async function fetchProducts() {
+      console.log("[AdminProductList] Starting fetchProducts");
       setLoading(true);
       setError(null);
 
@@ -32,7 +36,7 @@ export default function AdminProductList() {
         null;
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-      // Inspect axios baseURL to avoid double '/api' prefix problems
+      // Determine axios base to avoid double '/api'
       let base = "";
       try {
         base = (axios && axios.defaults && axios.defaults.baseURL) || "";
@@ -40,62 +44,81 @@ export default function AdminProductList() {
         base = "";
       }
       const baseHasApi = typeof base === "string" && /\/api\/?$/.test(base);
+      console.log("[AdminProductList] axios.defaults.baseURL:", base, "baseHasApi:", baseHasApi);
 
-      // endpoints to try (we avoid doubling /api if axios base already contains it)
+      // Candidate endpoints (relative) — we try multiple shapes to be safe
       const endpoints = baseHasApi
         ? ["/products", "/admin/products", "/products?page=1&limit=200"]
         : ["/api/products", "/api/admin/products", "/api/products?page=1&limit=200"];
 
-      // Try endpoints using axios (respects baseURL)
+      // Try each endpoint using axios (respects baseURL)
       for (const ep of endpoints) {
         try {
+          console.log("[AdminProductList] Trying axios GET", ep);
           const res = await axios.get(ep, { headers });
+          console.log("[AdminProductList] axios response for", ep, "status:", res && res.status, "data:", res && res.data);
           if (res && (res.status === 200 || res.data)) {
             const data = res.data;
-            const list = Array.isArray(data)
-              ? data
-              : Array.isArray(data?.products)
-              ? data.products
-              : Array.isArray(data?.data)
-              ? data.data
-              : [];
-            if (!cancelled) setProducts(list);
-            setLoading(false);
+            const list =
+              Array.isArray(data)
+                ? data
+                : Array.isArray(data?.products)
+                ? data.products
+                : Array.isArray(data?.data)
+                ? data.data
+                : [];
+            if (!cancelled) {
+              setProducts(list);
+              setLoading(false);
+              console.log("[AdminProductList] Products set from axios:", list.length);
+            }
             return;
           }
-        } catch (e) {
+        } catch (err) {
+          console.warn("[AdminProductList] axios GET failed for", ep, err && err.message ? err.message : err);
           // continue to next endpoint
         }
       }
 
-      // Fallback to fetch('/api/products') — matches local dev or proxied setups
+      // Fallback: try direct fetch to backend domain (bypasses Vercel rewrite; helpful to detect rewrite/CORS issues)
       try {
-        const fetchResp = await fetch("/api/products", {
+        const url = `${BACKEND_FALLBACK_BASE}/products`;
+        console.log("[AdminProductList] Attempting fallback fetch to", url);
+        const resp = await fetch(url, {
           method: "GET",
+          credentials: "include",
           headers: {
             "Content-Type": "application/json",
             ...headers,
           },
-          credentials: "include",
         });
-        if (!fetchResp.ok) {
-          const txt = await fetchResp.text().catch(() => null);
-          throw new Error(`Fetch failed: ${fetchResp.status} ${txt || fetchResp.statusText}`);
+        console.log("[AdminProductList] fallback fetch status:", resp.status, resp.statusText);
+        if (!resp.ok) {
+          const txt = await resp.text().catch(() => null);
+          throw new Error(`Fallback fetch failed: ${resp.status} ${txt || resp.statusText}`);
         }
-        const json = await fetchResp.json();
-        const list = Array.isArray(json)
-          ? json
-          : Array.isArray(json?.products)
-          ? json.products
-          : Array.isArray(json?.data)
-          ? json.data
-          : [];
-        if (!cancelled) setProducts(list);
-        setLoading(false);
-        return;
-      } catch (fetchErr) {
+        const json = await resp.json().catch((e) => {
+          throw new Error("Fallback fetch JSON parse failed: " + (e && e.message));
+        });
+        console.log("[AdminProductList] fallback fetch json:", json);
+        const list =
+          Array.isArray(json)
+            ? json
+            : Array.isArray(json?.products)
+            ? json.products
+            : Array.isArray(json?.data)
+            ? json.data
+            : [];
         if (!cancelled) {
-          setError(fetchErr.message || "Unable to load products");
+          setProducts(list);
+          setLoading(false);
+          console.log("[AdminProductList] Products set from fallback fetch:", list.length);
+        }
+        return;
+      } catch (fbErr) {
+        console.error("[AdminProductList] fallback fetch failed:", fbErr && fbErr.message ? fbErr.message : fbErr);
+        if (!cancelled) {
+          setError(fbErr && fbErr.message ? fbErr.message : "Unable to load products");
           setLoading(false);
         }
       }
@@ -108,7 +131,7 @@ export default function AdminProductList() {
     };
   }, []);
 
-  // small helpers
+  // Helpers (kept from your previous file)
   function pickThumbnail(p) {
     if (!p) return null;
     if (p.thumbnail) return p.thumbnail;
@@ -125,18 +148,16 @@ export default function AdminProductList() {
     return p?.stock ?? p?.qty ?? p?.inventory ?? p?.quantity ?? p?.available ?? "-";
   }
 
-  // delete with optimistic UI
+  // delete with optimistic UI (kept)
   async function handleDelete(id) {
     const ok = window.confirm("Delete this product? This action cannot be undone.");
     if (!ok) return;
-    const prev = products;
+    const prev = products || [];
     setProducts(prev.filter((x) => (x._id || x.id) !== id));
     setActionMsg("Deleting...");
     try {
-      // prefer axios delete against API
       const possible = [`/api/products/${id}`, `/api/admin/products/${id}`, `/products/${id}`, `/admin/products/${id}`];
       let deleted = false;
-      let lastErr = null;
       for (const ep of possible) {
         try {
           const r = await axios.delete(ep);
@@ -145,28 +166,30 @@ export default function AdminProductList() {
             break;
           }
         } catch (err) {
-          lastErr = err;
+          console.warn("[AdminProductList] delete attempt failed for", ep, err && err.message);
         }
       }
       if (!deleted) {
-        // fallback to fetch delete
         const resp = await fetch(`/api/products/${id}`, { method: "DELETE", credentials: "include" });
         if (!resp.ok) throw new Error(`Delete failed ${resp.status}`);
       }
       setActionMsg("Deleted");
       setTimeout(() => setActionMsg(""), 1200);
+      console.log("[AdminProductList] Deleted product", id);
     } catch (err) {
       setActionMsg(`Delete failed: ${err?.message || "unknown"}`);
       setProducts(prev);
       setTimeout(() => setActionMsg(""), 2500);
+      console.error("[AdminProductList] delete error:", err);
     }
   }
 
+  // Render states
   if (loading) {
     return (
       <div style={{ padding: 20 }}>
         <h2>Admin — Products</h2>
-        <p>Loading products… (see console for details)</p>
+        <p>Loading products… (open DevTools → Console to see [AdminProductList] logs)</p>
       </div>
     );
   }
@@ -243,7 +266,19 @@ export default function AdminProductList() {
                         onError={(e) => (e.currentTarget.style.display = "none")}
                       />
                     ) : (
-                      <div style={{ width: 64, height: 64, borderRadius: 6, background: "#fafafa", display: "flex", alignItems: "center", justifyContent: "center", color: "#999", fontSize: 12 }}>
+                      <div
+                        style={{
+                          width: 64,
+                          height: 64,
+                          borderRadius: 6,
+                          background: "#fafafa",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          color: "#999",
+                          fontSize: 12,
+                        }}
+                      >
                         no image
                       </div>
                     )}
@@ -261,7 +296,9 @@ export default function AdminProductList() {
                       <Link to={`/admin/products/${id}`}>
                         <button style={{ padding: "6px 10px" }}>Edit</button>
                       </Link>
-                      <button onClick={() => handleDelete(id)} style={{ padding: "6px 10px" }}>Delete</button>
+                      <button onClick={() => handleDelete(id)} style={{ padding: "6px 10px" }}>
+                        Delete
+                      </button>
                       <button
                         onClick={() => {
                           const slug = p.slug || p._id || p.id;
