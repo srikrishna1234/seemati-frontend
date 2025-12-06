@@ -29,14 +29,16 @@ const app = express();
 
 // --- Helper: read allowed origins from env (either ALLOWED_ORIGINS or CORS_ORIGINS) ---
 const rawOrigins =
-  process.env.ALLOWED_ORIGINS?.trim() || process.env.CORS_ORIGINS?.trim() || "";
+  (process.env.ALLOWED_ORIGINS && process.env.ALLOWED_ORIGINS.trim()) ||
+  (process.env.CORS_ORIGINS && process.env.CORS_ORIGINS.trim()) ||
+  "";
 // split on commas and trim
 let allowedOrigins = rawOrigins
   .split(",")
-  .map((s) => s.trim())
+  .map((s) => (s || "").trim())
   .filter(Boolean);
 
-// Normalize entries: if user added trailing slashes or spaces, trim
+// Normalize entries: trim trailing slash
 allowedOrigins = allowedOrigins.map((o) => o.replace(/\/$/, ""));
 
 // Always allow localhost for local dev (if not already present)
@@ -46,12 +48,12 @@ if (!allowedOrigins.includes("http://localhost:3000")) {
 
 // Convert entries that look like /regex/ into RegExp objects
 const allowedMatchers = allowedOrigins.map((entry) => {
+  if (!entry) return entry;
   // simple heuristic: an entry starting and ending with '/' is a regex
   if (entry.length > 2 && entry.startsWith("/") && entry.endsWith("/")) {
     try {
       return new RegExp(entry.slice(1, -1));
     } catch (e) {
-      // ignore invalid regex, fall back to string
       return entry;
     }
   }
@@ -111,12 +113,13 @@ const tryMount = (relativePath, mountPath = "/") => {
   if (fs.existsSync(target) || fs.existsSync(`${target}.js`) || fs.existsSync(`${target}.cjs`)) {
     try {
       const router = require(target);
-      // If the module exports an express app, mount it; if it exports a router, use it.
+      // If the module exports an express router (a function), mount it
       if (typeof router === "function") {
-        // If it's an express app instance with app.listen, we mount router as middleware if it exports .router
         app.use(mountPath, router);
         console.log(`[BOOT] Mounted ${relativePath} at ${mountPath}`);
         return true;
+      } else {
+        console.warn(`[BOOT] Module at ${relativePath} did not export a router function`);
       }
     } catch (err) {
       console.warn(`[BOOT] Failed to mount ${relativePath}:`, err && err.message);
@@ -137,6 +140,34 @@ const tried = [
   tryMount("app"), // app.js (if your app exports a router)
 ].some(Boolean);
 
+/* === Explicit mount for auth router (ensure auth endpoints exist) === */
+try {
+  const authPath = path.join(__dirname, "src", "routes", "auth.cjs");
+  if (fs.existsSync(authPath)) {
+    const authRouter = require(authPath);
+    if (authRouter && typeof authRouter === "function") {
+      app.use("/api/auth", authRouter);
+      console.log("[BOOT] Mounted auth router at /api/auth from src/routes/auth.cjs");
+    } else {
+      console.warn("[BOOT] src/routes/auth.cjs did not export a router function");
+    }
+  } else {
+    // Also try legacy backend/routes/auth.js location
+    const alt = path.join(__dirname, "routes", "auth.js");
+    if (fs.existsSync(alt)) {
+      const authRouter2 = require(alt);
+      if (authRouter2 && typeof authRouter2 === "function") {
+        app.use("/api/auth", authRouter2);
+        console.log("[BOOT] Mounted auth router at /api/auth from routes/auth.js");
+      } else {
+        console.warn("[BOOT] routes/auth.js did not export a router function");
+      }
+    }
+  }
+} catch (err) {
+  console.warn("[BOOT] Failed to mount explicit auth router:", err && err.message);
+}
+
 // If no existing routes were mounted, create a minimal health + placeholder routes
 if (!tried) {
   console.log("[BOOT] No existing routes found (routes/, src/routes/, server, etc.). Creating placeholder routes.");
@@ -145,10 +176,8 @@ if (!tried) {
     res.json({ ok: true, env: process.env.NODE_ENV || "development" });
   });
 
-  // minimal products route for testing (optional). Remove if your real routes exist.
+  // minimal products route for testing (optional). Remove if your real backend provides the route.
   app.get("/api/products", (req, res) => {
-    // Send empty array or a simple sample. If your real backend provides this route,
-    // the tryMount above should have mounted it and this will be unused.
     res.json({
       success: true,
       products: [
