@@ -1,77 +1,38 @@
 // src/admin/AdminPage.jsx
-// Full replacement: AdminPage wrapper that ensures /admin/login renders the OtpLogin page.
-// Keeps current admin header/footer and renders children via Outlet for other admin routes.
-
-import React, { useEffect } from "react";
-import { Link, Outlet, useLocation } from "react-router-dom";
-import OtpLogin from "../pages/OtpLogin";
-
-/**
- * AdminPage
- * - Renders common admin shell (header/nav/footer)
- * - If location is exactly '/admin/login' it renders OtpLogin (ensures form always appears)
- * - Otherwise renders nested admin routes via <Outlet />
- */
+import React from "react";
+import { Routes, Route, Link } from "react-router-dom";
+import AdminProductList from "./AdminProductList";
+import AdminProductEdit from "./AdminProductEdit";
+import ProductForm from "./ProductForm.jsx"; // adjust path/name if your add/edit form filename differs
+import AdminAnnouncements from "./AdminAnnouncements";
 
 export default function AdminPage() {
-  const loc = useLocation();
+  console.debug("[AdminPage] mounted, location:", window.location.pathname);
 
-  useEffect(() => {
-    console.debug("[AdminPage] mounted, location:", loc.pathname);
-    return () => console.debug("[AdminPage] unmounted");
-  }, [loc.pathname]);
-
-  // When user is visiting the admin login path, render the OtpLogin page directly.
-  if (loc.pathname === "/admin/login" || loc.pathname === "/admin/login/") {
-    return (
-      <div style={{ padding: 20 }}>
-        {/* Minimal header to match admin shell */}
-        <div style={{ marginBottom: 18 }}>
-          <Link to="/" style={{ textDecoration: "none", color: "#222", fontWeight: "600" }}>
-            ← Back to site
-          </Link>
-        </div>
-
-        <h1 style={{ marginBottom: 6 }}>Admin</h1>
-        <div style={{ color: "#666", marginBottom: 18 }}>Manage products and site content</div>
-
-        {/* The actual login form */}
-        <div>
-          <OtpLogin />
-        </div>
-
-        {/* small footer spacer */}
-        <div style={{ marginTop: 30, color: "#999", fontSize: 13 }}>
-          If you have issues logging in, check server logs or contact the developer.
-        </div>
-      </div>
-    );
-  }
-
-  // Default admin shell for other routes (products, announcements, etc.)
   return (
-    <div style={{ padding: 12 }}>
-      <header style={{ marginBottom: 12, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div>
+    <div>
+      <header style={{ padding: 20, borderBottom: "1px solid #eee" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <h1 style={{ margin: 0 }}>Admin</h1>
-          <div style={{ color: "#666", fontSize: 14 }}>Manage products and site content</div>
+          <nav>
+            <Link to="/admin/products" style={{ marginRight: 12 }}>Products</Link>
+            <Link to="/admin/announcements" style={{ marginRight: 12 }}>Announcements</Link>
+            <Link to="/">Back to site</Link>
+          </nav>
         </div>
-
-        <nav style={{ display: "flex", gap: 12 }}>
-          <Link to="/">Back to site</Link>
-          <Link to="/admin/products">Products</Link>
-          <Link to="/admin/announcements">Announcements</Link>
-        </nav>
       </header>
 
-      <main style={{ display: "block" }}>
-        {/* Outlet will render nested admin routes (product list, edit forms, etc.) */}
-        <Outlet />
+      <main style={{ padding: 20 }}>
+        <Routes>
+          {/* Explicitly mount the debug-ready AdminProductList */}
+          <Route path="products" element={<AdminProductList />} />
+          <Route path="products/new" element={<ProductForm />} />
+          <Route path="products/:id" element={<AdminProductEdit />} />
+          <Route path="announcements" element={<AdminAnnouncements />} />
+          {/* Fallback — render product list for any other admin path */}
+          <Route path="*" element={<AdminProductList />} />
+        </Routes>
       </main>
-
-      <footer style={{ marginTop: 30, color: "#777", fontSize: 13 }}>
-        <div>Seemati Admin</div>
-      </footer>
     </div>
   );
 }
