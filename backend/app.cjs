@@ -19,18 +19,29 @@ const PORT = process.env.PORT || 4000;
 const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI;
 const RAW_FRONTEND = process.env.FRONTEND_URL || process.env.FRONTEND_ORIGIN || process.env.FRONTEND_URLS || process.env.ALLOWED_ORIGINS || 'https://seemati.in';
 const ALLOW_CREDENTIALS = (process.env.CORS_ALLOW_CREDENTIALS || 'true').toString().toLowerCase() === 'true';
+const NODE_ENV = process.env.NODE_ENV || 'development';
 
 // ---- Basic middleware
 app.use(helmet());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
-app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
+app.use(morgan(NODE_ENV === 'production' ? 'combined' : 'dev'));
+
+// ---- Request header logger (non-production only to avoid noisy logs)
+if (NODE_ENV !== 'production') {
+  app.use((req, res, next) => {
+    const debugAll = String(process.env.DEBUG_HEADERS || '').toLowerCase() === 'true';
+    if (debugAll) {
+      console.log('Incoming request:', req.method, req.originalUrl, 'headers=', req.headers);
+    } else {
+      console.log('Incoming request:', req.method, req.originalUrl, 'origin=', req.get('origin'), 'referer=', req.get('referer'));
+    }
+    next();
+  });
+}
 
 // ---- CORS config (safe, non-throwing)
-// Supports comma-separated list of allowed origins in RAW_FRONTEND.
-// If RAW_FRONTEND is exactly "*", allow all origins.
-// Also allow any vercel preview domain (*.vercel.app).
 (function setupCors() {
   const raw = String(RAW_FRONTEND || '').trim();
   const allowList = raw === '' ? [] : raw.split(',').map(s => s.trim()).filter(Boolean);
@@ -38,39 +49,15 @@ app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
   const corsOptions = {
     origin: function (origin, callback) {
-      // allow requests with no origin (like curl or server-to-server)
-      if (!origin) {
-        return callback(null, true);
-      }
+      if (!origin) return callback(null, true);
+      if (allowAll) return callback(null, true);
 
-      // allow everything if configured to allow all
-      if (allowAll) {
-        return callback(null, true);
-      }
-
-      // normalize origin to its origin (scheme+host+port)
       let originToCheck = origin;
-      try {
-        originToCheck = new URL(origin).origin;
-      } catch (e) {
-        // if URL parsing fails, fall back to raw origin string
-        originToCheck = origin;
-      }
+      try { originToCheck = new URL(origin).origin; } catch (e) { originToCheck = origin; }
 
-      // allow if exact match with configured allowList
-      if (allowList.includes(originToCheck) || allowList.includes(origin)) {
-        return callback(null, true);
-      }
+      if (allowList.includes(originToCheck) || allowList.includes(origin)) return callback(null, true);
+      if (/\.vercel\.app$/i.test(originToCheck) || /\.vercel\.app$/i.test(origin)) return callback(null, true);
 
-      // allow vercel preview domains (e.g., *.vercel.app)
-      if (/\.vercel\.app$/i.test(originToCheck) || /\.vercel\.app$/i.test(origin)) {
-        return callback(null, true);
-      }
-
-      // If you have other preview host patterns, add them here, e.g. netlify, now.sh etc.
-      // Example: if (/\.netlify\.app$/i.test(originToCheck)) return callback(null, true);
-
-      // Not allowed — return false (do not throw)
       console.warn(`CORS blocked origin: ${origin}`);
       return callback(null, false);
     },
@@ -85,25 +72,16 @@ app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 })();
 
 // ---- Fallback middleware: ensure CORS headers are present even behind proxies
-// This middleware echoes and sets Access-Control headers in case an upstream proxy or route handler
-// fails to include them (helps with previews e.g. *.vercel.app).
 app.use((req, res, next) => {
   try {
     const origin = req.get('origin');
     const raw = String(RAW_FRONTEND || '').trim();
     const allowList = raw === '' ? [] : raw.split(',').map(s => s.trim()).filter(Boolean);
 
-    // If no origin (server-to-server), skip setting Access-Control-Allow-Origin
     if (origin) {
-      // prefer normalized origin string
       let originToCheck;
-      try {
-        originToCheck = new URL(origin).origin;
-      } catch (e) {
-        originToCheck = origin;
-      }
+      try { originToCheck = new URL(origin).origin; } catch (e) { originToCheck = origin; }
 
-      // allow vercel preview domains
       if (/\.vercel\.app$/i.test(originToCheck) || /\.vercel\.app$/i.test(origin)) {
         res.setHeader('Access-Control-Allow-Origin', origin);
         res.setHeader('Vary', 'Origin');
@@ -116,7 +94,6 @@ app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Credentials', String(!!ALLOW_CREDENTIALS));
     res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,Accept,Origin');
-    // Some proxies remove Vary so ensure it's set when needed:
     const vary = res.getHeader('Vary');
     if (!vary) res.setHeader('Vary', 'Origin');
   } catch (e) {
@@ -124,7 +101,6 @@ app.use((req, res, next) => {
   }
 
   if (req.method === 'OPTIONS') {
-    // quick response for preflight
     return res.status(204).send('');
   }
   next();
@@ -134,6 +110,38 @@ app.use((req, res, next) => {
 app.get('/_health', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
 });
+
+// -----------------------------
+// Debug echo endpoints (always present at app level)
+// Useful to confirm what the frontend / browser is sending and ensure this app version is deployed.
+// -----------------------------
+app.get('/_debug/echo', (req, res) => {
+  const payload = {
+    ok: true,
+    route: '/_debug/echo (GET)',
+    headers: {
+      origin: req.get('origin'),
+      referer: req.get('referer'),
+      'user-agent': req.get('user-agent')
+    }
+  };
+  return res.json(payload);
+});
+
+app.post('/_debug/echo', (req, res) => {
+  const payload = {
+    ok: true,
+    route: '/_debug/echo (POST)',
+    headers: {
+      origin: req.get('origin'),
+      referer: req.get('referer'),
+      'user-agent': req.get('user-agent')
+    },
+    body: req.body
+  };
+  return res.json(payload);
+});
+// -----------------------------
 
 // ---- MongoDB connection
 (async function connectDB() {
@@ -233,7 +241,7 @@ app.get('/_health', (req, res) => {
 })();
 
 // ---- Static uploads only for local dev (not for production)
-if (process.env.NODE_ENV !== 'production') {
+if (NODE_ENV !== 'production') {
   const uploadsDir = path.join(__dirname, 'uploads');
   if (fs.existsSync(uploadsDir)) {
     app.use('/uploads', express.static(uploadsDir));
@@ -247,12 +255,23 @@ if (process.env.NODE_ENV !== 'production') {
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err && err.stack ? err.stack : err);
   if (res.headersSent) return next(err);
+  try {
+    const origin = req.get('origin');
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Credentials', String(!!ALLOW_CREDENTIALS));
+      res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,Accept,Origin');
+      const vary = res.getHeader('Vary');
+      if (!vary) res.setHeader('Vary', 'Origin');
+    }
+  } catch (e) { /* ignore */ }
+
   res.status(500).json({ error: err && err.message ? err.message : String(err) });
 });
 
 // ---- Start server
 app.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT} — env ${process.env.NODE_ENV || 'development'}`);
+  console.log(`Server listening on port ${PORT} — env ${NODE_ENV}`);
 });
 
 module.exports = app;
