@@ -1,243 +1,183 @@
 // backend/app.cjs
-'use strict';
+"use strict";
 
-const express = require('express');
-const path = require('path');
-const fs = require('fs');
-const mongoose = require('mongoose');
-const helmet = require('helmet');
-const cookieParser = require('cookie-parser');
-const morgan = require('morgan');
-const cors = require('cors');
+/**
+ * Robust Express app entry (CommonJS).
+ * - Reads ALLOWED_ORIGINS or CORS_ORIGINS env var (comma-separated).
+ * - Allows *.vercel.app previews automatically.
+ * - Sets credentials: true for cookie auth (seemati_auth).
+ *
+ * Drop this file into backend/app.cjs (it is required by your bootstrap loader).
+ */
 
-require('dotenv').config();
+const fs = require("fs");
+const path = require("path");
+const http = require("http");
+const express = require("express");
+const cookieParser = require("cookie-parser");
+const cors = require("cors");
+
+// load .env if present (optional)
+try {
+  // eslint-disable-next-line global-require
+  require("dotenv").config();
+} catch (e) {
+  // dotenv may not be installed — ignore
+}
 
 const app = express();
 
-// Configuration / env
-const PORT = process.env.PORT || 4000;
-const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI;
-const RAW_FRONTEND = process.env.FRONTEND_URL || process.env.FRONTEND_ORIGIN || process.env.FRONTEND_URLS || process.env.ALLOWED_ORIGINS || 'https://seemati.in';
-const ALLOW_CREDENTIALS = (process.env.CORS_ALLOW_CREDENTIALS || 'true').toString().toLowerCase() === 'true';
-const NODE_ENV = process.env.NODE_ENV || 'development';
+// --- Helper: read allowed origins from env (either ALLOWED_ORIGINS or CORS_ORIGINS) ---
+const rawOrigins =
+  process.env.ALLOWED_ORIGINS?.trim() || process.env.CORS_ORIGINS?.trim() || "";
+// split on commas and trim
+let allowedOrigins = rawOrigins
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 
-// Basic middleware
-app.use(helmet());
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use(cookieParser());
-app.use(morgan(NODE_ENV === 'production' ? 'combined' : 'dev'));
+// Normalize entries: if user added trailing slashes or spaces, trim
+allowedOrigins = allowedOrigins.map((o) => o.replace(/\/$/, ""));
 
-// Lightweight request logging (non-verbose)
-if (NODE_ENV !== 'production' && String(process.env.DEBUG_HEADERS || '').toLowerCase() === 'true') {
-  app.use((req, res, next) => {
-    console.log('Incoming request:', req.method, req.originalUrl, 'origin=', req.get('origin'));
-    next();
-  });
+// Always allow localhost for local dev (if not already present)
+if (!allowedOrigins.includes("http://localhost:3000")) {
+  allowedOrigins.push("http://localhost:3000");
 }
 
-// ---- CORS config (safe, non-throwing)
-(function setupCors() {
-  const raw = String(RAW_FRONTEND || '').trim();
-  const allowList = raw === '' ? [] : raw.split(',').map(s => s.trim()).filter(Boolean);
-  const allowAll = allowList.length === 1 && allowList[0] === '*';
-
-  const corsOptions = {
-    origin: function (origin, callback) {
-      // allow requests with no origin (like curl, mobile apps, server-to-server)
-      if (!origin) {
-        return callback(null, true);
-      }
-
-      if (allowAll) return callback(null, true);
-
-      let originToCheck = origin;
-      try { originToCheck = new URL(origin).origin; } catch (e) { originToCheck = origin; }
-
-      if (allowList.includes(originToCheck) || allowList.includes(origin)) {
-        return callback(null, true);
-      }
-
-      // allow vercel preview domains (e.g., *.vercel.app)
-      if (/\.vercel\.app$/i.test(originToCheck) || /\.vercel\.app$/i.test(origin)) {
-        return callback(null, true);
-      }
-
-      console.warn(`CORS blocked origin: ${origin}`);
-      return callback(null, false);
-    },
-    credentials: ALLOW_CREDENTIALS,
-    optionsSuccessStatus: 200,
-    exposedHeaders: ['set-cookie']
-  };
-
-  app.use(cors(corsOptions));
-  app.options('*', cors(corsOptions));
-  console.log('CORS configured — allowed origins:', allowList.length ? allowList : '[none specified — default]');
-})();
-
-// ---- Fallback middleware: ensure CORS headers are present even behind proxies
-app.use((req, res, next) => {
-  try {
-    const origin = req.get('origin');
-    const raw = String(RAW_FRONTEND || '').trim();
-    const allowList = raw === '' ? [] : raw.split(',').map(s => s.trim()).filter(Boolean);
-
-    if (origin) {
-      let originToCheck;
-      try { originToCheck = new URL(origin).origin; } catch (e) { originToCheck = origin; }
-
-      if (/\.vercel\.app$/i.test(originToCheck) || /\.vercel\.app$/i.test(origin)) {
-        res.setHeader('Access-Control-Allow-Origin', origin);
-        res.setHeader('Vary', 'Origin');
-      } else if (allowList.includes(originToCheck) || allowList.includes(origin)) {
-        res.setHeader('Access-Control-Allow-Origin', originToCheck);
-        res.setHeader('Vary', 'Origin');
-      }
+// Convert entries that look like /regex/ into RegExp objects
+const allowedMatchers = allowedOrigins.map((entry) => {
+  // simple heuristic: an entry starting and ending with '/' is a regex
+  if (entry.length > 2 && entry.startsWith("/") && entry.endsWith("/")) {
+    try {
+      return new RegExp(entry.slice(1, -1));
+    } catch (e) {
+      // ignore invalid regex, fall back to string
+      return entry;
     }
-
-    res.setHeader('Access-Control-Allow-Credentials', String(!!ALLOW_CREDENTIALS));
-    res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,Accept,Origin');
-    const vary = res.getHeader('Vary');
-    if (!vary) res.setHeader('Vary', 'Origin');
-  } catch (e) {
-    console.warn('CORS fallback middleware failed:', String(e));
   }
+  return entry;
+});
 
-  if (req.method === 'OPTIONS') {
-    return res.status(204).send('');
-  }
+// Always allow vercel preview apps (e.g. something.vercel.app)
+const allowVercelPreview = (origin) => /\.vercel\.app$/.test(origin);
+
+// --- CORS middleware ---
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // allow non-browser requests (Postman, server-to-server) with no origin
+      if (!origin) return callback(null, true);
+
+      // If origin exactly matches one of the allowed strings
+      for (const m of allowedMatchers) {
+        if (typeof m === "string") {
+          if (m === origin) return callback(null, true);
+        } else if (m instanceof RegExp) {
+          if (m.test(origin)) return callback(null, true);
+        }
+      }
+
+      // allow Vercel preview domains automatically
+      if (allowVercelPreview(origin)) return callback(null, true);
+
+      // not allowed
+      console.warn(`[CORS] Blocked origin: ${origin}`);
+      return callback(new Error("Not allowed by CORS"));
+    },
+    credentials: true, // important: allow cookies such as seemati_auth
+    exposedHeaders: ["set-cookie"],
+    optionsSuccessStatus: 204,
+  })
+);
+
+// Standard middleware
+app.use(express.json({ limit: "5mb" }));
+app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
+
+// Example: enrich response header with the allowed origin when request passes CORS check.
+// Note: the cors middleware already sets Access-Control-Allow-Origin to the request origin value
+// when the origin is allowed. This additional middleware is only for explicit logging.
+app.use((req, res, next) => {
+  // log the origin for debugging (comment out in production if noisy)
+  // console.debug(`[CORS] incoming origin: ${req.headers.origin || "(none)"} path: ${req.path}`);
   next();
 });
 
-// Health endpoint
-app.get('/_health', (req, res) => {
-  res.json({ ok: true, time: new Date().toISOString() });
-});
-
-// ---- MongoDB connection
-(async function connectDB() {
-  if (!MONGO_URI) {
-    console.error('MONGO_URI not set. Exiting.');
-    process.exit(1);
-  }
-  try {
-    await mongoose.connect(MONGO_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true
-    });
-    console.log('MongoDB connected');
-  } catch (err) {
-    console.error('MongoDB connection error:', err);
-    process.exit(1);
-  }
-})();
-
-// ---- Mount API routes (safe / conditional mounting)
-(() => {
-  try {
-    const uploadRoutesPath = path.join(__dirname, 'src', 'routes', 'uploadRoutes.cjs');
-    const productRoutesPath = path.join(__dirname, 'src', 'routes', 'productRoutes.cjs');
-
-    if (fs.existsSync(uploadRoutesPath)) {
-      const uploadRoutes = require('./src/routes/uploadRoutes.cjs');
-      app.use('/api/products', uploadRoutes);
-      app.use('/admin-api/products', uploadRoutes);
-      console.log('Mounted uploadRoutes at /api/products and /admin-api/products');
-    } else {
-      console.log('uploadRoutes file not found — skipping uploadRoutes mount.');
-    }
-
-    if (fs.existsSync(productRoutesPath)) {
-      const productRoutes = require('./src/routes/productRoutes.cjs');
-      app.use('/api/products', productRoutes);
-      app.use('/admin-api/products', productRoutes);
-      console.log('Mounted productRoutes at /api/products and /admin-api/products');
-    } else {
-      console.log('productRoutes file not found — skipping productRoutes mount.');
-    }
-  } catch (err) {
-    console.warn('Failed to mount product/upload routes:', String(err));
-  }
-})();
-
-// Mount auth routes if present
-(() => {
-  try {
-    const authRoutesPath = path.join(__dirname, 'src', 'routes', 'authRoutes.cjs');
-    if (fs.existsSync(authRoutesPath)) {
-      const authRoutes = require('./src/routes/authRoutes.cjs');
-      app.use('/api/auth', authRoutes);
-      console.log('Mounted authRoutes');
-    } else {
-      console.log('authRoutes file not present — skipping mount.');
-    }
-  } catch (err) {
-    console.warn('authRoutes found but failed to mount:', String(err));
-  }
-})();
-
-// Sitemap mounting (conditional) - non-fatal errors logged
-(() => {
-  try {
-    const sitemapCjs = path.join(__dirname, 'src', 'routes', 'sitemap.cjs');
-    const sitemapJs = path.join(__dirname, 'src', 'routes', 'sitemap.js');
-    const publicSitemap = path.join(__dirname, '..', 'public', 'sitemap.xml');
-
-    if (fs.existsSync(sitemapCjs)) {
-      const sitemapRouter = require('./src/routes/sitemap.cjs');
-      app.use('/', sitemapRouter);
-      console.log('Mounted sitemap router from src/routes/sitemap.cjs');
-    } else if (fs.existsSync(sitemapJs)) {
-      const sitemapRouter = require('./src/routes/sitemap.js');
-      app.use('/', sitemapRouter);
-      console.log('Mounted sitemap router from src/routes/sitemap.js');
-    } else if (fs.existsSync(publicSitemap)) {
-      if (process.env.SERVE_STATIC_SITEMAP === 'true') {
-        app.get('/sitemap.xml', (req, res) => {
-          res.sendFile(publicSitemap);
-        });
-        console.log('Serving public/sitemap.xml at /sitemap.xml');
+// --- Try to mount your existing routes if present ---
+// The code will attempt to mount common route entry points if they exist so you can drop this file in safely.
+const tryMount = (relativePath, mountPath = "/") => {
+  const target = path.join(__dirname, relativePath);
+  if (fs.existsSync(target) || fs.existsSync(`${target}.js`) || fs.existsSync(`${target}.cjs`)) {
+    try {
+      const router = require(target);
+      // If the module exports an express app, mount it; if it exports a router, use it.
+      if (typeof router === "function") {
+        // If it's an express app instance with app.listen, we mount router as middleware if it exports .router
+        app.use(mountPath, router);
+        console.log(`[BOOT] Mounted ${relativePath} at ${mountPath}`);
+        return true;
       }
-    } else {
-      // no sitemap present — ok
+    } catch (err) {
+      console.warn(`[BOOT] Failed to mount ${relativePath}:`, err && err.message);
+      return false;
     }
-  } catch (err) {
-    console.warn('Failed to mount sitemap route (non-fatal):', String(err));
   }
-})();
+  return false;
+};
 
-// Static uploads only for local dev
-if (NODE_ENV !== 'production') {
-  const uploadsDir = path.join(__dirname, 'uploads');
-  if (fs.existsSync(uploadsDir)) {
-    app.use('/uploads', express.static(uploadsDir));
-    console.log('Static /uploads mounted for local dev only');
-  }
+// Try a few common locations where routes might live in your project
+const tried = [
+  tryMount("routes"), // backend/routes/index.js
+  tryMount("routes/index.js"),
+  tryMount("src/routes"),
+  tryMount("src/routes/index.js"),
+  tryMount("api"), // legacy
+  tryMount("server"), // server.js
+  tryMount("app"), // app.js (if your app exports a router)
+].some(Boolean);
+
+// If no existing routes were mounted, create a minimal health + placeholder routes
+if (!tried) {
+  console.log("[BOOT] No existing routes found (routes/, src/routes/, server, etc.). Creating placeholder routes.");
+
+  app.get("/api/health", (req, res) => {
+    res.json({ ok: true, env: process.env.NODE_ENV || "development" });
+  });
+
+  // minimal products route for testing (optional). Remove if your real routes exist.
+  app.get("/api/products", (req, res) => {
+    // Send empty array or a simple sample. If your real backend provides this route,
+    // the tryMount above should have mounted it and this will be unused.
+    res.json({
+      success: true,
+      products: [
+        // sample product for quick verification; remove in production
+        // { _id: "test-1", title: "SAMPLE", sku: "SAMPLE-001", price: 10 }
+      ],
+    });
+  });
 }
 
-// Error handling
+// --- Error handler for CORS blocking (useful in logs) ---
 app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err && err.stack ? err.stack : err);
-  if (res.headersSent) return next(err);
-  try {
-    const origin = req.get('origin');
-    if (origin) {
-      res.setHeader('Access-Control-Allow-Credentials', String(!!ALLOW_CREDENTIALS));
-      res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,Accept,Origin');
-      const vary = res.getHeader('Vary');
-      if (!vary) res.setHeader('Vary', 'Origin');
-    }
-  } catch (e) { /* ignore */ }
-
-  res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  if (err && err.message && /CORS|Not allowed/.test(err.message)) {
+    console.warn(`[ERROR] CORS error for origin ${req.headers.origin}:`, err.message);
+    res.status(403).json({ success: false, error: "CORS blocked: origin not allowed" });
+    return;
+  }
+  // fallback to next error handler
+  next(err);
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT} — env ${NODE_ENV}`);
+// --- Start server ---
+const port = process.env.PORT || 4000;
+const server = http.createServer(app);
+
+server.listen(port, () => {
+  console.log(`[BOOT] Express server listening on port ${port} (PID: ${process.pid})`);
+  console.log(`[BOOT] Allowed origins: ${JSON.stringify(allowedOrigins)}`);
 });
 
-module.exports = app;
+// Export app/server for tests or other tooling if needed
+module.exports = { app, server };
