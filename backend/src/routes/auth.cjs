@@ -75,4 +75,11 @@ router.post("/send-otp", async (req, res) => {
   }
 });
 
-module.exports = router;
+router.get('/health', (req, res) => {
+  res.status(200).json({
+    ok: true,
+    service: 'auth',
+    env: process.env.NODE_ENV || 'unknown',
+    time: new Date().toISOString()
+  });
+});module.exports = router;
