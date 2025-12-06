@@ -83,7 +83,53 @@ app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
   app.options('*', cors(corsOptions));
   console.log('CORS configured — allowed origins (from env):', allowList.length ? allowList : '[none specified — default single origin used]');
 })();
- 
+
+// ---- Fallback middleware: ensure CORS headers are present even behind proxies
+// This middleware echoes and sets Access-Control headers in case an upstream proxy or route handler
+// fails to include them (helps with previews e.g. *.vercel.app).
+app.use((req, res, next) => {
+  try {
+    const origin = req.get('origin');
+    const raw = String(RAW_FRONTEND || '').trim();
+    const allowList = raw === '' ? [] : raw.split(',').map(s => s.trim()).filter(Boolean);
+
+    // If no origin (server-to-server), skip setting Access-Control-Allow-Origin
+    if (origin) {
+      // prefer normalized origin string
+      let originToCheck;
+      try {
+        originToCheck = new URL(origin).origin;
+      } catch (e) {
+        originToCheck = origin;
+      }
+
+      // allow vercel preview domains
+      if (/\.vercel\.app$/i.test(originToCheck) || /\.vercel\.app$/i.test(origin)) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Vary', 'Origin');
+      } else if (allowList.includes(originToCheck) || allowList.includes(origin)) {
+        res.setHeader('Access-Control-Allow-Origin', originToCheck);
+        res.setHeader('Vary', 'Origin');
+      }
+    }
+
+    res.setHeader('Access-Control-Allow-Credentials', String(!!ALLOW_CREDENTIALS));
+    res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,Accept,Origin');
+    // Some proxies remove Vary so ensure it's set when needed:
+    const vary = res.getHeader('Vary');
+    if (!vary) res.setHeader('Vary', 'Origin');
+  } catch (e) {
+    console.warn('CORS fallback middleware failed:', String(e));
+  }
+
+  if (req.method === 'OPTIONS') {
+    // quick response for preflight
+    return res.status(204).send('');
+  }
+  next();
+});
+
 // Optional: health endpoint
 app.get('/_health', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
