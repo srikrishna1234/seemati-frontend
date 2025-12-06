@@ -1,212 +1,170 @@
 // backend/app.cjs
-"use strict";
+'use strict';
 
 /**
- * Robust Express app entry (CommonJS).
- * - Reads ALLOWED_ORIGINS or CORS_ORIGINS env var (comma-separated).
- * - Allows *.vercel.app previews automatically.
- * - Sets credentials: true for cookie auth (seemati_auth).
+ * Canonical backend/app.cjs
+ * - Connects to MongoDB before mounting routes / starting server
+ * - Mounts src/routes index at /api (so /api/products works)
+ * - Keeps explicit /api/auth mount fallback
+ * - Graceful error handling and helpful logs
  *
- * Drop this file into backend/app.cjs (it is required by your bootstrap loader).
+ * Replace your existing backend/app.cjs with this file.
  */
 
-const fs = require("fs");
-const path = require("path");
-const http = require("http");
-const express = require("express");
-const cookieParser = require("cookie-parser");
-const cors = require("cors");
-
-// load .env if present (optional)
-try {
-  // eslint-disable-next-line global-require
-  require("dotenv").config();
-} catch (e) {
-  // dotenv may not be installed — ignore
-}
+require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
+const express = require('express');
+const cookieParser = require('cookie-parser');
+const cors = require('cors');
+const mongoose = require('mongoose');
 
 const app = express();
 
-// --- Helper: read allowed origins from env (either ALLOWED_ORIGINS or CORS_ORIGINS) ---
-const rawOrigins =
-  (process.env.ALLOWED_ORIGINS && process.env.ALLOWED_ORIGINS.trim()) ||
-  (process.env.CORS_ORIGINS && process.env.CORS_ORIGINS.trim()) ||
-  "";
-// split on commas and trim
-let allowedOrigins = rawOrigins
-  .split(",")
-  .map((s) => (s || "").trim())
-  .filter(Boolean);
+// ---- Middleware ----
+const rawOrigins = (process.env.ALLOWED_ORIGINS || process.env.CORS_ORIGINS || '').trim();
+let allowedOrigins = rawOrigins ? rawOrigins.split(',').map(s => s.trim()).filter(Boolean) : [];
+if (!allowedOrigins.includes('http://localhost:3000')) allowedOrigins.push('http://localhost:3000');
 
-// Normalize entries: trim trailing slash
-allowedOrigins = allowedOrigins.map((o) => o.replace(/\/$/, ""));
-
-// Always allow localhost for local dev (if not already present)
-if (!allowedOrigins.includes("http://localhost:3000")) {
-  allowedOrigins.push("http://localhost:3000");
-}
-
-// Convert entries that look like /regex/ into RegExp objects
-const allowedMatchers = allowedOrigins.map((entry) => {
+const allowedMatchers = allowedOrigins.map(entry => {
   if (!entry) return entry;
-  // simple heuristic: an entry starting and ending with '/' is a regex
-  if (entry.length > 2 && entry.startsWith("/") && entry.endsWith("/")) {
-    try {
-      return new RegExp(entry.slice(1, -1));
-    } catch (e) {
-      return entry;
-    }
+  if (entry.length > 2 && entry.startsWith('/') && entry.endsWith('/')) {
+    try { return new RegExp(entry.slice(1, -1)); } catch(e) { return entry; }
   }
   return entry;
 });
 
-// Always allow vercel preview apps (e.g. something.vercel.app)
-const allowVercelPreview = (origin) => /\.vercel\.app$/.test(origin);
+const allowVercelPreview = origin => /\.vercel\.app$/.test(origin);
 
-// --- CORS middleware ---
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      // allow non-browser requests (Postman, server-to-server) with no origin
-      if (!origin) return callback(null, true);
-
-      // If origin exactly matches one of the allowed strings
-      for (const m of allowedMatchers) {
-        if (typeof m === "string") {
-          if (m === origin) return callback(null, true);
-        } else if (m instanceof RegExp) {
-          if (m.test(origin)) return callback(null, true);
-        }
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true);
+    for (const m of allowedMatchers) {
+      if (typeof m === 'string') {
+        if (m === origin) return cb(null, true);
+      } else if (m instanceof RegExp) {
+        if (m.test(origin)) return cb(null, true);
       }
+    }
+    if (allowVercelPreview(origin)) return cb(null, true);
+    console.warn(`[CORS] Blocked origin: ${origin}`);
+    return cb(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+  exposedHeaders: ['set-cookie'],
+  optionsSuccessStatus: 204
+}));
 
-      // allow Vercel preview domains automatically
-      if (allowVercelPreview(origin)) return callback(null, true);
-
-      // not allowed
-      console.warn(`[CORS] Blocked origin: ${origin}`);
-      return callback(new Error("Not allowed by CORS"));
-    },
-    credentials: true, // important: allow cookies such as seemati_auth
-    exposedHeaders: ["set-cookie"],
-    optionsSuccessStatus: 204,
-  })
-);
-
-// Standard middleware
-app.use(express.json({ limit: "5mb" }));
+app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-// Example: enrich response header with the allowed origin when request passes CORS check.
-// Note: the cors middleware already sets Access-Control-Allow-Origin to the request origin value
-// when the origin is allowed. This additional middleware is only for explicit logging.
-app.use((req, res, next) => {
-  // log the origin for debugging (comment out in production if noisy)
-  // console.debug(`[CORS] incoming origin: ${req.headers.origin || "(none)"} path: ${req.path}`);
-  next();
-});
+// static uploads if present
+const uploadsDir = path.join(__dirname, 'uploads');
+if (fs.existsSync(uploadsDir)) app.use('/uploads', express.static(uploadsDir));
 
-// --- Try to mount your existing routes if present ---
-// The code will attempt to mount common route entry points if they exist so you can drop this file in safely.
-const tryMount = (relativePath, mountPath = "/") => {
-  const target = path.join(__dirname, relativePath);
-  if (fs.existsSync(target) || fs.existsSync(`${target}.js`) || fs.existsSync(`${target}.cjs`)) {
+// ---- Helper: tryRequire multiple candidates ----
+function tryRequire(...candidates) {
+  for (const cand of candidates) {
+    const full = path.join(__dirname, cand);
     try {
-      const router = require(target);
-      // If the module exports an express router (a function), mount it
-      if (typeof router === "function") {
-        app.use(mountPath, router);
-        console.log(`[BOOT] Mounted ${relativePath} at ${mountPath}`);
-        return true;
-      } else {
-        console.warn(`[BOOT] Module at ${relativePath} did not export a router function`);
+      if (fs.existsSync(full) || fs.existsSync(`${full}.js`) || fs.existsSync(`${full}.cjs`) || fs.existsSync(`${full}.mjs`)) {
+        return require(full);
       }
     } catch (err) {
-      console.warn(`[BOOT] Failed to mount ${relativePath}:`, err && err.message);
-      return false;
+      console.warn(`[BOOT] tryRequire failed for ${full}: ${err && err.message}`);
     }
   }
-  return false;
-};
+  return null;
+}
 
-// Try a few common locations where routes might live in your project
-const tried = [
-  tryMount("routes"), // backend/routes/index.js
-  tryMount("routes/index.js"),
-  tryMount("src/routes"),
-  tryMount("src/routes/index.js"),
-  tryMount("api"), // legacy
-  tryMount("server"), // server.js
-  tryMount("app"), // app.js (if your app exports a router)
-].some(Boolean);
-
-/* === Explicit mount for auth router (ensure auth endpoints exist) === */
-try {
-  const authPath = path.join(__dirname, "src", "routes", "auth.cjs");
-  if (fs.existsSync(authPath)) {
-    const authRouter = require(authPath);
-    if (authRouter && typeof authRouter === "function") {
-      app.use("/api/auth", authRouter);
-      console.log("[BOOT] Mounted auth router at /api/auth from src/routes/auth.cjs");
-    } else {
-      console.warn("[BOOT] src/routes/auth.cjs did not export a router function");
-    }
+// ---- Mount routes (called after DB connect) ----
+function mountRoutes() {
+  // mount src/routes index at /api if present
+  const routesIndex = tryRequire('src/routes/index.cjs', 'src/routes/index.js', 'src/routes', 'routes/index.cjs', 'routes/index.js');
+  if (routesIndex) {
+    app.use('/api', routesIndex);
+    console.log('[BOOT] Mounted src/routes (index) at /api');
   } else {
-    // Also try legacy backend/routes/auth.js location
-    const alt = path.join(__dirname, "routes", "auth.js");
-    if (fs.existsSync(alt)) {
-      const authRouter2 = require(alt);
-      if (authRouter2 && typeof authRouter2 === "function") {
-        app.use("/api/auth", authRouter2);
-        console.log("[BOOT] Mounted auth router at /api/auth from routes/auth.js");
-      } else {
-        console.warn("[BOOT] routes/auth.js did not export a router function");
-      }
-    }
+    console.log('[BOOT] No src/routes index found to mount at /api — product routes may be at different paths.');
   }
-} catch (err) {
-  console.warn("[BOOT] Failed to mount explicit auth router:", err && err.message);
-}
 
-// If no existing routes were mounted, create a minimal health + placeholder routes
-if (!tried) {
-  console.log("[BOOT] No existing routes found (routes/, src/routes/, server, etc.). Creating placeholder routes.");
+  // explicit auth mount as fallback
+  const explicitAuth = tryRequire('src/routes/auth.cjs', 'src/routes/auth.js', 'routes/auth.cjs', 'routes/auth.js', 'src/routes/authRoutes.cjs', 'src/routes/authRoutes.js');
+  if (explicitAuth) {
+    app.use('/api/auth', explicitAuth);
+    console.log('[BOOT] Mounted explicit auth router at /api/auth');
+  }
 
-  app.get("/api/health", (req, res) => {
-    res.json({ ok: true, env: process.env.NODE_ENV || "development" });
+  // minimal /api/health if nothing else present (safe fallback)
+  app.get('/api/health', (req, res) => {
+    res.json({ ok: true, env: process.env.NODE_ENV || 'development', time: new Date().toISOString() });
   });
 
-  // minimal products route for testing (optional). Remove if your real backend provides the route.
-  app.get("/api/products", (req, res) => {
-    res.json({
-      success: true,
-      products: [
-        // sample product for quick verification; remove in production
-        // { _id: "test-1", title: "SAMPLE", sku: "SAMPLE-001", price: 10 }
-      ],
-    });
+  // 404 handler
+  app.use((req, res, next) => {
+    res.status(404).send(`Cannot ${req.method} ${req.originalUrl}`);
+  });
+
+  // error handler
+  app.use((err, req, res, next) => {
+    if (err && err.message && /CORS|Not allowed/.test(err.message)) {
+      console.warn(`[ERROR] CORS error for origin ${req.headers.origin}: ${err.message}`);
+      return res.status(403).json({ success: false, error: 'CORS blocked: origin not allowed' });
+    }
+    console.error(err && err.stack ? err.stack : err);
+    const status = err && err.status ? err.status : 500;
+    res.status(status).json({ error: err && err.name ? err.name : 'ServerError', message: err && err.message ? err.message : 'Internal server error' });
   });
 }
 
-// --- Error handler for CORS blocking (useful in logs) ---
-app.use((err, req, res, next) => {
-  if (err && err.message && /CORS|Not allowed/.test(err.message)) {
-    console.warn(`[ERROR] CORS error for origin ${req.headers.origin}:`, err.message);
-    res.status(403).json({ success: false, error: "CORS blocked: origin not allowed" });
+// ---- Connect to MongoDB then start server ----
+const MONGO = process.env.MONGO_URI || process.env.MONGODB_URI || process.env.DATABASE_URL || process.env.MONGO;
+const PORT = process.env.PORT || process.env.APP_PORT || 4000;
+
+async function start() {
+  if (!MONGO) {
+    console.warn('[BOOT] No MONGO URI found in environment. Routes will still mount but DB queries will fail.');
+    // still mount so auth health works
+    mountRoutes();
+    app.listen(PORT, () => console.log(`Server listening on ${PORT} (no DB configured)`));
     return;
   }
-  // fallback to next error handler
-  next(err);
-});
 
-// --- Start server ---
-const port = process.env.PORT || 4000;
-const server = http.createServer(app);
+  // mongoose options tuned for reliability
+  const opts = {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+    serverSelectionTimeoutMS: 10000,
+    socketTimeoutMS: 45000
+  };
 
-server.listen(port, () => {
-  console.log(`[BOOT] Express server listening on port ${port} (PID: ${process.pid})`);
-  console.log(`[BOOT] Allowed origins: ${JSON.stringify(allowedOrigins)}`);
-});
+  mongoose.set('strictQuery', false);
 
-// Export app/server for tests or other tooling if needed
-module.exports = { app, server };
+  try {
+    console.log('[BOOT] Connecting to MongoDB...');
+    await mongoose.connect(MONGO, opts);
+    console.log('[BOOT] MongoDB connected');
+  } catch (err) {
+    console.error('[BOOT] MongoDB connection failed:', err && err.message ? err.message : err);
+    // still attempt to start but routes that query DB will return errors; you can decide whether to exit instead.
+    // process.exit(1);
+  }
+
+  // Now safe to mount routes (so route handlers see mongoose.connection)
+  mountRoutes();
+
+  app.listen(PORT, () => {
+    console.log(`Server listening on ${PORT}`);
+  });
+}
+
+// start when this file is run
+if (require.main === module) {
+  start().catch(err => {
+    console.error('Fatal start error:', err && err.stack ? err.stack : err);
+    process.exit(1);
+  });
+}
+
+module.exports = app;
