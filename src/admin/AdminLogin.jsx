@@ -1,119 +1,117 @@
-// src/admin/AdminLogin.jsx
-import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import axiosInstance from "../api/axiosInstance";
+// src/admin/adminlogin.jsx
+import React, { useState } from 'react';
+
+// set API base from env (Vercel uses NEXT_PUBLIC_ or REACT_APP_ envs — adjust if different)
+const API_BASE = process.env.REACT_APP_API_BASE || process.env.NEXT_PUBLIC_API_BASE || '';
 
 export default function AdminLogin() {
-  const navigate = useNavigate();
-  const [phone, setPhone] = useState("");
-  const [sending, setSending] = useState(false);
-  const [verifying, setVerifying] = useState(false);
-  const [status, setStatus] = useState("");
-  const [error, setError] = useState("");
-  const [otpSent, setOtpSent] = useState(false);
+  const [phone, setPhone] = useState('');
+  const [otp, setOtp] = useState('');
+  const [stage, setStage] = useState('enter'); // 'enter' | 'verify' | 'done'
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState('');
 
-  async function handleSendOtp(e) {
-    e.preventDefault();
-    setError("");
-    setStatus("");
-
-    if (!phone || phone.length < 10) {
-      setError("Please enter a valid phone number.");
+  const sendOtp = async () => {
+    setMessage('');
+    if (!phone || phone.replace(/\D/g, '').length < 10) {
+      setMessage('Enter a valid 10-digit phone number');
       return;
     }
-
+    setLoading(true);
     try {
-      setSending(true);
-      setStatus("Sending OTP…");
-
-      const resp = await axiosInstance.post("/api/auth/send-otp", {
-        phone: phone.trim(),
+      const res = await fetch((API_BASE || '') + '/api/auth/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mobile: phone }) // backend accepts mobile alias
       });
-
-      if (resp.data?.ok) {
-        setOtpSent(true);
-        setStatus("OTP sent successfully.");
+      const json = await res.json();
+      if (!res.ok) {
+        setMessage(json && json.message ? json.message : 'Failed to send OTP');
       } else {
-        setError(resp.data?.message || "Failed to send OTP.");
+        setStage('verify');
+        setMessage('OTP sent. Enter the code you received.');
       }
     } catch (err) {
-      setError(err.response?.data?.message || err.message);
+      setMessage('Network error sending OTP');
     } finally {
-      setSending(false);
+      setLoading(false);
     }
-  }
+  };
 
-  async function handleVerifyOtp(e) {
-    e.preventDefault();
-    setError("");
-    setStatus("");
-
-    const otp = document.getElementById("otp-input")?.value || "";
-
-    if (!phone || !otp) {
-      setError("Phone and OTP are required.");
+  const verifyOtp = async () => {
+    setMessage('');
+    if (!otp) {
+      setMessage('Enter the OTP');
       return;
     }
-
+    setLoading(true);
     try {
-      setVerifying(true);
-      setStatus("Verifying OTP…");
-
-      const resp = await axiosInstance.post("/api/auth/verify-otp", {
-        phone: phone.trim(),
-        otp: otp.trim(),
+      // This assumes you already have an endpoint to verify OTP — adjust path if needed
+      const res = await fetch((API_BASE || '') + '/api/auth/verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mobile: phone, otp })
       });
-
-      if (resp.data?.ok) {
-        setStatus("Verified! Redirecting…");
-        setTimeout(() => navigate("/admin/products"), 300);
+      const json = await res.json();
+      if (!res.ok) {
+        setMessage(json && json.message ? json.message : 'OTP verification failed');
       } else {
-        setError(resp.data?.message || "Invalid OTP.");
+        setStage('done');
+        setMessage('Logged in');
+        // Redirect to admin products
+        window.location.href = '/admin/products';
       }
     } catch (err) {
-      setError(err.response?.data?.message || err.message);
+      setMessage('Network error verifying OTP');
     } finally {
-      setVerifying(false);
+      setLoading(false);
     }
-  }
+  };
 
   return (
-    <div style={{ padding: 20, maxWidth: 480, margin: "0 auto" }}>
+    <div className="admin-login container" style={{ maxWidth: 800, margin: '0 auto', padding: '2rem 1rem' }}>
       <h1>Admin Login</h1>
       <p>Enter your mobile number to receive an OTP.</p>
 
-      {status && <div style={{ padding: 10, background: "#eaffea" }}>{status}</div>}
-      {error && <div style={{ padding: 10, background: "#ffeaea" }}>{error}</div>}
+      {message && <div style={{ margin: '0.5rem 0', color: '#333' }}>{message}</div>}
 
-      {!otpSent && (
-        <form onSubmit={handleSendOtp}>
-          <label>Phone Number</label>
+      {stage === 'enter' && (
+        <>
+          <label style={{ display: 'block', marginTop: 12 }}>Phone Number</label>
           <input
-            type="text"
-            placeholder="Enter phone"
+            type="tel"
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
-            style={{ width: "100%", padding: 8, marginTop: 8 }}
+            placeholder="Enter phone"
+            style={{ width: '100%', padding: '8px', marginTop: 6 }}
           />
-          <button type="submit" disabled={sending} style={{ marginTop: 10 }}>
-            {sending ? "Sending…" : "Send OTP"}
-          </button>
-        </form>
+          <div style={{ marginTop: 10 }}>
+            <button onClick={sendOtp} disabled={loading}>
+              {loading ? 'Sending...' : 'Send OTP'}
+            </button>
+          </div>
+        </>
       )}
 
-      {otpSent && (
-        <form onSubmit={handleVerifyOtp} style={{ marginTop: 20 }}>
-          <label>Enter OTP</label>
+      {stage === 'verify' && (
+        <>
+          <label style={{ display: 'block', marginTop: 12 }}>OTP</label>
           <input
-            id="otp-input"
             type="text"
-            placeholder="OTP"
-            style={{ width: "100%", padding: 8, marginTop: 8 }}
+            value={otp}
+            onChange={(e) => setOtp(e.target.value)}
+            placeholder="Enter OTP"
+            style={{ width: '100%', padding: '8px', marginTop: 6 }}
           />
-          <button type="submit" disabled={verifying} style={{ marginTop: 10 }}>
-            {verifying ? "Verifying…" : "Verify OTP"}
-          </button>
-        </form>
+          <div style={{ marginTop: 10 }}>
+            <button onClick={verifyOtp} disabled={loading}>
+              {loading ? 'Verifying...' : 'Verify OTP'}
+            </button>{' '}
+            <button onClick={() => setStage('enter')} disabled={loading}>
+              Change number
+            </button>
+          </div>
+        </>
       )}
     </div>
   );

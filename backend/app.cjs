@@ -21,22 +21,17 @@ const RAW_FRONTEND = process.env.FRONTEND_URL || process.env.FRONTEND_ORIGIN || 
 const ALLOW_CREDENTIALS = (process.env.CORS_ALLOW_CREDENTIALS || 'true').toString().toLowerCase() === 'true';
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
-// ---- Basic middleware
+// Basic middleware
 app.use(helmet());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 app.use(morgan(NODE_ENV === 'production' ? 'combined' : 'dev'));
 
-// ---- Request header logger (non-production only to avoid noisy logs)
-if (NODE_ENV !== 'production') {
+// Lightweight request logging (non-verbose)
+if (NODE_ENV !== 'production' && String(process.env.DEBUG_HEADERS || '').toLowerCase() === 'true') {
   app.use((req, res, next) => {
-    const debugAll = String(process.env.DEBUG_HEADERS || '').toLowerCase() === 'true';
-    if (debugAll) {
-      console.log('Incoming request:', req.method, req.originalUrl, 'headers=', req.headers);
-    } else {
-      console.log('Incoming request:', req.method, req.originalUrl, 'origin=', req.get('origin'), 'referer=', req.get('referer'));
-    }
+    console.log('Incoming request:', req.method, req.originalUrl, 'origin=', req.get('origin'));
     next();
   });
 }
@@ -49,14 +44,24 @@ if (NODE_ENV !== 'production') {
 
   const corsOptions = {
     origin: function (origin, callback) {
-      if (!origin) return callback(null, true);
+      // allow requests with no origin (like curl, mobile apps, server-to-server)
+      if (!origin) {
+        return callback(null, true);
+      }
+
       if (allowAll) return callback(null, true);
 
       let originToCheck = origin;
       try { originToCheck = new URL(origin).origin; } catch (e) { originToCheck = origin; }
 
-      if (allowList.includes(originToCheck) || allowList.includes(origin)) return callback(null, true);
-      if (/\.vercel\.app$/i.test(originToCheck) || /\.vercel\.app$/i.test(origin)) return callback(null, true);
+      if (allowList.includes(originToCheck) || allowList.includes(origin)) {
+        return callback(null, true);
+      }
+
+      // allow vercel preview domains (e.g., *.vercel.app)
+      if (/\.vercel\.app$/i.test(originToCheck) || /\.vercel\.app$/i.test(origin)) {
+        return callback(null, true);
+      }
 
       console.warn(`CORS blocked origin: ${origin}`);
       return callback(null, false);
@@ -68,7 +73,7 @@ if (NODE_ENV !== 'production') {
 
   app.use(cors(corsOptions));
   app.options('*', cors(corsOptions));
-  console.log('CORS configured — allowed origins (from env):', allowList.length ? allowList : '[none specified — default single origin used]');
+  console.log('CORS configured — allowed origins:', allowList.length ? allowList : '[none specified — default]');
 })();
 
 // ---- Fallback middleware: ensure CORS headers are present even behind proxies
@@ -106,42 +111,10 @@ app.use((req, res, next) => {
   next();
 });
 
-// Optional: health endpoint
+// Health endpoint
 app.get('/_health', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
 });
-
-// -----------------------------
-// Debug echo endpoints (always present at app level)
-// Useful to confirm what the frontend / browser is sending and ensure this app version is deployed.
-// -----------------------------
-app.get('/_debug/echo', (req, res) => {
-  const payload = {
-    ok: true,
-    route: '/_debug/echo (GET)',
-    headers: {
-      origin: req.get('origin'),
-      referer: req.get('referer'),
-      'user-agent': req.get('user-agent')
-    }
-  };
-  return res.json(payload);
-});
-
-app.post('/_debug/echo', (req, res) => {
-  const payload = {
-    ok: true,
-    route: '/_debug/echo (POST)',
-    headers: {
-      origin: req.get('origin'),
-      referer: req.get('referer'),
-      'user-agent': req.get('user-agent')
-    },
-    body: req.body
-  };
-  return res.json(payload);
-});
-// -----------------------------
 
 // ---- MongoDB connection
 (async function connectDB() {
@@ -189,7 +162,7 @@ app.post('/_debug/echo', (req, res) => {
   }
 })();
 
-// Safe conditional mount for authRoutes (avoid noisy missing-module error)
+// Mount auth routes if present
 (() => {
   try {
     const authRoutesPath = path.join(__dirname, 'src', 'routes', 'authRoutes.cjs');
@@ -198,60 +171,53 @@ app.post('/_debug/echo', (req, res) => {
       app.use('/api/auth', authRoutes);
       console.log('Mounted authRoutes');
     } else {
-      console.log('authRoutes file not present — skipping mount (ok).');
+      console.log('authRoutes file not present — skipping mount.');
     }
   } catch (err) {
     console.warn('authRoutes found but failed to mount:', String(err));
   }
 })();
 
-// ---- Sitemap route mounting (conditionally)
+// Sitemap mounting (conditional) - non-fatal errors logged
 (() => {
   try {
     const sitemapCjs = path.join(__dirname, 'src', 'routes', 'sitemap.cjs');
     const sitemapJs = path.join(__dirname, 'src', 'routes', 'sitemap.js');
     const publicSitemap = path.join(__dirname, '..', 'public', 'sitemap.xml');
-    let mounted = false;
 
     if (fs.existsSync(sitemapCjs)) {
       const sitemapRouter = require('./src/routes/sitemap.cjs');
       app.use('/', sitemapRouter);
       console.log('Mounted sitemap router from src/routes/sitemap.cjs');
-      mounted = true;
     } else if (fs.existsSync(sitemapJs)) {
       const sitemapRouter = require('./src/routes/sitemap.js');
       app.use('/', sitemapRouter);
       console.log('Mounted sitemap router from src/routes/sitemap.js');
-      mounted = true;
     } else if (fs.existsSync(publicSitemap)) {
-      console.log('No sitemap route found, but public/sitemap.xml exists — consider serving it at /sitemap.xml');
       if (process.env.SERVE_STATIC_SITEMAP === 'true') {
         app.get('/sitemap.xml', (req, res) => {
           res.sendFile(publicSitemap);
         });
-        console.log('Serving public/sitemap.xml at /sitemap.xml (SERVE_STATIC_SITEMAP=true)');
-        mounted = true;
+        console.log('Serving public/sitemap.xml at /sitemap.xml');
       }
     } else {
-      console.log('No sitemap route or static sitemap.xml found — skipping sitemap mount.');
+      // no sitemap present — ok
     }
   } catch (err) {
     console.warn('Failed to mount sitemap route (non-fatal):', String(err));
   }
 })();
 
-// ---- Static uploads only for local dev (not for production)
+// Static uploads only for local dev
 if (NODE_ENV !== 'production') {
   const uploadsDir = path.join(__dirname, 'uploads');
   if (fs.existsSync(uploadsDir)) {
     app.use('/uploads', express.static(uploadsDir));
     console.log('Static /uploads mounted for local dev only');
-  } else {
-    console.log('Local uploads dir not found; static /uploads not mounted.');
   }
 }
 
-// ---- Error handling
+// Error handling
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err && err.stack ? err.stack : err);
   if (res.headersSent) return next(err);
@@ -269,7 +235,7 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: err && err.message ? err.message : String(err) });
 });
 
-// ---- Start server
+// Start server
 app.listen(PORT, () => {
   console.log(`Server listening on port ${PORT} — env ${NODE_ENV}`);
 });
