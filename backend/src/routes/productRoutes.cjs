@@ -3,7 +3,7 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
-const Product = require('../models/product.cjs');
+const Product = require('../models/Product.cjs');
 const router = express.Router();
 
 // simple slugify
