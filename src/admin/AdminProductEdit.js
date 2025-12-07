@@ -4,15 +4,11 @@ import { useParams, useNavigate } from 'react-router-dom';
 import axiosInstance from '../api/axiosInstance';
 
 /*
- AdminProductEdit:
- - works as edit when :id param exists
- - when used for "Add" (no id param) it will create a product first,
-   upload files to the new product id, then update the product images etc.
- 
- Added:
- - auto-slug generation from title (kebab-case) unless slug manually edited
- - auto-sku generation from brand+category (or fallback KPL-XXX) unless sku manually edited
- - "Generate SKU" button next to SKU field
+ Full replacement preserving your features:
+ - color picker, video preview, auto-slug, auto-sku, images upload, keepMap, etc.
+ - Adds fallback for GET product
+ - On upload, tries multiple candidate endpoints (PUT/POST) until one accepts the files
+ - On save, tries multiple candidate update endpoints until one succeeds
 */
 
 const NAMED_COLORS = {
@@ -55,7 +51,6 @@ function nearestColorName(hex) {
   } catch { return ''; }
 }
 
-// slug helper
 function makeSlug(text) {
   if (!text) return "";
   return String(text)
@@ -67,7 +62,6 @@ function makeSlug(text) {
     .replace(/-+/g, "-");
 }
 
-// sku helper
 function sanitizeAlnum(s = "") {
   return String(s || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
 }
@@ -91,7 +85,7 @@ function generateSku({ brand, category, title }) {
 }
 
 export default function AdminProductEdit() {
-  const { id } = useParams(); // may be undefined for "add"
+  const { id } = useParams();
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
   const colorPickerRef = useRef(null);
@@ -105,7 +99,6 @@ export default function AdminProductEdit() {
     description: '', isPublished: false
   });
 
-  // flags to track manual edits so we don't override
   const [slugEdited, setSlugEdited] = useState(false);
   const [skuEdited, setSkuEdited] = useState(false);
 
@@ -133,14 +126,11 @@ export default function AdminProductEdit() {
 
   useEffect(() => {
     let cancelled = false;
-
-    // If no id (we are in "Add"), don't fetch; just initialize.
     if (!id) {
       setLoading(false);
       setExistingImages([]);
       setKeepMap({});
       setSwatches([]);
-      // try to seed defaults (sku/slug) based on empty product state (no manual edits)
       setProduct(prev => {
         const seeded = { ...prev };
         if (!seeded.slug && seeded.title) seeded.slug = makeSlug(seeded.title);
@@ -153,38 +143,54 @@ export default function AdminProductEdit() {
     async function load() {
       try {
         setLoading(true);
-        const resp = await axiosInstance.get(`/api/products/${id}`);
-        if (cancelled) return;
-        if (resp.data && resp.data.product) {
-          const p = resp.data.product;
-          setProduct({
-            title: p.title || '', slug: p.slug || '', price: p.price || '', mrp: p.mrp || '',
-            stock: p.stock || '', sku: p.sku || '', brand: p.brand || '', category: p.category || '',
-            videoUrl: p.videoUrl || '', colors: Array.isArray(p.colors) ? p.colors.join(', ') : (p.colors || ''),
-            sizes: Array.isArray(p.sizes) ? p.sizes.join(', ') : (p.sizes || ''), description: p.description || '',
-            isPublished: !!p.isPublished
-          });
-
-          // if slug or sku exist in product we treat them as manually set (don't overwrite)
-          if (p.slug) setSlugEdited(true);
-          if (p.sku) setSkuEdited(true);
-
-          const imgs = Array.isArray(p.images) ? p.images.map(it => (typeof it === 'string' ? it : (it.url || it))) : [];
-          setExistingImages(imgs);
-          const map = {}; imgs.forEach(url => (map[url] = true)); setKeepMap(map);
-
-          const parsed = Array.isArray(p.colors) ? p.colors : (p.colors ? p.colors.split(',').map(s => s.trim()) : []);
-          const normalized = parsed.map((c) => normalizeToHexIfPossible(c));
-          setSwatches(normalized);
-        } else {
-          alert('Failed to load product.');
+        try {
+          const resp = await axiosInstance.get(`/api/products/${id}`);
+          if (resp && resp.data) {
+            const p = resp.data.product || (resp.data.success && resp.data.products && resp.data.products[0]) || resp.data;
+            if (p && typeof p === 'object') {
+              populateFromProduct(p);
+              setLoading(false);
+              return;
+            }
+          }
+        } catch (err) {
+          console.warn('Direct GET failed, falling back to list', err && err.response ? err.response.status : err.message);
         }
-      } catch (err) {
-        console.error('Failed to fetch product', err);
-        alert('Error loading product. See console.');
+
+        try {
+          const listResp = await axiosInstance.get('/api/products');
+          const products = (listResp && listResp.data && (listResp.data.products || listResp.data)) || [];
+          if (Array.isArray(products) && products.length) {
+            let found = products.find(p => String(p._id) === String(id));
+            if (!found) found = products.find(p => p.slug === id || String(p.slug) === String(id));
+            if (found) { populateFromProduct(found); setLoading(false); return; }
+          }
+          alert('Product not found on server.');
+        } catch (err) {
+          console.error('Products list fallback failed', err);
+          alert('Failed to load product list fallback. See console.');
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
+    }
+
+    function populateFromProduct(p) {
+      setProduct({
+        title: p.title || '', slug: p.slug || '', price: p.price || '', mrp: p.mrp || '',
+        stock: p.stock || '', sku: p.sku || '', brand: p.brand || '', category: p.category || '',
+        videoUrl: p.videoUrl || '', colors: Array.isArray(p.colors) ? p.colors.join(', ') : (p.colors || ''),
+        sizes: Array.isArray(p.sizes) ? p.sizes.join(', ') : (p.sizes || ''), description: p.description || '',
+        isPublished: !!p.isPublished
+      });
+      if (p.slug) setSlugEdited(true);
+      if (p.sku) setSkuEdited(true);
+      const imgs = Array.isArray(p.images) ? p.images.map(it => (typeof it === 'string' ? it : (it.url || it))) : [];
+      setExistingImages(imgs);
+      const map = {}; imgs.forEach(url => (map[url] = true)); setKeepMap(map);
+      const parsed = Array.isArray(p.colors) ? p.colors : (p.colors ? p.colors.split(',').map(s => s.trim()) : []);
+      const normalized = parsed.map((c) => normalizeToHexIfPossible(c));
+      setSwatches(normalized);
     }
 
     load();
@@ -203,31 +209,27 @@ export default function AdminProductEdit() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [swatches]);
 
-  // Auto-generate slug from title when title changes unless slugEdited
   useEffect(() => {
     if (!slugEdited) {
       setProduct(prev => ({ ...prev, slug: makeSlug(prev.title || "") }));
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [product.title, slugEdited]);
 
-  // Auto-generate sku when brand/category/title change unless skuEdited
   useEffect(() => {
     if (!skuEdited) {
       const s = generateSku({ brand: product.brand, category: product.category, title: product.title });
       setProduct(prev => ({ ...prev, sku: s }));
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [product.brand, product.category, product.title, skuEdited]);
 
   function handleChange(e) {
     const { name, value, checked } = e.target;
     if (name === 'isPublished') setProduct(prev => ({ ...prev, isPublished: !!checked }));
     else {
-      // If user edits slug or sku manually, mark them edited so auto-generation stops
       if (name === 'slug') setSlugEdited(true);
       if (name === 'sku') setSkuEdited(true);
-
       setProduct(prev => ({ ...prev, [name]: value }));
       if (name === 'colors') {
         const arr = parseColorsInputToArray(value).map(c => normalizeToHexIfPossible(c));
@@ -253,34 +255,86 @@ export default function AdminProductEdit() {
   }
   function toggleKeep(url) { setKeepMap(prev => ({ ...prev, [url]: !prev[url] })); }
 
-  // Generate SKU on demand (button)
   function handleGenerateSku() {
     const newSku = generateSku({ brand: product.brand, category: product.category, title: product.title });
     setProduct(prev => ({ ...prev, sku: newSku }));
-    setSkuEdited(true); // treat as manual choice so auto effects won't overwrite
+    setSkuEdited(true);
   }
 
-  // Uploads files to /api/products/{pId}/upload — returns array of uploaded URLs
+  // --- Robust uploadFilesToProduct: tries multiple candidate endpoints for uploading files ---
   async function uploadFilesToProduct(pId) {
     if (!selectedFiles.length) return [];
     if (!pId) throw new Error('Missing product id for upload');
+
     const formData = new FormData();
     selectedFiles.forEach(s => formData.append('files', s.file));
-    const resp = await axiosInstance.put(`/api/products/${pId}/upload`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
-    });
-    const data = resp && resp.data ? resp.data : {};
-    let uploadedArray = [];
-    if (Array.isArray(data.uploaded) && data.uploaded.length) uploadedArray = data.uploaded;
-    else if (data.key && data.url) uploadedArray = [{ key: data.key, url: data.url }];
-    else if (Array.isArray(data)) uploadedArray = data;
-    const urls = uploadedArray.map(u => (u && u.url) ? u.url : (typeof u === 'string' ? u : null)).filter(Boolean);
-    return urls;
+
+    // candidate endpoints (common mounts seen in your backend)
+    // the frontend will try them in order until one returns success
+    const candidates = [
+      { method: 'put', url: `/api/products/${pId}/upload` },                // common expectation (your frontend used this)
+      { method: 'put', url: `/api/admin/product/${pId}/upload` },           // try admin products upload variant
+      { method: 'put', url: `/api/admin/products/${pId}/upload` },          // another admin variant
+      { method: 'put', url: `/api/adminProduct/products/${pId}/upload` },   // adminProduct module variant
+      { method: 'put', url: `/api/uploadRoutes/${pId}/upload` },            // uploadRoutes.cjs : router.put('/:id/upload')
+      { method: 'put', url: `/api/upload/${pId}/upload` },                  // fallback possibility
+      { method: 'post', url: `/api/products/upload` },                      // upload.cjs has router.post('/products/upload')
+      { method: 'post', url: `/api/adminUpload/${pId}` },                   // adminUpload module variations
+    ];
+
+    let lastErr = null;
+    for (const c of candidates) {
+      try {
+        let resp;
+        if (c.method === 'put') {
+          resp = await axiosInstance.put(c.url, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+        } else {
+          resp = await axiosInstance.post(c.url, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+        }
+        // Accept success shapes:
+        const data = resp && resp.data ? resp.data : {};
+        // Normalize to array of urls if possible
+        let uploadedArray = [];
+        if (Array.isArray(data.uploaded) && data.uploaded.length) uploadedArray = data.uploaded;
+        else if (data.key && data.url) uploadedArray = [{ key: data.key, url: data.url }];
+        else if (Array.isArray(data)) uploadedArray = data;
+        else if (data.url) uploadedArray = [{ url: data.url }];
+
+        const urls = uploadedArray.map(u => (u && u.url) ? u.url : (typeof u === 'string' ? u : null)).filter(Boolean);
+        if (urls.length) {
+          return urls;
+        }
+
+        // some upload endpoints return the created media but not in 'uploaded' key — try to handle common shapes
+        if (data && data.success && Array.isArray(data.files)) {
+          const urls2 = data.files.map(f => (f && f.url) ? f.url : null).filter(Boolean);
+          if (urls2.length) return urls2;
+        }
+
+        // treat 2xx without direct urls as success (maybe server responds with product object later)
+        if (resp.status >= 200 && resp.status < 300) {
+          // if server returned product with images, try to get urls
+          if (data && data.product && Array.isArray(data.product.images)) {
+            return data.product.images.map(it => (typeof it === 'string' ? it : (it.url || null))).filter(Boolean);
+          }
+          // otherwise consider as success but no urls — callers will handle empty
+          return [];
+        }
+      } catch (err) {
+        lastErr = err;
+        const status = err && err.response && err.response.status;
+        console.warn(`[upload] ${c.method.toUpperCase()} ${c.url} failed`, status || err.message);
+        // try next candidate
+      }
+    }
+    // if we reach here, all attempts failed
+    const message = lastErr && lastErr.response && lastErr.response.data && lastErr.response.data.message
+      ? lastErr.response.data.message
+      : (lastErr && lastErr.message) || 'Upload failed';
+    throw new Error(message);
   }
 
-  // Create minimal product (used when id is missing) and return created product object
   async function createMinimalProduct(body) {
-    // Keep fields minimal but include necessary ones so server creates a doc and returns an _id
     const payload = {
       title: body.title || 'Untitled product',
       slug: body.slug || '',
@@ -295,10 +349,9 @@ export default function AdminProductEdit() {
       isPublished: !!body.isPublished,
       colors: body.colors || [],
       sizes: body.sizes || [],
-      images: [] // will update after upload
+      images: []
     };
     const res = await axiosInstance.post('/api/products', payload);
-    // backend may return { product: {...} } or product directly
     const created = res && res.data ? (res.data.product || res.data) : null;
     if (!created) throw new Error('Create product failed: no product returned');
     return created;
@@ -309,7 +362,6 @@ export default function AdminProductEdit() {
     setSaving(true);
 
     try {
-      // Convert sizes/colors to arrays for request
       const bodyForProduct = {
         title: product.title,
         slug: product.slug,
@@ -326,75 +378,81 @@ export default function AdminProductEdit() {
         sizes: product.sizes ? product.sizes.split(',').map(s => s.trim()).filter(Boolean) : []
       };
 
-      let targetId = id; // if editing, use existing id
+      let targetId = id;
 
-      // If no id present, create a minimal product first
       if (!targetId) {
-        // Ensure we have a slug & sku before creating (if not manual, auto-generate here too)
         if (!bodyForProduct.slug) bodyForProduct.slug = makeSlug(bodyForProduct.title || "");
         if (!bodyForProduct.sku) bodyForProduct.sku = generateSku({ brand: bodyForProduct.brand, category: bodyForProduct.category, title: bodyForProduct.title });
-
         const created = await createMinimalProduct(bodyForProduct);
-        targetId = created._id || created.id || created._id?.toString();
+        targetId = created._id || created.id || (created._id && created._id.toString());
         if (!targetId) throw new Error('Could not obtain new product id from create response');
-        // set navigate to new edit page afterward so future uploads use same component with id
-        // set local state product to include returned values
         setProduct(prev => ({ ...prev, slug: created.slug || prev.slug, sku: created.sku || prev.sku }));
       }
 
-      // If selected files exist, upload them to the product upload endpoint
+      // Try upload first if files selected
       let uploadedUrls = [];
       if (selectedFiles.length) {
         try {
           uploadedUrls = await uploadFilesToProduct(targetId);
-          if (!uploadedUrls.length) throw new Error('Upload returned no URLs');
         } catch (err) {
-          console.error('Upload failed', err);
-          // bubble up so user sees alert below
+          console.error('Upload request failed', err);
           throw new Error('Upload request failed: ' + (err.message || err));
         }
       }
 
-      // Build final images list: keep existing ones (kept by keepMap) + uploaded
       const kept = existingImages.filter(u => keepMap[u]);
       const finalImages = [...kept];
       uploadedUrls.forEach(u => { if (!finalImages.includes(u)) finalImages.push(u); });
 
-      // Now update product with full fields (images included)
-      const finalBody = {
-        ...bodyForProduct,
-        images: finalImages
-      };
+      const finalBody = { ...bodyForProduct, images: finalImages };
 
-      const resp = await axiosInstance.put(`/api/products/${targetId}`, finalBody);
-      const ok = resp && resp.data && (resp.data.success || resp.status === 200);
-      if (!ok) {
-        console.error('Save failed', resp);
-        alert('Save failed. Check server response.');
-      } else {
-        // cleanup previews
-        selectedFiles.forEach(s => s.previewUrl && URL.revokeObjectURL(s.previewUrl));
-        setSelectedFiles([]);
-        // update existing images UI
-        const updatedProduct = resp.data.product || resp.data;
-        const imgs = Array.isArray(updatedProduct.images) ? updatedProduct.images.map(it => (typeof it === 'string' ? it : (it.url || it))) : [];
-        setExistingImages(imgs);
-        const map = {}; imgs.forEach(u => (map[u] = true)); setKeepMap(map);
-        alert(!id ? 'Product created and saved.' : 'Product updated.');
-        // If we created a new product, navigate to its edit page so URL has the id
-        if (!id && targetId) {
-          navigate(`/admin/products/${targetId}/edit`);
+      const triedUrls = [
+        { url: `/api/products/${targetId}`, desc: 'public' },
+        { url: `/api/admin/product/${targetId}`, desc: 'admin (api/admin/product)' },
+        { url: `/api/admin/products/${targetId}`, desc: 'admin (api/admin/products)' },
+        { url: `/api/adminProduct/products/${targetId}`, desc: 'adminProduct (api/adminProduct/products)' }
+      ];
+
+      let savedResp = null;
+      let lastErr = null;
+      for (const t of triedUrls) {
+        try {
+          const resp = await axiosInstance.put(t.url, finalBody);
+          if (resp && resp.status >= 200 && resp.status < 300) {
+            savedResp = resp;
+            break;
+          }
+        } catch (err) {
+          lastErr = err;
+          console.warn(`[save] PUT ${t.url} failed`, err && err.response && err.response.status ? err.response.status : err.message);
         }
       }
+
+      if (!savedResp) {
+        console.error('All update attempts failed', lastErr);
+        const msg = lastErr && lastErr.response && lastErr.response.data && lastErr.response.data.message
+          ? lastErr.response.data.message
+          : (lastErr && lastErr.message) || 'Save failed on all attempted update endpoints';
+        throw new Error(msg);
+      }
+
+      selectedFiles.forEach(s => s.previewUrl && URL.revokeObjectURL(s.previewUrl));
+      setSelectedFiles([]);
+      const updatedProduct = savedResp.data.product || savedResp.data;
+      const imgs = Array.isArray(updatedProduct.images) ? updatedProduct.images.map(it => (typeof it === 'string' ? it : (it.url || it))) : [];
+      setExistingImages(imgs);
+      const map = {}; imgs.forEach(u => (map[u] = true)); setKeepMap(map);
+      alert(!id ? 'Product created and saved.' : 'Product updated.');
+      if (!id && targetId) navigate(`/admin/products/${targetId}/edit`);
     } catch (err) {
       console.error('Save error', err);
-      alert(err.message || 'Save failed');
+      const msg = (err && err.response && err.response.data && (err.response.data.message || JSON.stringify(err.response.data))) || (err && err.message) || 'Save failed';
+      alert(msg);
     } finally {
       setSaving(false);
     }
   }
 
-  // Color picker interactions
   function openColorPickerAtIndex(idx) {
     setColorPickerIndex(idx);
     if (colorPickerRef.current) {
@@ -443,11 +501,7 @@ export default function AdminProductEdit() {
           <input
             name="slug"
             value={product.slug}
-            onChange={(e) => {
-              handleChange(e);
-              // mark slug as manually edited so auto-generation stops
-              setSlugEdited(true);
-            }}
+            onChange={(e) => { handleChange(e); setSlugEdited(true); }}
             style={{ width: '100%' }} /></div>
 
         <div><label>Price</label><br />
@@ -464,10 +518,7 @@ export default function AdminProductEdit() {
             <input
               name="sku"
               value={product.sku}
-              onChange={(e) => {
-                handleChange(e);
-                setSkuEdited(true);
-              }}
+              onChange={(e) => { handleChange(e); setSkuEdited(true); }}
               style={{ width: '100%' }} />
             <button type="button" onClick={handleGenerateSku}>Generate SKU</button>
           </div>

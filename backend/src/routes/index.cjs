@@ -21,10 +21,11 @@ function tryRequire(...names) {
   return null;
 }
 
-// Example: auth route may be named auth.cjs or authRoutes.cjs
+// -------------------------
+// AUTH ROUTES
+// -------------------------
 const authModule = tryRequire('auth.cjs', 'authRoutes.cjs', 'auth.js', 'authRoutes.js');
 if (authModule) {
-  // authModule might be a router function or an object exporting a router
   if (typeof authModule === 'function') {
     router.use('/auth', authModule);
     console.log('[ROUTES] Mounted /auth from auth module');
@@ -36,7 +37,9 @@ if (authModule) {
   }
 }
 
-// Add other route files here similarly (products, admin, etc.)
+// -------------------------
+// PRODUCTS ROUTES
+// -------------------------
 const productsModule = tryRequire('products.cjs', 'productRoutes.cjs', 'products.js', 'productRoutes.js');
 if (productsModule) {
   if (typeof productsModule === 'function') {
@@ -48,18 +51,41 @@ if (productsModule) {
   }
 }
 
-// If you have more route files, add them the same way above.
-// Generic fallback: try to require every file in routesDir and mount any router exports
+// -------------------------
+// ADD COMPAT UPLOAD ROUTES (IMPORTANT)
+// -------------------------
+// This ensures these legacy upload paths work:
+//   /api/products/upload
+//   /api/products/:id/upload
+//   /api/adminUpload/:id
+//
+// Your uploadCompat.cjs MUST exist in same folder.
+//
+try {
+  const uploadCompat = require('./uploadCompat.cjs');
+  router.use('/', uploadCompat);
+  console.log('[ROUTES] Mounted uploadCompat at /');
+} catch (err) {
+  console.warn('[ROUTES] uploadCompat.cjs missing or failed to load:', err && err.message);
+}
+
+// -------------------------
+// AUTO-MOUNT ANY OTHER ROUTE FILES
+// -------------------------
 fs.readdirSync(routesDir)
   .filter(f => f !== 'index.cjs' && /\.(cjs|js)$/.test(f))
   .forEach((file) => {
-    // skip files we already attempted
-    if (['auth.cjs','authRoutes.cjs','auth.js','authRoutes.js','products.cjs','productRoutes.cjs','products.js','productRoutes.js'].includes(file)) return;
+    if ([
+      'auth.cjs','authRoutes.cjs','auth.js','authRoutes.js',
+      'products.cjs','productRoutes.cjs','products.js','productRoutes.js',
+      'uploadCompat.cjs'
+    ].includes(file)) return;
+
     const modPath = path.join(routesDir, file);
     try {
       const mod = require(modPath);
       if (!mod) return;
-      // derive a mount path from filename (e.g. orders.cjs -> /orders)
+
       const mount = `/${file.replace(/\.(cjs|js)$/, '')}`;
       if (typeof mod === 'function') {
         router.use(mount, mod);
@@ -67,11 +93,9 @@ fs.readdirSync(routesDir)
       } else if (mod.router && typeof mod.router === 'function') {
         router.use(mount, mod.router);
         console.log(`[ROUTES] Mounted ${mount} from ${file}.router`);
-      } else {
-        // skip non-router exports
       }
     } catch (err) {
-      // ignore require errors for optional files
+      // ignore optional module errors
     }
   });
 
