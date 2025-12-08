@@ -273,9 +273,13 @@ export default function AdminProductEdit() {
 
   // ---- FINAL, CORRECT ENDPOINTS ----
   const candidates = [
-    { method: "put",  url: `/api/uploadRoutes/${pId}/upload` },
-    { method: "post", url: `/api/uploadRoutes/upload` }
-  ];
+  // Existing product
+  { method: "put", url: `/api/uploadRoutes/${pId}/upload` },
+
+  // New product
+  { method: "post", url: `/api/uploadRoutes/upload` }
+];
+
 
   let lastErr = null;
 
