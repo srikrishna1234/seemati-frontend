@@ -262,77 +262,55 @@ export default function AdminProductEdit() {
   }
 
   // --- Robust uploadFilesToProduct: tries multiple candidate endpoints for uploading files ---
+   // --- Upload files for this product: always hit the S3-enabled upload route ---
+   // --- Robust uploadFilesToProduct: tries multiple candidate endpoints for uploading files ---
   async function uploadFilesToProduct(pId) {
-    if (!selectedFiles.length) return [];
-    if (!pId) throw new Error('Missing product id for upload');
+  if (!selectedFiles.length) return [];
+  if (!pId) throw new Error("Missing product id for upload");
 
-    const formData = new FormData();
-    selectedFiles.forEach(s => formData.append('files', s.file));
+  const formData = new FormData();
+  selectedFiles.forEach(s => formData.append("images", s.file));
 
-    // candidate endpoints (common mounts seen in your backend)
-    // the frontend will try them in order until one returns success
-    const candidates = [
-      { method: 'put', url: `/api/products/${pId}/upload` },                // common expectation (your frontend used this)
-      { method: 'put', url: `/api/admin/product/${pId}/upload` },           // try admin products upload variant
-      { method: 'put', url: `/api/admin/products/${pId}/upload` },          // another admin variant
-      { method: 'put', url: `/api/adminProduct/products/${pId}/upload` },   // adminProduct module variant
-      { method: 'put', url: `/api/uploadRoutes/${pId}/upload` },            // uploadRoutes.cjs : router.put('/:id/upload')
-      { method: 'put', url: `/api/upload/${pId}/upload` },                  // fallback possibility
-      { method: 'post', url: `/api/products/upload` },                      // upload.cjs has router.post('/products/upload')
-      { method: 'post', url: `/api/adminUpload/${pId}` },                   // adminUpload module variations
-    ];
+  // ---- FINAL, CORRECT ENDPOINTS ----
+  const candidates = [
+    { method: "put",  url: `/api/uploadRoutes/${pId}/upload` },
+    { method: "post", url: `/api/uploadRoutes/upload` }
+  ];
 
-    let lastErr = null;
-    for (const c of candidates) {
-      try {
-        let resp;
-        if (c.method === 'put') {
-          resp = await axiosInstance.put(c.url, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
-        } else {
-          resp = await axiosInstance.post(c.url, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
-        }
-        // Accept success shapes:
-        const data = resp && resp.data ? resp.data : {};
-        // Normalize to array of urls if possible
-        let uploadedArray = [];
-        if (Array.isArray(data.uploaded) && data.uploaded.length) uploadedArray = data.uploaded;
-        else if (data.key && data.url) uploadedArray = [{ key: data.key, url: data.url }];
-        else if (Array.isArray(data)) uploadedArray = data;
-        else if (data.url) uploadedArray = [{ url: data.url }];
+  let lastErr = null;
 
-        const urls = uploadedArray.map(u => (u && u.url) ? u.url : (typeof u === 'string' ? u : null)).filter(Boolean);
-        if (urls.length) {
-          return urls;
-        }
-
-        // some upload endpoints return the created media but not in 'uploaded' key — try to handle common shapes
-        if (data && data.success && Array.isArray(data.files)) {
-          const urls2 = data.files.map(f => (f && f.url) ? f.url : null).filter(Boolean);
-          if (urls2.length) return urls2;
-        }
-
-        // treat 2xx without direct urls as success (maybe server responds with product object later)
-        if (resp.status >= 200 && resp.status < 300) {
-          // if server returned product with images, try to get urls
-          if (data && data.product && Array.isArray(data.product.images)) {
-            return data.product.images.map(it => (typeof it === 'string' ? it : (it.url || null))).filter(Boolean);
-          }
-          // otherwise consider as success but no urls — callers will handle empty
-          return [];
-        }
-      } catch (err) {
-        lastErr = err;
-        const status = err && err.response && err.response.status;
-        console.warn(`[upload] ${c.method.toUpperCase()} ${c.url} failed`, status || err.message);
-        // try next candidate
+  for (const c of candidates) {
+    try {
+      let resp;
+      if (c.method === "put") {
+        resp = await axiosInstance.put(c.url, formData, {
+          headers: { "Content-Type": "multipart/form-data" }
+        });
+      } else {
+        resp = await axiosInstance.post(c.url, formData, {
+          headers: { "Content-Type": "multipart/form-data" }
+        });
       }
+
+      const data = resp.data || {};
+      const array =
+        (Array.isArray(data.uploaded) && data.uploaded) ||
+        (data.url ? [{ url: data.url }] : []);
+
+      return array.map(f => f.url);
+    } catch (err) {
+      lastErr = err;
+      console.warn(`UPLOAD FAIL @ ${c.url}`, err?.response?.status);
     }
-    // if we reach here, all attempts failed
-    const message = lastErr && lastErr.response && lastErr.response.data && lastErr.response.data.message
-      ? lastErr.response.data.message
-      : (lastErr && lastErr.message) || 'Upload failed';
-    throw new Error(message);
   }
+
+  throw new Error(
+    lastErr?.response?.data?.error ||
+      lastErr?.message ||
+      "Upload failed"
+  );
+}
+
 
   async function createMinimalProduct(body) {
     const payload = {
