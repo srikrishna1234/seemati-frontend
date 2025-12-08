@@ -1,14 +1,11 @@
-// backend/app.cjs
 'use strict';
 
 /**
  * Canonical backend/app.cjs
  * - Connects to MongoDB before mounting routes / starting server
- * - Mounts src/routes index at /api (so /api/products works)
- * - Keeps explicit /api/auth mount fallback
- * - Graceful error handling and helpful logs
- *
- * Replace your existing backend/app.cjs with this file.
+ * - Hard-mounts /api/uploadRoutes to fix Render not loading it
+ * - Mounts src/routes index at /api
+ * - Graceful error handling
  */
 
 require('dotenv').config();
@@ -68,7 +65,12 @@ function tryRequire(...candidates) {
   for (const cand of candidates) {
     const full = path.join(__dirname, cand);
     try {
-      if (fs.existsSync(full) || fs.existsSync(`${full}.js`) || fs.existsSync(`${full}.cjs`) || fs.existsSync(`${full}.mjs`)) {
+      if (
+        fs.existsSync(full) ||
+        fs.existsSync(`${full}.js`) ||
+        fs.existsSync(`${full}.cjs`) ||
+        fs.existsSync(`${full}.mjs`)
+      ) {
         return require(full);
       }
     } catch (err) {
@@ -78,27 +80,57 @@ function tryRequire(...candidates) {
   return null;
 }
 
+// ------------------------------------------------------------------------
+// ⭐⭐⭐ HARD-MOUNT uploadRoutes BEFORE ANYTHING ELSE (Render FIX)
+// ------------------------------------------------------------------------
+try {
+  const uploadRoutes = require('./src/routes/uploadRoutes.cjs');
+  app.use('/api/uploadRoutes', uploadRoutes);
+  console.log('[BOOT] Hard-mounted /api/uploadRoutes');
+} catch (err) {
+  console.error('[BOOT ERROR] Could not load uploadRoutes.cjs:', err.message);
+}
+
 // ---- Mount routes (called after DB connect) ----
 function mountRoutes() {
   // mount src/routes index at /api if present
-  const routesIndex = tryRequire('src/routes/index.cjs', 'src/routes/index.js', 'src/routes', 'routes/index.cjs', 'routes/index.js');
+  const routesIndex = tryRequire(
+    'src/routes/index.cjs',
+    'src/routes/index.js',
+    'src/routes',
+    'routes/index.cjs',
+    'routes/index.js'
+  );
+
   if (routesIndex) {
     app.use('/api', routesIndex);
     console.log('[BOOT] Mounted src/routes (index) at /api');
   } else {
-    console.log('[BOOT] No src/routes index found to mount at /api — product routes may be at different paths.');
+    console.log('[BOOT] No src/routes index found to mount at /api');
   }
 
   // explicit auth mount as fallback
-  const explicitAuth = tryRequire('src/routes/auth.cjs', 'src/routes/auth.js', 'routes/auth.cjs', 'routes/auth.js', 'src/routes/authRoutes.cjs', 'src/routes/authRoutes.js');
+  const explicitAuth = tryRequire(
+    'src/routes/auth.cjs',
+    'src/routes/auth.js',
+    'routes/auth.cjs',
+    'routes/auth.js',
+    'src/routes/authRoutes.cjs',
+    'src/routes/authRoutes.js'
+  );
+
   if (explicitAuth) {
     app.use('/api/auth', explicitAuth);
     console.log('[BOOT] Mounted explicit auth router at /api/auth');
   }
 
-  // minimal /api/health if nothing else present (safe fallback)
+  // minimal /api/health if nothing else present
   app.get('/api/health', (req, res) => {
-    res.json({ ok: true, env: process.env.NODE_ENV || 'development', time: new Date().toISOString() });
+    res.json({
+      ok: true,
+      env: process.env.NODE_ENV || 'development',
+      time: new Date().toISOString()
+    });
   });
 
   // 404 handler
@@ -110,48 +142,54 @@ function mountRoutes() {
   app.use((err, req, res, next) => {
     if (err && err.message && /CORS|Not allowed/.test(err.message)) {
       console.warn(`[ERROR] CORS error for origin ${req.headers.origin}: ${err.message}`);
-      return res.status(403).json({ success: false, error: 'CORS blocked: origin not allowed' });
+      return res.status(403).json({
+        success: false,
+        error: 'CORS blocked: origin not allowed'
+      });
     }
     console.error(err && err.stack ? err.stack : err);
     const status = err && err.status ? err.status : 500;
-    res.status(status).json({ error: err && err.name ? err.name : 'ServerError', message: err && err.message ? err.message : 'Internal server error' });
+    res.status(status).json({
+      error: err && err.name ? err.name : 'ServerError',
+      message: err && err.message ? err.message : 'Internal server error'
+    });
   });
 }
 
 // ---- Connect to MongoDB then start server ----
-const MONGO = process.env.MONGO_URI || process.env.MONGODB_URI || process.env.DATABASE_URL || process.env.MONGO;
+const MONGO =
+  process.env.MONGO_URI ||
+  process.env.MONGODB_URI ||
+  process.env.DATABASE_URL ||
+  process.env.MONGO;
+
 const PORT = process.env.PORT || process.env.APP_PORT || 4000;
 
 async function start() {
   if (!MONGO) {
-    console.warn('[BOOT] No MONGO URI found in environment. Routes will still mount but DB queries will fail.');
-    // still mount so auth health works
+    console.warn('[BOOT] No MONGO URI found.');
     mountRoutes();
-    app.listen(PORT, () => console.log(`Server listening on ${PORT} (no DB configured)`));
+    app.listen(PORT, () =>
+      console.log(`Server listening on ${PORT} (no DB configured)`)
+    );
     return;
   }
-
-  // mongoose options tuned for reliability
-  const opts = {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-    serverSelectionTimeoutMS: 10000,
-    socketTimeoutMS: 45000
-  };
 
   mongoose.set('strictQuery', false);
 
   try {
     console.log('[BOOT] Connecting to MongoDB...');
-    await mongoose.connect(MONGO, opts);
+    await mongoose.connect(MONGO, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 10000,
+      socketTimeoutMS: 45000
+    });
     console.log('[BOOT] MongoDB connected');
   } catch (err) {
-    console.error('[BOOT] MongoDB connection failed:', err && err.message ? err.message : err);
-    // still attempt to start but routes that query DB will return errors; you can decide whether to exit instead.
-    // process.exit(1);
+    console.error('[BOOT] MongoDB connection failed:', err.message);
   }
 
-  // Now safe to mount routes (so route handlers see mongoose.connection)
   mountRoutes();
 
   app.listen(PORT, () => {
@@ -159,10 +197,9 @@ async function start() {
   });
 }
 
-// start when this file is run
 if (require.main === module) {
   start().catch(err => {
-    console.error('Fatal start error:', err && err.stack ? err.stack : err);
+    console.error('Fatal start error:', err.stack || err);
     process.exit(1);
   });
 }
