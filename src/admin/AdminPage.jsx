@@ -1,9 +1,10 @@
 // src/admin/AdminPage.jsx
 import React from "react";
 import { Routes, Route, Link } from "react-router-dom";
+
 import AdminProductList from "./AdminProductList";
 import AdminProductEdit from "./AdminProductEdit";
-import ProductForm from "./ProductForm.jsx"; // adjust path/name if your add/edit form filename differs
+import AddProduct from "./AddProduct";           // ✅ FIXED
 import AdminAnnouncements from "./AdminAnnouncements";
 
 export default function AdminPage() {
@@ -24,12 +25,15 @@ export default function AdminPage() {
 
       <main style={{ padding: 20 }}>
         <Routes>
-          {/* Explicitly mount the debug-ready AdminProductList */}
           <Route path="products" element={<AdminProductList />} />
-          <Route path="products/new" element={<ProductForm />} />
+
+          {/* ✅ FIX: Use AddProduct instead of ProductForm */}
+          <Route path="products/new" element={<AddProduct />} />
+
           <Route path="products/:id" element={<AdminProductEdit />} />
           <Route path="announcements" element={<AdminAnnouncements />} />
-          {/* Fallback — render product list for any other admin path */}
+
+          {/* fallback */}
           <Route path="*" element={<AdminProductList />} />
         </Routes>
       </main>
