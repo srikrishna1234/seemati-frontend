@@ -1,4 +1,4 @@
-﻿'use strict';
+﻿"use strict";
 
 const mongoose = require('mongoose');
 
@@ -13,18 +13,21 @@ const productSchema = new mongoose.Schema({
   brand: { type: String, default: '' },
   category: { type: String, default: '' },
   tags: [String],
+
+  // frontend expects an array of STRINGS
   thumbnail: { type: String, default: '' },
-  images: [String],
+  images: { type: [String], default: [] },
+
   stock: { type: Number, default: 0 },
   published: { type: Boolean, default: false },
-  metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
+
+  metadata: { type: mongoose.Schema.Types.Mixed, default: {} }
 }, {
   timestamps: true,
   versionKey: false
 });
 
-try {
-  module.exports = mongoose.model('Product') || mongoose.model('Product', productSchema);
-} catch (err) {
-  module.exports = mongoose.model('Product', productSchema);
-}
+// Correct safe model export
+module.exports =
+  mongoose.models.Product ||
+  mongoose.model("Product", productSchema);
