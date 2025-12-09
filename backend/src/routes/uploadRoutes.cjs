@@ -12,7 +12,26 @@ const path = require('path');
 const { randomUUID } = require('crypto');
 
 const router = express.Router();
-const Product = require('../models/product.cjs');
+const path = require('path');
+
+// Auto-resolve product model from multiple possible locations
+let Product;
+try {
+  Product = require('../models/product.cjs');
+} catch (err1) {
+  try {
+    Product = require(path.join(__dirname, '..', 'models', 'product.cjs'));
+  } catch (err2) {
+    try {
+      Product = require(path.join(__dirname, '..', '..', 'models', 'product.cjs'));
+    } catch (err3) {
+      console.error('[UPLOAD ROUTES] FAILED TO LOAD PRODUCT MODEL');
+      console.error(err1.message, err2.message, err3.message);
+      throw err3; // stop app if model missing
+    }
+  }
+}
+
 
 // Multer memory storage for easy buffer access
 const upload = multer({
