@@ -258,41 +258,42 @@ export default function AddProduct() {
   }
 
   // Upload selectedFiles to backend; returns array of urls
-  async function uploadFilesIfAny() {
-    if (!selectedFiles.length) return [];
-    const form = new FormData();
-    selectedFiles.forEach(s => form.append("files", s.file)); // backend should accept multiple files
-    setLoadingUpload(true);
-    try {
-      const resp = await axiosInstance.post("/api/upload/upload", form, {
-        headers: { "Content-Type": "multipart/form-data" },
-        withCredentials: true
-      });
-      const data = resp && resp.data ? resp.data : {};
-      // normalize returned shapes
-      let arr = [];
-      if (Array.isArray(data)) arr = data;
-      else if (Array.isArray(data.uploaded)) arr = data.uploaded;
-      else if (Array.isArray(data.files)) arr = data.files;
-      else if (data.url) arr = [data];
-      // extract urls
-      const urls = arr.map(it => (it && it.url) ? it.url : (typeof it === "string" ? it : null)).filter(Boolean);
-      // also store uploadedImages for UI
-      const ui = arr.map((it, i) => {
-        if (it && it.url) return { filename: it.filename || `img-${i}`, url: it.url };
-        if (typeof it === "string") return { filename: `img-${i}`, url: it };
-        return null;
-      }).filter(Boolean);
-      setUploadedImages(prev => [...prev, ...ui]);
-      setSelectedFiles([]); // clear previews
-      return urls;
-    } catch (err) {
-      console.error("Upload failed", err);
-      throw err;
-    } finally {
-      setLoadingUpload(false);
-    }
+ async function uploadFilesIfAny() {
+  if (!selectedFiles.length) return [];
+  const form = new FormData();
+  selectedFiles.forEach(s => form.append("files", s.file));
+
+  setLoadingUpload(true);
+  try {
+    // Correct endpoint (same as AdminProductEdit)
+    const resp = await axiosInstance.post("/api/uploadRoutes/upload", form, {
+      headers: { "Content-Type": "multipart/form-data" },
+      withCredentials: true
+    });
+
+    const data = resp?.data || {};
+    let arr = [];
+
+    if (Array.isArray(data.uploaded)) arr = data.uploaded;
+    else if (data.url) arr = [data];
+
+    const urls = arr.map(it => it.url).filter(Boolean);
+    const ui = arr.map((it, i) => ({
+      filename: it.filename || `img-${i}`,
+      url: it.url
+    }));
+
+    setUploadedImages(prev => [...prev, ...ui]);
+    setSelectedFiles([]);
+
+    return urls;
+  } catch (err) {
+    console.error("Upload failed", err);
+    throw err;
+  } finally {
+    setLoadingUpload(false);
   }
+}
 
   // color picker interactions
   function openColorPickerAtIndex(idx) {
