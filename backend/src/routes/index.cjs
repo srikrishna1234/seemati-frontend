@@ -49,13 +49,17 @@ if (uploadRoutes) {
 // -------------------------
 // UPLOAD COMPAT ROUTES
 // -------------------------
+// -------------------------
+// FORCE-MOUNT uploadRoutes (Render fix)
+// -------------------------
 try {
-  const uploadCompat = require('./uploadCompat.cjs');
-  router.use('/', uploadCompat);
-  console.log('[ROUTES] Mounted uploadCompat at /');
+  const uploadRoutes = require('./uploadRoutes.cjs');
+  router.use('/uploadRoutes', uploadRoutes);
+  console.log('[ROUTES] Mounted /uploadRoutes explicitly');
 } catch (err) {
-  console.warn('[ROUTES] uploadCompat missing:', err.message);
+  console.warn('[ROUTES] uploadRoutes missing:', err.message);
 }
+
 
 // -------------------------
 // AUTO-MOUNT ALL OTHERS
