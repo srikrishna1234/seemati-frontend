@@ -171,5 +171,43 @@ router.put('/:id', async (req, res) => {
     });
   }
 });
+/* -------------------------------------------------------
+   DELETE PRODUCT BY ID
+   DELETE /api/products/:id
+-------------------------------------------------------- */
+router.delete('/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing product ID'
+      });
+    }
+
+    const deleted = await Product.findByIdAndDelete(id);
+
+    if (!deleted) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found'
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Product deleted',
+      product: deleted
+    });
+
+  } catch (err) {
+    console.error('Delete product error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message || 'Server error'
+    });
+  }
+});
 
 module.exports = router;

@@ -6,6 +6,7 @@ import React, { useEffect, useState } from "react";
   - Controlled form component that returns (values, files) to onSave
   - Does not perform upload by itself (caller handles upload)
   - Accepts `initial` prop and `saving` boolean
+  - Uses JSON-stringified initial in effect dependency to avoid infinite loops
 */
 
 export default function ProductForm({ initial = {}, onSave, saving = false }) {
@@ -21,8 +22,9 @@ export default function ProductForm({ initial = {}, onSave, saving = false }) {
   const [colorsText, setColorsText] = useState(Array.isArray(initial.colors) ? initial.colors.join(",") : (initial.colors || ""));
   const [files, setFiles] = useState([]);
 
+  // Use JSON.stringify(initial) so the effect triggers only when the *value*
+  // of initial changes, not when a new object identity is supplied each render.
   useEffect(() => {
-    // update when initial changes
     setTitle(initial.title || "");
     setDescription(initial.description || "");
     setPrice(initial.price ?? "");
@@ -34,7 +36,8 @@ export default function ProductForm({ initial = {}, onSave, saving = false }) {
     setSizesText(Array.isArray(initial.sizes) ? initial.sizes.join(",") : (initial.sizes || ""));
     setColorsText(Array.isArray(initial.colors) ? initial.colors.join(",") : (initial.colors || ""));
     setFiles([]);
-  }, [initial]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(initial || {})]);
 
   function handleFiles(e) {
     setFiles(Array.from(e.target.files || []));
