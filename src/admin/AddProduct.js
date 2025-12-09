@@ -264,7 +264,7 @@ export default function AddProduct() {
     selectedFiles.forEach(s => form.append("files", s.file)); // backend should accept multiple files
     setLoadingUpload(true);
     try {
-      const resp = await axiosInstance.post("/api/products/upload", form, {
+      const resp = await axiosInstance.post("/api/upload/upload", form, {
         headers: { "Content-Type": "multipart/form-data" },
         withCredentials: true
       });
