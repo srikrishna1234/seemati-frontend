@@ -34,8 +34,8 @@ export default function AdminLogin() {
 
       const json = await res.json().catch(() => ({}));
 
-      // 🔥 FIXED: backend returns json.success, NOT json.ok
-      if (res.ok && json.success) {
+      // FIX → backend returns json.ok, not json.success
+      if (res.ok && json.ok) {
         setStage("verify");
         setMsg("OTP sent to your mobile.");
       } else {
@@ -71,8 +71,8 @@ export default function AdminLogin() {
 
       const json = await res.json().catch(() => ({}));
 
-      // 🔥 FIXED: check json.success
-      if (res.ok && json.success) {
+      // FIX → backend returns json.ok
+      if (res.ok && json.ok) {
         setMsg("Login successful… redirecting");
         setTimeout(() => {
           window.location.href = "/admin/products";
