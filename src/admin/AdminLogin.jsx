@@ -1,15 +1,6 @@
 // src/admin/AdminLogin.jsx
 import React, { useState } from "react";
 
-/**
- * FINAL & CLEAN OTP LOGIN PAGE
- * Uses the ONLY correct backend endpoints:
- *   POST /api/auth/send-otp
- *   POST /api/auth/verify-otp
- *
- * Your backend now mounts them 100% correctly.
- */
-
 const BACKEND =
   process.env.REACT_APP_API_BASE ||
   "https://seemati-backend.onrender.com";
@@ -43,7 +34,8 @@ export default function AdminLogin() {
 
       const json = await res.json().catch(() => ({}));
 
-      if (res.ok && json.ok) {
+      // 🔥 FIXED: backend returns json.success, NOT json.ok
+      if (res.ok && json.success) {
         setStage("verify");
         setMsg("OTP sent to your mobile.");
       } else {
@@ -79,7 +71,8 @@ export default function AdminLogin() {
 
       const json = await res.json().catch(() => ({}));
 
-      if (res.ok && json.ok) {
+      // 🔥 FIXED: check json.success
+      if (res.ok && json.success) {
         setMsg("Login successful… redirecting");
         setTimeout(() => {
           window.location.href = "/admin/products";
