@@ -4,7 +4,7 @@
 const path = require('path');
 let Product;
 try {
-  Product = require(path.join(__dirname, '..', 'models', 'Product.cjs'));
+  Product = require(path.join(__dirname, '..', '..', 'models', 'Product.cjs'));
   console.log('[productController] Loaded model');
 } catch (err) {
   console.error('[productController] FAILED to load Product model:', err && err.message);

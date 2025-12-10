@@ -3,7 +3,7 @@ const express = require('express');
 const router = express.Router();
 
 // Explicit requires
-const Product = require('../models/Product.cjs');
+const Product = require('../../models/Product.cjs');
 const generateUniqueSlug = require('../utils/generateUniqueSlug.js');
 const slugify = require('../utils/slugify.js');
 
