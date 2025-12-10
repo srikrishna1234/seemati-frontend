@@ -89,7 +89,7 @@ export default function AdminLogin() {
 
   return (
     <div style={{ maxWidth: 500, margin: "0 auto", padding: 24 }}>
-      <h1>Admin Login</h1>
+      <h1>Admin Login NEW</h1>
 
       {msg && <p style={{ color: "red" }}>{msg}</p>}
 
