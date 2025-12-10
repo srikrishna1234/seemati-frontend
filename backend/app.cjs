@@ -102,19 +102,32 @@ try {
 // Try mounting auth (OTP) router at common locations
 try {
   const auth = tryRequire(
-    'src/routes/auth.cjs',
-    'src/routes/auth.js',
+    // prefer exact path relative to this file
+    './src/routes/authRoutes.cjs',
+    './src/routes/authRoutes.js',
+    './routes/authRoutes.cjs',
+    './routes/authRoutes.js',
+    './src/routes/auth.cjs',
+    './src/routes/auth.js',
+    './routes/auth.cjs',
+    './routes/auth.js',
+    // fallbacks without ./ for older layout (kept for compatibility)
     'src/routes/authRoutes.cjs',
     'src/routes/authRoutes.js',
     'routes/auth.cjs',
     'routes/auth.js'
   );
+
   if (auth) {
     app.use('/api/auth', auth);
     console.log('[BOOT] Mounted auth routes at /api/auth');
   } else {
     // also mount otpRoutes explicitly if present
     const otp = tryRequire(
+      './src/routes/otpRoutes.cjs',
+      './src/routes/otpRoutes.js',
+      './routes/otpRoutes.cjs',
+      './routes/otpRoutes.js',
       'src/routes/otpRoutes.cjs',
       'src/routes/otpRoutes.js',
       'routes/otpRoutes.cjs',
