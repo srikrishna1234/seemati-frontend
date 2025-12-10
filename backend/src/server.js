@@ -20,6 +20,8 @@ const mongoose = (() => {
 
 const PORT = process.env.PORT || 4000;
 
+/* --------------------- UTILITIES ----------------------- */
+
 function canonicalizeOrigin(raw) {
   if (!raw) return raw;
   try { const u = new URL(String(raw).trim()); return u.origin; }
@@ -41,7 +43,7 @@ async function connectMongo() {
   }
 }
 
-// Dynamic require helper
+// dynamic require helper
 async function tryRequire(relPath) {
   try {
     let resolved;
@@ -62,16 +64,16 @@ async function tryRequire(relPath) {
   }
 }
 
+/* --------------------- MAIN APP ----------------------- */
+
 async function main() {
   await connectMongo();
 
   const app = express();
 
-  // CORS allowed origins
+  /* ---------------- CORS ---------------- */
   const FR = canonicalizeOrigin(process.env.FRONTEND_ORIGIN || 'http://localhost:3000');
-  const allowed = new Set([FR]);
-  allowed.add('http://localhost:3000');
-  allowed.add('http://127.0.0.1:3000');
+  const allowed = new Set([FR, 'http://localhost:3000', 'http://127.0.0.1:3000']);
 
   app.use(cors({
     origin: (incoming, cb) => {
@@ -87,7 +89,7 @@ async function main() {
   app.use(express.json({ limit: '20mb' }));
   app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
-  // Sessions
+  /* ---------------- Sessions ---------------- */
   app.use(session({
     secret: process.env.SESSION_SECRET || 'dev_secret',
     resave: false,
@@ -95,62 +97,72 @@ async function main() {
     cookie: { secure: false }
   }));
 
-  // uploads folder
+  /* ---------------- uploads folder ---------------- */
   const uploadDir = path.join(__dirname, '..', 'uploads');
   if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
   app.use('/uploads', express.static(uploadDir));
 
-  // MOUNT ROUTES ----------------------
+  /* ---------------- MOUNT ROUTES ---------------- */
 
-  // Upload routes (your missing part)
+  // Upload routes
   const uploadRoutes =
     await tryRequire('./routes/uploadRoutes.cjs') ||
     await tryRequire('./routes/uploadRoutes.js');
-
   if (uploadRoutes) {
     app.use('/api/uploads', uploadRoutes);
-    console.log(' Mounted uploadRoutes.cjs at /api/uploads');
+    console.log(' Mounted uploadRoutes at /api/uploads');
   }
 
-  // Presign PUT route
+  // Presign PUT
   const presign =
     await tryRequire('./routes/presign-put.cjs') ||
     await tryRequire('./routes/presign-put.js');
-
   if (presign) {
     app.use('/api/presign-put', presign);
     console.log(' Mounted presign-put at /api/presign-put');
   }
 
-  // Product routes
+  // Products
   const productRoutes =
     await tryRequire('./routes/productRoutes.cjs') ||
     await tryRequire('./routes/productRoutes.js');
-
   if (productRoutes) {
     app.use('/api/products', productRoutes);
     console.log(' Mounted productRoutes at /api/products');
   }
 
-  // Admin product routes if exist
+  // Admin products
   const adminRoutes =
     await tryRequire('./routes/adminProduct.cjs') ||
     await tryRequire('./routes/adminProduct.js');
-
   if (adminRoutes) {
     app.use('/api/admin/products', adminRoutes);
     console.log(' Mounted adminProduct at /api/admin/products');
   }
 
-  // Health endpoints
+  /* ---------------- OTP ROUTES (IMPORTANT) ---------------- */
+  const otpRoutes =
+    await tryRequire('./routes/otpRoutes.cjs') ||
+    await tryRequire('./routes/otpRoutes.js');
+
+  if (otpRoutes) {
+    app.use('/api/otp', otpRoutes);
+    console.log(' Mounted otpRoutes at /api/otp');
+  } else {
+    console.warn(' ⚠️ otpRoutes NOT FOUND — /api/otp/send will 404');
+  }
+
+  /* ---------------- Health ---------------- */
   app.get('/api/ping', (req, res) => res.json({ ok: true }));
   app.get('/health', (req, res) => res.json({ ok: true }));
 
-  // API fallback
-  app.use('/api', (req, res) => res.status(404).json({ error: 'API endpoint not found' }));
+  /* ---------------- API fallback ---------------- */
+  app.use('/api', (req, res) => {
+    res.status(404).json({ error: 'API endpoint not found' });
+  });
 
-  // Start server
+  /* ---------------- START SERVER ---------------- */
   app.listen(PORT, () => {
     console.log(` Backend running on port ${PORT}`);
   });

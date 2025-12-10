@@ -2,20 +2,21 @@
 import React from "react";
 import { Routes, Route, Link } from "react-router-dom";
 
+import AdminLogin from "./AdminLogin";                 // ✅ Correct case
 import AdminProductList from "./AdminProductList";
 import AdminProductEdit from "./AdminProductEdit";
-import AddProduct from "./AddProduct";           // ✅ FIXED
+import AddProduct from "./AddProduct";
 import AdminAnnouncements from "./AdminAnnouncements";
 
 export default function AdminPage() {
-  console.debug("[AdminPage] mounted, location:", window.location.pathname);
-
   return (
     <div>
       <header style={{ padding: 20, borderBottom: "1px solid #eee" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <h1 style={{ margin: 0 }}>Admin</h1>
+
           <nav>
+            <Link to="/admin/login" style={{ marginRight: 12 }}>Login</Link>
             <Link to="/admin/products" style={{ marginRight: 12 }}>Products</Link>
             <Link to="/admin/announcements" style={{ marginRight: 12 }}>Announcements</Link>
             <Link to="/">Back to site</Link>
@@ -25,16 +26,19 @@ export default function AdminPage() {
 
       <main style={{ padding: 20 }}>
         <Routes>
+          {/* LOGIN PAGE */}
+          <Route path="login" element={<AdminLogin />} />
+
+          {/* PRODUCTS */}
           <Route path="products" element={<AdminProductList />} />
-
-          {/* ✅ FIX: Use AddProduct instead of ProductForm */}
           <Route path="products/new" element={<AddProduct />} />
-
           <Route path="products/:id" element={<AdminProductEdit />} />
+
+          {/* ANNOUNCEMENTS */}
           <Route path="announcements" element={<AdminAnnouncements />} />
 
-          {/* fallback */}
-          <Route path="*" element={<AdminProductList />} />
+          {/* DEFAULT → Login */}
+          <Route path="*" element={<AdminLogin />} />
         </Routes>
       </main>
     </div>
