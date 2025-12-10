@@ -1,17 +1,6 @@
 // backend/app.cjs
 'use strict';
 
-/**
- * Robust backend/app.cjs
- * - Reads ALLOWED_ORIGINS or CORS_ORIGINS env (comma separated)
- * - Builds origin matcher (strings + regex if a value is /.../ form)
- * - Properly handles CORS preflight and sets Access-Control-Allow-* headers
- * - Mounts OTP routes at multiple endpoints for compatibility
- * - Mounts product/admin routes if present
- *
- * Replace this file and restart your backend process.
- */
-
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
@@ -22,172 +11,182 @@ const mongoose = require('mongoose');
 
 const app = express();
 
-// --- Helper: build allowed origin matchers from env ---
-const raw = (process.env.ALLOWED_ORIGINS || process.env.CORS_ORIGINS || '').trim();
-// default allowed origins (include localhost for dev)
+// ---------- CORS setup using env (robust) ----------
+const raw = (process.env.ALLOWED_ORIGINS || process.env.CORS_ORIGINS || process.env.CORS_ORIGIN || '').trim();
 let allowedOrigins = raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : [];
+
+// Always allow localhost dev
 if (!allowedOrigins.includes('http://localhost:3000')) allowedOrigins.push('http://localhost:3000');
-if (!allowedOrigins.includes('http://127.0.0.1:3000')) allowedOrigins.push('http://127.0.0.1:3000');
 
-const matchers = allowedOrigins.map(entry => {
-  if (!entry) return entry;
-  // allow regex entries if given like "/\\.vercel\\.app$/"
-  if (entry.startsWith('/') && entry.endsWith('/')) {
-    try { return new RegExp(entry.slice(1, -1)); } catch (e) { return entry; }
-  }
-  return entry;
-});
+// Common live origins you use — only added if not in env (safe defaults)
+const commonDefaults = [
+  'https://seemati.in',
+  'https://www.seemati.in',
+  'https://admin.seemati.in'
+];
+for (const d of commonDefaults) if (!allowedOrigins.includes(d)) allowedOrigins.push(d);
 
-// optional debug log
-console.log('[BOOT] allowed origins:', allowedOrigins);
+console.log('[BOOT] Allowed CORS origins:', allowedOrigins);
 
-// --- CORS middleware using dynamic origin check ---
-function originChecker(reqOrigin, callback) {
-  if (!reqOrigin) {
-    // no origin (same-origin requests like curl or server-side) -> allow
-    return callback(null, true);
-  }
-  for (const m of matchers) {
-    if (typeof m === 'string') {
-      if (m === reqOrigin) {
-        console.debug('[CORS] origin allowed (string):', reqOrigin);
-        return callback(null, true);
-      }
-    } else if (m instanceof RegExp) {
-      if (m.test(reqOrigin)) {
-        console.debug('[CORS] origin allowed (regex):', reqOrigin);
-        return callback(null, true);
-      }
-    }
-  }
-  console.warn('[CORS] blocked origin:', reqOrigin);
-  return callback(new Error('Not allowed by CORS'));
-}
-
-app.use(express.json({ limit: '20mb' }));
-app.use(express.urlencoded({ extended: true }));
-app.use(cookieParser());
-
-// use CORS with credentials true (so cookies can be sent)
 app.use(cors({
-  origin: originChecker,
+  origin: (origin, cb) => {
+    // allow non-browser tools (curl, server-to-server)
+    if (!origin) return cb(null, true);
+    if (allowedOrigins.includes(origin)) return cb(null, true);
+    // try match without trailing slash / lower-case normalisation
+    const norm = origin.replace(/\/+$/, '').toLowerCase();
+    for (const a of allowedOrigins) {
+      if (a.replace(/\/+$/, '').toLowerCase() === norm) return cb(null, true);
+    }
+    console.warn('[CORS] blocked origin:', origin);
+    return cb(new Error('Not allowed by CORS'));
+  },
   credentials: true,
   exposedHeaders: ['set-cookie'],
   optionsSuccessStatus: 204
 }));
 
-// respond to preflight with appropriate headers (extra safety)
-app.options('*', (req, res) => {
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Allow-Headers', req.header('Access-Control-Request-Headers') || 'Content-Type');
-  res.header('Access-Control-Allow-Methods', req.header('Access-Control-Request-Method') || 'GET,POST,PUT,DELETE,OPTIONS');
-  res.sendStatus(204);
-});
+app.use(express.json({ limit: '20mb' }));
+app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
 
-// serve uploads if present
+// Serve uploads folder (if present)
 const uploadsDir = path.join(__dirname, '..', 'uploads');
 if (fs.existsSync(uploadsDir)) {
   app.use('/uploads', express.static(uploadsDir));
-  console.log('[BOOT] Serving uploads folder at /uploads');
+  console.log('[BOOT] Serving uploads from /uploads');
 }
 
-// helper: try multiple require candidates (useful for different layouts)
-function tryRequire(...candidates) {
-  for (const cand of candidates) {
+// Helper: attempt to require multiple candidate paths and return the first module found
+function tryRequire(...cands) {
+  for (const cand of cands) {
     try {
       const full = path.join(__dirname, cand);
-      if (fs.existsSync(full)) return require(full);
-      if (fs.existsSync(full + '.js')) return require(full + '.js');
-      if (fs.existsSync(full + '.cjs')) return require(full + '.cjs');
+      if (fs.existsSync(full)) {
+        console.log(`[BOOT] tryRequire found file: ${full}`);
+        return require(full);
+      }
+      // try with common extensions
+      if (fs.existsSync(full + '.js')) { console.log(`[BOOT] tryRequire found file: ${full}.js`); return require(full + '.js'); }
+      if (fs.existsSync(full + '.cjs')) { console.log(`[BOOT] tryRequire found file: ${full}.cjs`); return require(full + '.cjs'); }
+      if (fs.existsSync(full + '.mjs')) { console.log(`[BOOT] tryRequire found file: ${full}.mjs`); return require(full + '.mjs'); }
     } catch (err) {
-      // continue trying others
+      console.warn('[BOOT] tryRequire error for', cand, err && err.message);
+      // keep trying other candidates
     }
   }
   return null;
 }
 
-// --- Mount OTP routes (multiple mount points for frontend compatibility) ---
-const otpRouter = tryRequire(
-  'src/routes/otpRoutes.cjs',
-  'src/routes/otpRoutes.js',
-  'routes/otpRoutes.cjs',
-  'routes/otpRoutes.js'
-);
-
-if (otpRouter) {
-  // mount the OTP router at several endpoints so frontend candidate probes succeed
-  app.use('/api/auth', otpRouter);      // POST /api/auth/send-otp or /api/auth/verify-otp
-  app.use('/api/otp', otpRouter);       // POST /api/otp/send and /api/otp/verify
-  app.use('/otpRoutes', otpRouter);     // POST /otpRoutes/send etc (some apps)
-  console.log('[BOOT] Mounted OTP routes at /api/auth, /api/otp and /otpRoutes');
-} else {
-  console.warn('[BOOT] OTP routes not found — OTP endpoints will 404');
+// IMPORTANT: hard-mount uploadRoutes at both /api/uploadRoutes and /api/uploads for compatibility.
+try {
+  const uploadRoutes = tryRequire(
+    'src/routes/uploadRoutes.cjs',
+    'src/routes/uploadRoutes.js',
+    'routes/uploadRoutes.cjs',
+    'routes/uploadRoutes.js',
+    './src/routes/uploadRoutes.cjs',
+    './routes/uploadRoutes.cjs'
+  );
+  if (uploadRoutes) {
+    app.use('/api/uploadRoutes', uploadRoutes);
+    app.use('/api/uploads', uploadRoutes);
+    console.log('[BOOT] Mounted uploadRoutes at /api/uploadRoutes and /api/uploads');
+  } else {
+    console.warn('[BOOT] uploadRoutes module not found — uploads will 404');
+  }
+} catch (err) {
+  console.error('[BOOT] uploadRoutes mount failed:', err && err.message);
 }
 
-// --- Mount product routes ---
-const productRoutes = tryRequire(
-  'src/routes/productRoutes.cjs',
-  'src/routes/productRoutes.js',
-  'routes/productRoutes.cjs',
-  'routes/productRoutes.js'
-);
-if (productRoutes) {
-  app.use('/api/products', productRoutes);
-  console.log('[BOOT] Mounted productRoutes at /api/products');
-} else {
-  console.warn('[BOOT] productRoutes not found');
+// Try mounting auth (OTP) router at common locations
+try {
+  const auth = tryRequire(
+    'src/routes/auth.cjs',
+    'src/routes/auth.js',
+    'src/routes/authRoutes.cjs',
+    'src/routes/authRoutes.js',
+    'routes/auth.cjs',
+    'routes/auth.js'
+  );
+  if (auth) {
+    app.use('/api/auth', auth);
+    console.log('[BOOT] Mounted auth routes at /api/auth');
+  } else {
+    // also mount otpRoutes explicitly if present
+    const otp = tryRequire(
+      'src/routes/otpRoutes.cjs',
+      'src/routes/otpRoutes.js',
+      'routes/otpRoutes.cjs',
+      'routes/otpRoutes.js'
+    );
+    if (otp) {
+      app.use('/api/otp', otp);
+      console.log('[BOOT] Mounted otpRoutes at /api/otp');
+    } else {
+      console.warn('[BOOT] auth/otp routes not mounted (not found)');
+    }
+  }
+} catch (err) {
+  console.error('[BOOT] auth/otp mount error:', err && err.message);
 }
 
-// --- Mount admin product routes (optional) ---
-const adminProductRoutes = tryRequire(
-  'src/routes/adminProduct.cjs',
-  'src/routes/adminProduct.js',
-  'routes/adminProduct.cjs',
-  'routes/adminProduct.js'
-);
-if (adminProductRoutes) {
-  app.use('/api/admin/products', adminProductRoutes);
-  console.log('[BOOT] Mounted admin product routes at /api/admin/products');
+// Try mounting product routes
+try {
+  const productRoutes = tryRequire(
+    'src/routes/productRoutes.cjs',
+    'src/routes/productRoutes.js',
+    'routes/productRoutes.cjs',
+    'routes/productRoutes.js'
+  );
+  if (productRoutes) {
+    app.use('/api/products', productRoutes);
+    console.log('[BOOT] Mounted productRoutes at /api/products');
+  } else {
+    console.warn('[BOOT] productRoutes not found');
+  }
+} catch (err) {
+  console.error('[BOOT] productRoutes mount error:', err && err.message);
 }
 
-// --- Optional: mount an 'auth' index router if present (older layout) ---
-const authIndex = tryRequire(
-  'src/routes/auth.cjs',
-  'src/routes/auth.js',
-  'routes/auth.cjs',
-  'routes/auth.js',
-  'src/routes/authRoutes.cjs',
-  'src/routes/authRoutes.js'
-);
-if (authIndex) {
-  app.use('/api/auth', authIndex);
-  console.log('[BOOT] Mounted auth router at /api/auth (index)');
+// Admin product mount (optional)
+try {
+  const adminRoutes = tryRequire(
+    'src/routes/adminProduct.cjs',
+    'src/routes/adminProduct.js',
+    'routes/adminProduct.cjs',
+    'routes/adminProduct.js'
+  );
+  if (adminRoutes) {
+    app.use('/api/admin/products', adminRoutes);
+    console.log('[BOOT] Mounted adminProduct at /api/admin/products');
+  }
+} catch (err) {
+  console.error('[BOOT] adminProduct mount error:', err && err.message);
 }
 
-// health check
+// Generic health endpoint
 app.get('/api/health', (req, res) => res.json({ ok: true, time: new Date().toISOString() }));
 
-// final API 404
+// Final API 404 fallback (detailed)
 app.use('/api', (req, res) => {
   res.status(404).json({ ok: false, message: 'API endpoint not found', path: req.originalUrl });
 });
 
-// start server
+// Start server
 const PORT = process.env.PORT || process.env.APP_PORT || 4000;
-const MONGO = process.env.MONGO_URI || process.env.MONGODB_URI || process.env.DATABASE_URL || null;
-
 async function start() {
+  const MONGO = process.env.MONGO_URI || process.env.MONGODB_URI || process.env.DATABASE_URL || null;
   if (MONGO) {
     try {
-      const mongooseOpts = { useNewUrlParser: true, useUnifiedTopology: true };
       console.log('[BOOT] Connecting to MongoDB...');
-      await mongoose.connect(MONGO, mongooseOpts);
+      await mongoose.connect(MONGO, { useNewUrlParser: true, useUnifiedTopology: true });
       console.log('[BOOT] MongoDB connected');
     } catch (err) {
-      console.warn('[BOOT] MongoDB connection failed:', err && err.message ? err.message : err);
+      console.warn('[BOOT] MongoDB connect failed:', err && err.message ? err.message : err);
     }
   } else {
-    console.log('[BOOT] No MongoDB configured (continuing without DB)');
+    console.log('[BOOT] No MONGO configured (continuing without DB)');
   }
 
   app.listen(PORT, () => {
@@ -195,9 +194,6 @@ async function start() {
   });
 }
 
-start().catch(err => {
-  console.error('[BOOT] Fatal start error:', err && (err.stack || err));
-  process.exit(1);
-});
+if (require.main === module) start();
 
 module.exports = app;
