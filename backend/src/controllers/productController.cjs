@@ -3,6 +3,7 @@
 
 const path = require('path');
 let Product;
+
 try {
   Product = require(path.join(__dirname, '..', '..', 'models', 'Product.cjs'));
   console.log('[productController] Loaded model');
@@ -21,6 +22,7 @@ try {
   return;
 }
 
+/* ---------- GET ALL ---------- */
 async function getAllProducts(req, res) {
   try {
     const products = await Product.find().lean();
@@ -31,6 +33,7 @@ async function getAllProducts(req, res) {
   }
 }
 
+/* ---------- GET BY ID ---------- */
 async function getProductById(req, res) {
   try {
     const { id } = req.params;
@@ -43,6 +46,7 @@ async function getProductById(req, res) {
   }
 }
 
+/* ---------- CREATE ---------- */
 async function createProduct(req, res) {
   try {
     const payload = req.body;
@@ -55,32 +59,68 @@ async function createProduct(req, res) {
   }
 }
 
+/* ---------- UPDATE (FIXED) ---------- */
 async function updateProduct(req, res) {
+  console.log("🔵 UPDATE PRODUCT HIT");
+  console.log("🔵 req.body =", JSON.stringify(req.body, null, 2));
+
   try {
     const { id } = req.params;
     let updates = { ...req.body };
 
-    // parse colors/sizes if strings
-    if (updates.colors && typeof updates.colors === 'string') {
-      updates.colors = updates.colors.split(',').map(s => s.trim()).filter(Boolean);
-    }
+    // normalize sizes if string
     if (updates.sizes && typeof updates.sizes === 'string') {
-      updates.sizes = updates.sizes.split(',').map(s => s.trim()).filter(Boolean);
+      updates.sizes = updates.sizes
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
     }
+
+    // normalize published
     if (updates.published !== undefined) {
-      updates.published = (updates.published === true || updates.published === 'true' || updates.published === '1');
+      updates.published =
+        updates.published === true ||
+        updates.published === 'true' ||
+        updates.published === '1';
     }
 
-    // allowed fields (same as routes)
+    // allowed fields (single source of truth)
     const allowed = [
-      "title","slug","price","description","images","tags","stock","thumbnail",
-      "mrp","compareAtPrice","sku","brand","category","colors","sizes","videoUrl","published"
+      "title",
+      "slug",
+      "price",
+      "description",
+      "images",
+      "stock",
+      "thumbnail",
+      "mrp",
+      "sku",
+      "brand",
+      "category",
+      "colors",
+      "sizes",
+      "videoUrl",
+      "published"
     ];
-    const filtered = {};
-    allowed.forEach(k => { if (updates[k] !== undefined) filtered[k] = updates[k]; });
 
-    const updated = await Product.findByIdAndUpdate(id, filtered, { new: true, runValidators: true }).lean();
-    if (!updated) return res.status(404).json({ error: 'Product not found' });
+    const filtered = {};
+    allowed.forEach(k => {
+      if (updates[k] !== undefined) {
+        filtered[k] = updates[k];
+      }
+    });
+
+    // ✅ CRITICAL FIX: use $set to force overwrite
+    const updated = await Product.findByIdAndUpdate(
+      id,
+      { $set: filtered },
+      { new: true, runValidators: true }
+    ).lean();
+
+    if (!updated) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
     return res.json(updated);
   } catch (err) {
     console.error('[productController] updateProduct error:', err);
@@ -88,6 +128,7 @@ async function updateProduct(req, res) {
   }
 }
 
+/* ---------- DELETE ---------- */
 async function deleteProduct(req, res) {
   try {
     const { id } = req.params;
