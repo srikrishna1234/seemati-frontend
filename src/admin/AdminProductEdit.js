@@ -271,14 +271,37 @@ export default function AdminProductEdit() {
       let newUrls = [];
       if (selectedFiles.length) newUrls = await uploadSelectedImages();
 
-      await axiosInstance.put(`/api/admin/products/products/${id}`, {
-        ...form,
-        price: Number(form.price),
-        mrp: Number(form.mrp),
-        stock: Number(form.stock),
-        images: [...uploadedImages, ...newUrls],
-        colors: normalizeColorsForBackend(swatches)
-      });
+      await axiosInstance.put(`/api/admin/products/products/${id}`, (() => {
+  const normalizedSizes = Array.from(
+    new Set(
+      (form.sizes || [])
+        .map(s => String(s).trim())
+        .filter(Boolean)
+    )
+  );
+
+  const normalizedColors = Array.from(
+    new Map(
+      normalizeColorsForBackend(swatches)
+        .filter(c => c?.name && c?.hex)
+        .map(c => [c.name.toLowerCase(), {
+          name: c.name.toLowerCase(),
+          hex: c.hex.toUpperCase()
+        }])
+    ).values()
+  );
+
+  return {
+    ...form,
+    price: Number(form.price),
+    mrp: Number(form.mrp),
+    stock: Number(form.stock),
+    sizes: normalizedSizes,
+    images: [...uploadedImages, ...newUrls],
+    colors: normalizedColors,
+    videoUrl: (form.videoUrl || "").trim()
+  };
+})());
 
       alert("Product updated successfully");
       navigate("/admin/products");
