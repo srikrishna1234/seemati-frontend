@@ -11,13 +11,13 @@ try {
   console.error('[productController] FAILED to load Product model:', err && err.message);
   const e = new Error('Product model not found');
   module.exports = {
-    getAllProducts: async (req, res) => res.status(500).json({ error: e.message }),
-    getProductById: async (req, res) => res.status(500).json({ error: e.message }),
-    createProduct: async (req, res) => res.status(500).json({ error: e.message }),
-    updateProduct: async (req, res) => res.status(500).json({ error: e.message }),
-    deleteProduct: async (req, res) => res.status(500).json({ error: e.message }),
-    listProducts: async (req, res) => res.status(500).json({ error: e.message }),
-    getProduct: async (req, res) => res.status(500).json({ error: e.message }),
+    getAllProducts: async (_req, res) => res.status(500).json({ error: e.message }),
+    getProductById: async (_req, res) => res.status(500).json({ error: e.message }),
+    createProduct: async (_req, res) => res.status(500).json({ error: e.message }),
+    updateProduct: async (_req, res) => res.status(500).json({ error: e.message }),
+    deleteProduct: async (_req, res) => res.status(500).json({ error: e.message }),
+    listProducts: async (_req, res) => res.status(500).json({ error: e.message }),
+    getProduct: async (_req, res) => res.status(500).json({ error: e.message }),
   };
   return;
 }
@@ -49,8 +49,7 @@ async function getProductById(req, res) {
 /* ---------- CREATE ---------- */
 async function createProduct(req, res) {
   try {
-    const payload = req.body;
-    const p = new Product(payload);
+    const p = new Product(req.body);
     await p.save();
     return res.status(201).json(p);
   } catch (err) {
@@ -59,61 +58,17 @@ async function createProduct(req, res) {
   }
 }
 
-/* ---------- UPDATE (FIXED) ---------- */
+/* ---------- UPDATE (FINAL FIX) ---------- */
 async function updateProduct(req, res) {
-  console.log("🔵 UPDATE PRODUCT HIT");
-  console.log("🔵 req.body =", JSON.stringify(req.body, null, 2));
+  console.log('🔵 UPDATE PRODUCT HIT');
+  console.log('🔵 req.body =', JSON.stringify(req.body, null, 2));
 
   try {
     const { id } = req.params;
-    let updates = { ...req.body };
 
-    // normalize sizes if string
-    if (updates.sizes && typeof updates.sizes === 'string') {
-      updates.sizes = updates.sizes
-        .split(',')
-        .map(s => s.trim())
-        .filter(Boolean);
-    }
-
-    // normalize published
-    if (updates.published !== undefined) {
-      updates.published =
-        updates.published === true ||
-        updates.published === 'true' ||
-        updates.published === '1';
-    }
-
-    // allowed fields (single source of truth)
-    const allowed = [
-      "title",
-      "slug",
-      "price",
-      "description",
-      "images",
-      "stock",
-      "thumbnail",
-      "mrp",
-      "sku",
-      "brand",
-      "category",
-      "colors",
-      "sizes",
-      "videoUrl",
-      "published"
-    ];
-
-    const filtered = {};
-    allowed.forEach(k => {
-      if (updates[k] !== undefined) {
-        filtered[k] = updates[k];
-      }
-    });
-
-    // ✅ CRITICAL FIX: use $set to force overwrite
     const updated = await Product.findByIdAndUpdate(
       id,
-      { $set: filtered },
+      { $set: req.body },           // 🔥 FULL OVERWRITE — REQUIRED
       { new: true, runValidators: true }
     ).lean();
 
