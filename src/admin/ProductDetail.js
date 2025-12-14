@@ -1,30 +1,12 @@
 // src/admin/ProductDetail.js
 import React, { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import colorNames from "../utils/colorNames"; // uses hexToName / formatColorName
+import axiosInstance from "../api/axiosInstance";
+import colorNames from "../utils/colorNames";
 
-const BASE_URL =
-  process.env.REACT_APP_API_BASE_URL ||
-  process.env.REACT_APP_API_URL ||
-  "https://seemati-backend.onrender.com";
 const PLACEHOLDER = "/images/placeholder.png";
 
 /* -------------------- utilities -------------------- */
-
-function toImageUrl(img) {
-  if (!img) return null;
-  if (typeof img === "object") {
-    const u = img.url || img.path || img.filename || img.src || null;
-    if (!u) return null;
-    if (typeof u === "string" && (u.startsWith("http://") || u.startsWith("https://"))) return u;
-    return `${BASE_URL}${u.startsWith("/") ? u : `/${u}`}`;
-  }
-  const s = String(img).trim();
-  if (!s) return null;
-  if (s.startsWith("http://") || s.startsWith("https://")) return s;
-  if (s.startsWith("//")) return window.location.protocol + s;
-  return `${BASE_URL}${s.startsWith("/") ? s : `/${s}`}`;
-}
 
 function normalizeHex(raw) {
   if (!raw) return null;
@@ -32,44 +14,31 @@ function normalizeHex(raw) {
   if (s.startsWith("0x")) s = s.slice(2);
   if (s.startsWith("#")) s = s.slice(1);
   s = s.replace(/[^0-9a-fA-F]/g, "");
-  if (s.length === 3) s = s.split("").map((c) => c + c).join("");
+  if (s.length === 3) s = s.split("").map(c => c + c).join("");
   if (s.length === 6) return ("#" + s).toUpperCase();
   return null;
 }
 
 function youtubeEmbedUrl(raw) {
-  if (!raw || typeof raw !== "string") return null;
-  const s = raw.trim();
+  if (!raw) return null;
   try {
-    const url = new URL(s, window.location.origin);
-    const host = url.hostname.toLowerCase();
-    if (host.includes("youtube.com")) {
-      if (url.pathname.startsWith("/embed/")) return `https://www.youtube.com${url.pathname}${url.search || ""}`;
-      const vid = url.searchParams.get("v");
-      if (vid) return `https://www.youtube.com/embed/${vid}`;
+    const u = new URL(raw);
+    if (u.hostname.includes("youtube.com")) {
+      const v = u.searchParams.get("v");
+      if (v) return `https://www.youtube.com/embed/${v}`;
     }
-    if (host.includes("youtu.be")) {
-      const vid = url.pathname.replace("/", "");
-      if (vid) return `https://www.youtube.com/embed/${vid}`;
+    if (u.hostname.includes("youtu.be")) {
+      return `https://www.youtube.com/embed/${u.pathname.slice(1)}`;
     }
-  } catch (err) {
-    // treat raw as possible id
-    const maybeId = s.match(/^[A-Za-z0-9_-]{8,}$/);
-    if (maybeId) return `https://www.youtube.com/embed/${maybeId[0]}`;
-  }
+  } catch {}
   return null;
-}
-
-function isDirectVideoUrl(u) {
-  if (!u || typeof u !== "string") return false;
-  const lower = u.toLowerCase();
-  return lower.endsWith(".mp4") || lower.endsWith(".webm") || lower.endsWith(".ogg");
 }
 
 /* -------------------- component -------------------- */
 
 export default function ProductDetail() {
   const { id } = useParams();
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [product, setProduct] = useState(null);
@@ -84,82 +53,33 @@ export default function ProductDetail() {
       try {
         setLoading(true);
         setError("");
-        const res = await fetch(`${BASE_URL}/admin-api/products/${id}`, {
-          method: "GET",
-          credentials: "include",
-        });
 
-        if (!res.ok) {
-          const txt = await res.text().catch(() => "");
-          console.error("ProductDetail fetch non-ok response:", res.status, txt);
-          throw new Error(`Fetch failed: ${res.status} ${txt}`);
-        }
+        // ✅ ONLY SOURCE OF TRUTH
+        const res = await axiosInstance.get(
+          `/api/admin/products/products/${id}`
+        );
 
-        const data = await res.json();
-        const prod = data && data.product ? data.product : data;
+        const prod = res.data;
+        if (!prod) throw new Error("Product not found");
 
-        if (!prod) {
-          if (!cancelled) {
-            setError("Product not found.");
-            setProduct(null);
-            setLoading(false);
-          }
-          return;
-        }
-
-        // normalize images
-        const imgsRaw = Array.isArray(prod.images) ? prod.images : prod.images ? [prod.images] : [];
-        const imgs = imgsRaw.map(toImageUrl).filter(Boolean);
-
-        // derive raw color list (array or CSV string)
-        const rawColors = Array.isArray(prod.colors)
-          ? prod.colors
-          : prod.colors
-          ? String(prod.colors).split(",").map((s) => s.trim()).filter(Boolean)
-          : [];
-
-        // normalize color->image mapping if present
-        // Accept multiple shapes: array [{ name, image }] or object { "Baby Pink": "url" }
-        const colorImageMap = {};
-        const rawColorImgs =
-          prod.colorImages ||
-          prod.color_image_map ||
-          prod.color_map ||
-          prod.colorImagesMap ||
-          prod.colorImagesObj ||
-          prod.colorImageMap ||
-          null;
-
-        if (rawColorImgs) {
-          if (Array.isArray(rawColorImgs)) {
-            rawColorImgs.forEach((ci) => {
-              if (!ci) return;
-              const name = (ci.name || ci.label || ci.color || "").toString().trim().toLowerCase();
-              const img = ci.image || ci.url || ci.src || ci.path || null;
-              if (name && img) colorImageMap[name] = toImageUrl(img);
-            });
-          } else if (typeof rawColorImgs === "object") {
-            Object.entries(rawColorImgs).forEach(([k, v]) => {
-              const name = String(k).trim().toLowerCase();
-              const img = typeof v === "string" ? v : (v && (v.url || v.image || v.src || v.path));
-              if (name && img) colorImageMap[name] = toImageUrl(img);
-            });
-          }
-        }
+        const images = Array.isArray(prod.images) ? prod.images : [];
+        const colorsRaw = Array.isArray(prod.colors) ? prod.colors : [];
+        const sizes =
+          Array.isArray(prod.sizes) ? prod.sizes : [];
 
         if (!cancelled) {
           setProduct({
             ...prod,
-            _normalizedImages: imgs,
-            _rawColors: rawColors,
-            _colorImageMap: colorImageMap,
+            _images: images,
+            _colors: colorsRaw,
+            _sizes: sizes
           });
           setSelectedImageIndex(0);
           setSelectedColorIndex(0);
         }
       } catch (err) {
         console.error("ProductDetail load error:", err);
-        if (!cancelled) setError("Could not load product details.");
+        if (!cancelled) setError("Failed to load product");
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -175,304 +95,139 @@ export default function ProductDetail() {
   if (error) return <div style={{ padding: 16, color: "crimson" }}>{error}</div>;
   if (!product) return null;
 
-  // images
-  const images = Array.isArray(product._normalizedImages) ? product._normalizedImages : [];
-
-  // build colors array with fields: { raw, hex, displayHex, friendlyName, imageUrl }
-  const colors = (Array.isArray(product._rawColors) ? product._rawColors : []).map((rawValue) => {
-    const raw = rawValue;
-    const hex = normalizeHex(raw);
-    const displayHex = hex || null;
-    // Try to use your colorNames util for friendly name when hex available
-    const friendly = displayHex ? colorNames.hexToName(displayHex) : (String(raw || "").length <= 30 ? String(raw) : String(raw).slice(0, 20));
-    // get image from map (case-insensitive)
-    const candidate =
-      (product._colorImageMap && (product._colorImageMap[String(raw).toLowerCase()] || product._colorImageMap[String(friendly).toLowerCase()])) ||
-      null;
-    const imageUrl = candidate ? candidate : null;
-    return { raw, hex, displayHex, friendlyName: friendly, imageUrl };
+  const images = product._images || [];
+  const colors = (product._colors || []).map(c => {
+    const hex = normalizeHex(c.hex || c);
+    return {
+      hex,
+      name: c.name || (hex ? colorNames.hexToName(hex) : "")
+    };
   });
 
-  const possibleVideo =
-    product.videoUrl || product.video || product.video_url || product.videoLink || product.video_link || product.productVideo || "";
-  const embedUrl = youtubeEmbedUrl(possibleVideo);
+  const sizes = product._sizes || [];
+  const videoUrl = product.videoUrl;
+  const embedUrl = youtubeEmbedUrl(videoUrl);
 
-  // sizes
-  const sizes = Array.isArray(product.sizes)
-    ? product.sizes
-    : product.sizes
-    ? String(product.sizes).split(",").map((s) => s.trim()).filter(Boolean)
-    : [];
-
-  function handleThumbnailClick(i) {
-    setSelectedImageIndex(i);
-  }
-
-  function handleColorClick(idx) {
-    setSelectedColorIndex(idx);
-    const c = colors[idx];
-    if (c && c.imageUrl) {
-      const idxInImages = images.findIndex((u) => u === c.imageUrl);
-      if (idxInImages >= 0) {
-        setSelectedImageIndex(idxInImages);
-      } else {
-        setSelectedImageIndex(-1); // special state to show color image directly
-      }
-    }
-  }
-
-  function getMainImageUrl() {
-    if (selectedImageIndex === -1) {
-      const c = colors[selectedColorIndex];
-      if (c && c.imageUrl) return c.imageUrl;
-    }
-    return images[selectedImageIndex] || images[0] || PLACEHOLDER;
-  }
+  const mainImage =
+    images[selectedImageIndex] || images[0] || PLACEHOLDER;
 
   return (
     <div style={{ padding: 16 }}>
-      <h2 style={{ marginTop: 0 }}>{product.title || product.name || "Untitled product"}</h2>
+      <h2>{product.title}</h2>
 
-      <div style={{ display: "flex", gap: 24, alignItems: "flex-start", flexWrap: "wrap" }}>
-        {/* Images + video */}
-        <div style={{ minWidth: 260 }}>
+      <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+        {/* LEFT */}
+        <div>
           <div
             style={{
               width: 360,
               height: 460,
+              border: "1px solid #eee",
               display: "flex",
               alignItems: "center",
-              justifyContent: "center",
-              border: "1px solid #eee",
-              background: "#fff",
-              borderRadius: 8,
+              justifyContent: "center"
             }}
           >
             <img
-              key={getMainImageUrl()}
-              src={getMainImageUrl()}
-              alt={`product-main`}
+              src={mainImage}
+              alt=""
               style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
-              onError={(e) => {
-                e.currentTarget.onerror = null;
-                e.currentTarget.src = PLACEHOLDER;
-              }}
+              onError={e => (e.currentTarget.src = PLACEHOLDER)}
             />
           </div>
 
-          <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-            {images.map((url, i) => (
-              <button
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            {images.map((img, i) => (
+              <img
                 key={i}
-                onClick={() => handleThumbnailClick(i)}
+                src={img}
+                alt=""
+                width={64}
+                height={64}
                 style={{
-                  width: 64,
-                  height: 64,
-                  padding: 0,
-                  border: i === selectedImageIndex ? "2px solid #1A84C7" : "1px solid #ddd",
-                  background: "#fff",
-                  borderRadius: 6,
-                  cursor: "pointer",
-                  overflow: "hidden",
+                  border:
+                    i === selectedImageIndex
+                      ? "2px solid #1A84C7"
+                      : "1px solid #ddd",
+                  cursor: "pointer"
                 }}
-                aria-label={`View image ${i + 1}`}
-              >
-                <img
-                  src={url}
-                  alt={`thumb-${i}`}
-                  style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                  onError={(e) => {
-                    e.currentTarget.onerror = null;
-                    e.currentTarget.src = PLACEHOLDER;
-                  }}
-                />
-              </button>
+                onClick={() => setSelectedImageIndex(i)}
+              />
             ))}
-
-            {/* color-specific thumbnails (only those not already in images list) */}
-            {colors.map((c, i) => {
-              if (!c.imageUrl) return null;
-              const exists = images.includes(c.imageUrl);
-              if (exists) return null;
-              return (
-                <button
-                  key={`color-thumb-${i}`}
-                  onClick={() => {
-                    setSelectedImageIndex(-1);
-                    setSelectedColorIndex(i);
-                  }}
-                  title={c.friendlyName || c.raw}
-                  style={{
-                    width: 64,
-                    height: 64,
-                    padding: 0,
-                    border: selectedImageIndex === -1 && selectedColorIndex === i ? "2px solid #1A84C7" : "1px solid #ddd",
-                    background: "#fff",
-                    borderRadius: 6,
-                    cursor: "pointer",
-                    overflow: "hidden",
-                  }}
-                >
-                  <img
-                    src={c.imageUrl}
-                    alt={`color-${i}`}
-                    style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                    onError={(e) => {
-                      e.currentTarget.onerror = null;
-                      e.currentTarget.src = PLACEHOLDER;
-                    }}
-                  />
-                </button>
-              );
-            })}
-
-            {/* video tile */}
-            {possibleVideo && (
-              <div
-                onClick={() => {
-                  const el = document.getElementById("admin-product-video-player");
-                  if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-                }}
-                title="Product video"
-                style={{
-                  width: 64,
-                  height: 64,
-                  borderRadius: 6,
-                  border: "1px solid #eee",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  cursor: "pointer",
-                  background: "#fafafa",
-                }}
-              >
-                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden>
-                  <path d="M5 3v18l15-9L5 3z" fill="currentColor" />
-                </svg>
-              </div>
-            )}
           </div>
 
-          {/* Video preview area */}
-          {possibleVideo && (
-            <div id="admin-product-video-player" style={{ marginTop: 14 }}>
-              {youtubeEmbedUrl(possibleVideo) ? (
-                <div style={{ width: 360, height: 210, border: "1px solid #eee", borderRadius: 6, overflow: "hidden" }}>
-                  <iframe
-                    title="Product video"
-                    width="100%"
-                    height="100%"
-                    src={youtubeEmbedUrl(possibleVideo)}
-                    frameBorder="0"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                    allowFullScreen
-                  />
-                </div>
-              ) : isDirectVideoUrl(possibleVideo) ? (
-                <div style={{ width: 360, border: "1px solid #eee", borderRadius: 6, overflow: "hidden" }}>
-                  <video controls style={{ width: "100%", height: "100%" }}>
-                    <source src={possibleVideo} />
-                    Your browser does not support the video tag.
-                  </video>
-                </div>
-              ) : (
-                <div style={{ fontSize: 13 }}>
-                  <strong>Video:</strong>{" "}
-                  <a href={possibleVideo} target="_blank" rel="noreferrer">
-                    Open video
-                  </a>{" "}
-                  (YouTube links will be embedded)
-                </div>
-              )}
+          {embedUrl && (
+            <div style={{ marginTop: 16 }}>
+              <iframe
+                title="video"
+                width="360"
+                height="200"
+                src={embedUrl}
+                allowFullScreen
+              />
             </div>
           )}
         </div>
 
-        {/* Details */}
-        <div style={{ flex: 1, minWidth: 320 }}>
-          <p>
-            <strong>Price:</strong> ₹{product.price ?? "—"}
-          </p>
-          <p>
-            <strong>MRP:</strong> {product.mrp ? `₹${product.mrp}` : "—"}
-          </p>
-          <p>
-            <strong>Brand:</strong> {product.brand ?? "—"}
-          </p>
-          <p>
-            <strong>Stock:</strong> {product.stock ?? product.countInStock ?? "—"}
-          </p>
-          <p>
-            <strong>Category:</strong> {product.category ?? "—"}
-          </p>
-          <p>
-            <strong>Slug:</strong> {product.slug ?? "—"}
-          </p>
+        {/* RIGHT */}
+        <div style={{ minWidth: 300 }}>
+          <p><b>Price:</b> ₹{product.price}</p>
+          <p><b>MRP:</b> ₹{product.mrp}</p>
+          <p><b>Brand:</b> {product.brand}</p>
+          <p><b>Stock:</b> {product.stock}</p>
+          <p><b>Category:</b> {product.category}</p>
 
-          {/* Colors: show swatches and friendly name */}
-          {colors && colors.length > 0 && (
+          {/* COLORS */}
+          {colors.length > 0 && (
             <div style={{ marginTop: 12 }}>
-              <div style={{ marginBottom: 8, fontWeight: 600 }}>Color</div>
-              <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-                {colors.map((c, idx) => {
-                  const bg = c.displayHex || (c.imageUrl ? "#fff" : "#fff");
-                  const friendly = c.friendlyName || (typeof c.raw === "string" ? c.raw : c.displayHex || "");
-                  const isSelected = selectedColorIndex === idx;
-                  return (
-                    <div key={idx} style={{ textAlign: "center", minWidth: 90 }}>
-                      <button
-                        onClick={() => handleColorClick(idx)}
-                        aria-label={friendly}
-                        title={friendly}
-                        style={{
-                          width: 48,
-                          height: 36,
-                          borderRadius: 6,
-                          border: isSelected ? "2px solid #1A84C7" : "1px solid #ddd",
-                          background: bg,
-                          backgroundImage: c.imageUrl && !c.displayHex ? `url(${c.imageUrl})` : undefined,
-                          backgroundSize: "cover",
-                          backgroundPosition: "center",
-                          display: "inline-block",
-                          cursor: "pointer",
-                        }}
-                      />
-                      <div style={{ marginTop: 6, fontSize: 13, color: "#222", maxWidth: 90, wordBreak: "break-word" }}>
-                        {friendly}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Sizes */}
-          {sizes && sizes.length > 0 && (
-            <div style={{ marginTop: 12 }}>
-              <div style={{ marginBottom: 8, fontWeight: 600 }}>Size</div>
-              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                {sizes.map((sz, i) => (
-                  <div key={i} style={{ border: "1px solid #ddd", padding: "6px 10px", borderRadius: 6 }}>
-                    {sz}
+              <b>Colors</b>
+              <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
+                {colors.map((c, i) => (
+                  <div key={i} style={{ textAlign: "center" }}>
+                    <div
+                      style={{
+                        width: 40,
+                        height: 40,
+                        background: c.hex,
+                        border:
+                          i === selectedColorIndex
+                            ? "2px solid #1A84C7"
+                            : "1px solid #ccc",
+                        cursor: "pointer"
+                      }}
+                      onClick={() => setSelectedColorIndex(i)}
+                    />
+                    <div style={{ fontSize: 12 }}>{c.name}</div>
                   </div>
                 ))}
               </div>
             </div>
           )}
 
-          <div style={{ marginTop: 18 }}>
+          {/* SIZES */}
+          {sizes.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <b>Sizes</b>
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                {sizes.map(s => (
+                  <div key={s} style={{ border: "1px solid #ddd", padding: "4px 8px" }}>
+                    {s}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div style={{ marginTop: 16 }}>
             <h4>Description</h4>
-            <p style={{ whiteSpace: "pre-wrap" }}>{product.description || "—"}</p>
+            <p>{product.description}</p>
           </div>
 
-          <div style={{ marginTop: 18 }}>
-            <Link to={`/admin/products/${id}/edit`}>
-              <button>Edit product</button>
-            </Link>
-            <span style={{ marginLeft: 12 }}>
-              <Link to="/admin/products">Back to list</Link>
-            </span>
+          <div style={{ marginTop: 16 }}>
+            <Link to={`/admin/products/edit/${id}`}>
+              <button>Edit</button>
+            </Link>{" "}
+            <Link to="/admin/products">Back</Link>
           </div>
         </div>
       </div>
