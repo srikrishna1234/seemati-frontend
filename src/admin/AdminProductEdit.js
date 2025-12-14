@@ -122,36 +122,41 @@ export default function AdminProductEdit() {
 
   /* ---------- LOAD PRODUCT ---------- */
   useEffect(() => {
-    async function load() {
-      const res = await axiosInstance.get("/api/products");
-      const p = res.data.products.find(x => x._id === id);
-      if (!p) return alert("Product not found");
+  async function load() {
+    const res = await axiosInstance.get(
+      `/api/admin/products/products/${id}`
+    );
 
-      setForm({
-        title: p.title || "",
-        description: p.description || "",
-        price: p.price || "",
-        mrp: p.mrp || "",
-        stock: p.stock || "",
-        category: p.category || "",
-        brand: p.brand || "",
-        sku: p.sku || "",
-        slug: p.slug || "",
-        videoUrl: p.videoUrl || "",
-        sizes: p.sizes || [],
-        images: p.images || []
-      });
+    const p = res.data.product || res.data;
+    if (!p) return alert("Product not found");
 
-      const loadedSwatches = (p.colors || []).map(c => c.hex || c);
-      setSwatches(loadedSwatches);
-      setColorsInput(
-        loadedSwatches.map(h => nearestColorName(h).toUpperCase()).join(", ")
-      );
+    setForm({
+      title: p.title || "",
+      description: p.description || "",
+      price: p.price || "",
+      mrp: p.mrp || "",
+      stock: p.stock || "",
+      category: p.category || "",
+      brand: p.brand || "",
+      sku: p.sku || "",
+      slug: p.slug || "",
+      videoUrl: p.videoUrl || "",
+      sizes: p.sizes || [],
+      images: p.images || []
+    });
 
-      setUploadedImages(p.images || []);
-    }
-    load().finally(() => setLoading(false));
-  }, [id]);
+    setUploadedImages(p.images || []);
+    setSwatches((p.colors || []).map(c => c.hex || c));
+    setColorsInput(
+      (p.colors || [])
+        .map(c => (c.name || "").toUpperCase())
+        .join(", ")
+    );
+  }
+
+  load().finally(() => setLoading(false));
+}, [id]);
+
 
   /* ---------- HANDLERS ---------- */
   const handleChange = (e) => {
