@@ -1,0 +1,28 @@
+.sfl-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+
+@media(max-width: 768px) {
+  .sfl-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+}
+
+@media(max-width:480px) {
+  .sfl-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+  }
+}
+
+.sfl-card img {
+  width: 100%;
+  border-radius: 6px;
+}
+
+.sfl-card {
+  text-align: center;
+}
