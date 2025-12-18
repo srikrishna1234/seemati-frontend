@@ -35,6 +35,8 @@ app.use(cors({
     if (allowedOrigins.includes(origin)) return cb(null, true);
     // try match without trailing slash / lower-case normalisation
     const norm = origin.replace(/\/+$/, '').toLowerCase();
+    if (norm.endsWith('.vercel.app')) return cb(null, true);
+
     for (const a of allowedOrigins) {
       if (a.replace(/\/+$/, '').toLowerCase() === norm) return cb(null, true);
     }
