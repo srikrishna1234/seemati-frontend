@@ -348,7 +348,7 @@ console.log("🚨 FINAL PAYLOAD BEING SENT", {
     // ✅ SEND JSON PAYLOAD
    await axiosInstance.put(`/admin/products/${id}`, payload);
 
-
+/*
 // 🔁 REFRESH FROM BACKEND (ADMIN API)
 // 🔁 REFRESH FROM BACKEND (ADMIN API)
 const res = await axiosInstance.get(`/products/id/${id}`);
@@ -389,8 +389,7 @@ setColorsInput(
   (p.colors || [])
     .map(c => (c.name || "").toUpperCase())
     .join(", ")
-);
-
+); */
 
 alert("Product updated successfully");
 
