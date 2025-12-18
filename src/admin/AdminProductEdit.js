@@ -98,19 +98,22 @@ export default function AdminProductEdit() {
   const [saving, setSaving] = useState(false);
 
   const [form, setForm] = useState({
-    title: "",
-    description: "",
-    price: "",
-    mrp: "",
-    stock: "",
-    category: "",
-    brand: "",
-    sku: "",
-    slug: "",
-    videoUrl: "",
-    sizes: [],
-    images: []
-  });
+  title: "",
+  description: "",
+  price: "",
+  mrp: "",
+  stock: "",
+  category: "",
+  brand: "",
+  sku: "",
+  slug: "",
+  videoUrl: "",
+  sizes: [],
+  images: [],
+  published: false
+});
+const [customSizesInput, setCustomSizesInput] = useState("");
+
 
   /* 🔴 COLOR STATE */
   const [colorsInput, setColorsInput] = useState("");
@@ -123,27 +126,42 @@ export default function AdminProductEdit() {
   /* ---------- LOAD PRODUCT ---------- */
   useEffect(() => {
   async function load() {
-    const res = await axiosInstance.get(
-      `/api/admin/products/products/${id}`
-    );
+    const res = await axiosInstance.get(`/admin/products/${id}`);
+
 
     const p = res.data.product || res.data;
     if (!p) return alert("Product not found");
+    // ---- SPLIT SIZES INTO CHECKBOX + CUSTOM ----
+const incomingSizes = Array.isArray(p.sizes)
+  ? p.sizes.map(s => String(s).trim())
+  : [];
 
-    setForm({
-      title: p.title || "",
-      description: p.description || "",
-      price: p.price || "",
-      mrp: p.mrp || "",
-      stock: p.stock || "",
-      category: p.category || "",
-      brand: p.brand || "",
-      sku: p.sku || "",
-      slug: p.slug || "",
-      videoUrl: p.videoUrl || "",
-      sizes: p.sizes || [],
-      images: p.images || []
-    });
+const checkboxSizes = incomingSizes.filter(s =>
+  AVAILABLE_SIZES.includes(s)
+);
+
+const customSizes = incomingSizes.filter(s =>
+  !AVAILABLE_SIZES.includes(s)
+);
+
+  setForm({
+  title: p.title || "",
+  description: p.description || "",
+  price: p.price || "",
+  mrp: p.mrp || "",
+  stock: p.stock || "",
+  category: p.category || "",
+  brand: p.brand || "",
+  sku: p.sku || "",
+  slug: p.slug || "",
+  videoUrl: p.videoUrl || "",
+  sizes: checkboxSizes,   // ✅ ONLY predefined sizes
+  images: p.images || [],
+  published: Boolean(p.published)
+});
+setCustomSizesInput(customSizes.join(", "));
+
+
 
     setUploadedImages(p.images || []);
     setSwatches((p.colors || []).map(c => c.hex || c));
@@ -251,67 +269,113 @@ export default function AdminProductEdit() {
   };
 
   async function uploadSelectedImages() {
-    if (!selectedFiles.length) return [];
-    const fd = new FormData();
-    selectedFiles.forEach(s => fd.append("files", s.file));
-    const res = await axiosInstance.post("/api/uploadRoutes/upload", fd, {
-      headers: { "Content-Type": "multipart/form-data" }
-    });
-    const urls = (res.data.uploaded || []).map(u => u.url).filter(Boolean);
-    setUploadedImages(prev => [...prev, ...urls]);
-    setSelectedFiles([]);
-    return urls;
-  }
+  if (!selectedFiles.length) return [];
+
+  const fd = new FormData();
+  selectedFiles.forEach(s => fd.append("files", s.file));
+
+  const res = await axiosInstance.post("/uploadRoutes/upload", fd);
+
+  const urls = (res.data.uploaded || [])
+    .map(u => u.url)
+    .filter(Boolean);
+
+  setUploadedImages(prev => [...prev, ...urls]);
+  setSelectedFiles([]);
+
+  return urls;
+}
+
 
   /* ---------- SAVE ---------- */
   const handleSubmit = async (e) => {
-    e.preventDefault();
-    setSaving(true);
-    try {
-      let newUrls = [];
-      if (selectedFiles.length) newUrls = await uploadSelectedImages();
+  e.preventDefault();
+  setSaving(true);
 
-      await axiosInstance.put(`/api/admin/products/products/${id}`, (() => {
-  const normalizedSizes = Array.from(
-    new Set(
-      (form.sizes || [])
-        .map(s => String(s).trim())
-        .filter(Boolean)
-    )
-  );
-
-  const normalizedColors = Array.from(
-    new Map(
-      normalizeColorsForBackend(swatches)
-        .filter(c => c?.name && c?.hex)
-        .map(c => [c.name.toLowerCase(), {
-          name: c.name.toLowerCase(),
-          hex: c.hex.toUpperCase()
-        }])
-    ).values()
-  );
-
-  return {
-    ...form,
-    price: Number(form.price),
-    mrp: Number(form.mrp),
-    stock: Number(form.stock),
-    sizes: normalizedSizes,
-    images: [...uploadedImages, ...newUrls],
-    colors: normalizedColors,
-    videoUrl: (form.videoUrl || "").trim()
-  };
-})());
-
-      alert("Product updated successfully");
-      navigate("/admin/products");
-    } catch (err) {
-      console.error(err);
-      alert("Save failed");
-    } finally {
-      setSaving(false);
+  try {
+    let newUrls = [];
+    if (selectedFiles.length) {
+      newUrls = await uploadSelectedImages();
     }
-  };
+
+    // ✅ BUILD PAYLOAD FIRST
+    // ✅ MERGE CHECKBOX + CUSTOM SIZES SAFELY
+const customSizes = customSizesInput
+  .split(",")
+  .map(s => String(s).trim())
+  .filter(Boolean);
+
+const normalizedSizes = Array.from(
+  new Set([
+    ...(form.sizes || []),
+    ...customSizes
+  ])
+);
+
+
+    const normalizedColors = Array.from(
+      new Map(
+        normalizeColorsForBackend(swatches)
+          .filter(c => c?.name && c?.hex)
+          .map(c => [
+            c.name.toLowerCase(),
+            {
+              name: c.name.toLowerCase(),
+              hex: c.hex.toUpperCase()
+            }
+          ])
+      ).values()
+    );
+
+    const payload = {
+  ...form,
+  price: Number(form.price),
+  mrp: Number(form.mrp),
+  stock: Number(form.stock),
+  sizes: normalizedSizes,
+  colors: normalizedColors,
+  images: [...uploadedImages, ...newUrls],
+  videoUrl: (form.videoUrl || "").trim(),
+  published: Boolean(form.published)
+};
+
+
+    // ✅ SEND JSON PAYLOAD
+   await axiosInstance.put(`/admin/products/${id}`, payload);
+
+
+// 🔁 REFRESH FROM BACKEND (ADMIN API)
+const res = await axiosInstance.get(`/admin/products/${id}`);
+
+const p = res.data.product || res.data;
+
+setForm({
+  title: p.title || "",
+  description: p.description || "",
+  price: p.price || "",
+  mrp: p.mrp || "",
+  stock: p.stock || "",
+  category: p.category || "",
+  brand: p.brand || "",
+  sku: p.sku || "",
+  slug: p.slug || "",
+  videoUrl: p.videoUrl || "",
+  sizes: p.sizes || [],
+  images: p.images || [],
+  published: Boolean(p.published)
+});
+
+alert("Product updated successfully");
+
+    navigate("/admin/products");
+  } catch (err) {
+    console.error(err);
+    alert("Save failed");
+  } finally {
+    setSaving(false);
+  }
+};
+
 
   if (loading) return <p>Loading...</p>;
   const embedUrl = getYouTubeEmbedUrl(form.videoUrl);
@@ -350,6 +414,17 @@ export default function AdminProductEdit() {
                 ))}
               </div>
             </div>
+            <div style={{ marginTop: 8 }}>
+  <label style={{ fontSize: 13, color: "#555" }}>
+    Custom sizes (optional)
+  </label>
+  <input
+    style={{ ...input, marginTop: 4 }}
+    placeholder="Example: 95, 100, 105"
+    value={customSizesInput}
+    onChange={(e) => setCustomSizesInput(e.target.value)}
+  />
+</div>
 
             {/* COLORS */}
             <div style={row}>
@@ -414,6 +489,26 @@ export default function AdminProductEdit() {
             )}
           </div>
         </div>
+         <div style={{ marginTop: 16 }}>
+  <label style={{ fontWeight: 500 }}>
+    <input
+      type="checkbox"
+      name="published"
+      checked={form.published}
+      onChange={(e) =>
+        handleChange({
+          target: {
+            name: "published",
+            value: e.target.checked
+          }
+        })
+      }
+      style={{ marginRight: 6 }}
+    />
+    Published (visible on live site)
+  </label>
+</div>
+
 
         <button type="submit" disabled={saving} style={{ marginTop: 20 }}>
           {saving ? "Saving..." : "Save"}
