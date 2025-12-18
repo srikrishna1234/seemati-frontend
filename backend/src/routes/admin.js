@@ -95,7 +95,11 @@ router.get('/product/:id', adminAuth, async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
+// ❌ DISABLED: Legacy product update route
+// This route was overwriting sizes, colors, videoUrl
+// DO NOT RE-ENABLE — use /api/admin/products/:id instead
 
+/*
 // Update a product (optionally replace images)
 // multipart/form-data allowed to replace images by sending new images[]
 router.put('/product/:id', adminAuth, upload.array('images', 6), async (req, res) => {
@@ -119,7 +123,7 @@ router.put('/product/:id', adminAuth, upload.array('images', 6), async (req, res
     res.status(500).json({ error: 'Server error' });
   }
 });
-
+*/
 // Delete a product
 router.delete('/product/:id', adminAuth, async (req, res) => {
   try {
