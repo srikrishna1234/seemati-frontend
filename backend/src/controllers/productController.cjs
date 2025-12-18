@@ -59,8 +59,6 @@ async function createProduct(req, res) {
 }
 
 /* ---------- UPDATE (FINAL FIX) ---------- */
-/* ---------- UPDATE (ADMIN – FULL REPLACE, FINAL) ---------- */
-/* ---------- UPDATE (ADMIN – SAFE PARTIAL UPDATE) ---------- */
 async function updateProduct(req, res) {
   console.log('🔵 UPDATE PRODUCT HIT');
   console.log('🔵 req.body =', JSON.stringify(req.body, null, 2));
@@ -68,27 +66,43 @@ async function updateProduct(req, res) {
   try {
     const { id } = req.params;
 
-   await Product.findByIdAndUpdate(
-  id,
-  { $set: req.body },
-  {
-    runValidators: true
-  }
-);
+    // ✅ Explicit update — NO guessing by Mongo
+    const update = {
+      title: req.body.title,
+      description: req.body.description,
+      price: req.body.price,
+      mrp: req.body.mrp,
+      stock: req.body.stock,
+      category: req.body.category,
+      brand: req.body.brand,
+      sku: req.body.sku,
+      slug: req.body.slug,
+      images: req.body.images,
+      published: req.body.published,
 
-const updated = await Product.findById(id);
+      // 🔥 FORCE REPLACEMENT (THE FIX)
+      sizes: Array.isArray(req.body.sizes) ? req.body.sizes : [],
+      colors: Array.isArray(req.body.colors) ? req.body.colors : [],
+      videoUrl: req.body.videoUrl || ""
+    };
 
-if (!updated) {
-  return res.status(404).json({ error: 'Product not found' });
-}
+    const updated = await Product.findByIdAndUpdate(
+      id,
+      update,               // ❗ NOT $set
+      { new: true, runValidators: true }
+    );
 
-return res.json(updated);
+    if (!updated) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
 
+    return res.json(updated);
   } catch (err) {
     console.error('[productController] updateProduct error:', err);
     return res.status(500).json({ error: 'Failed to update product' });
   }
 }
+
 
 
 
