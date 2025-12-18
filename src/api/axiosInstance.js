@@ -11,7 +11,7 @@ const API_BASE =
   process.env.REACT_APP_API_BASE ||
   (window.location.hostname === "localhost"
     ? "http://localhost:4000"
-    : "https://api.seemati.in");
+    : "https://api.seemati.in/api");
 
 const axiosInstance = axios.create({
   baseURL: API_BASE, // DO NOT append /api here
