@@ -67,10 +67,15 @@ async function updateProduct(req, res) {
     const { id } = req.params;
 
     const updated = await Product.findByIdAndUpdate(
-      id,
-      { $set: req.body },           // 🔥 FULL OVERWRITE — REQUIRED
-      { new: true, runValidators: true }
-    ).lean();
+  id,
+  req.body,                 // 🔥 FULL DOCUMENT REPLACEMENT
+  {
+    new: true,
+    runValidators: true,
+    overwrite: true          // 🔒 THIS IS THE KEY
+  }
+).lean();
+
 
     if (!updated) {
       return res.status(404).json({ error: 'Product not found' });
