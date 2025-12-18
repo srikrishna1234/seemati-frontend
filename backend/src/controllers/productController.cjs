@@ -68,21 +68,22 @@ async function updateProduct(req, res) {
   try {
     const { id } = req.params;
 
-    const updated = await Product.findByIdAndUpdate(
+   await Product.findByIdAndUpdate(
   id,
-  { $set: req.body },   // ✅ merge update (DO NOT replace)
+  { $set: req.body },
   {
-    new: true,
     runValidators: true
   }
-).lean();
+);
 
+const updated = await Product.findById(id);
 
-    if (!updated) {
-      return res.status(404).json({ error: 'Product not found' });
-    }
+if (!updated) {
+  return res.status(404).json({ error: 'Product not found' });
+}
 
-    return res.json(updated);
+return res.json(updated);
+
   } catch (err) {
     console.error('[productController] updateProduct error:', err);
     return res.status(500).json({ error: 'Failed to update product' });
