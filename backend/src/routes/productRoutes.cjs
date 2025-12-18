@@ -1,3 +1,5 @@
+// 🔒 PUBLIC UPDATE DISABLED — ADMIN ONLY (DEBUG MARKER)
+
 const express = require("express");
 const router = express.Router();
 // TEMP HEALTH CHECK — REMOVE AFTER TEST
@@ -50,7 +52,7 @@ router.get("/slug/:slug", async (req, res) => {
 });
 
 /* ================= UPDATE ================= */
-router.put("/:id", async (req, res) => {
+/*router.put("/:id", async (req, res) => {
 console.log("🔥 ROUTES PUT HIT", req.params.id);
 
   const updated = await Product.findByIdAndUpdate(
@@ -61,8 +63,17 @@ console.log("🔥 ROUTES PUT HIT", req.params.id);
 
   if (!updated) return res.status(404).json({ success: false });
   res.json({ success: true, product: updated });
-});
+});*/
 
+/* ================= UPDATE ================= */
+// ❌ Public product update DISABLED
+// Updates must go through /api/admin/products/:id
+router.put("/:id", (req, res) => {
+  return res.status(403).json({
+    success: false,
+    message: "Public product update is disabled. Use admin API."
+  });
+});
 
 /* ================= DELETE ================= */
 router.delete("/:id", async (req, res) => {
