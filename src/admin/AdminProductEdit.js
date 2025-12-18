@@ -125,32 +125,51 @@ const [customSizesInput, setCustomSizesInput] = useState("");
 
   /* ---------- LOAD PRODUCT ---------- */
   useEffect(() => {
-  async function load() {
-    const res = await axiosInstance.get(`/products/id/${id}`);
+async function load() {
+  const res = await axiosInstance.get(`/products/id/${id}`);
+  const p = res.data.product || res.data;
+  if (!p) return alert("Product not found");
 
+  const incomingSizes = Array.isArray(p.sizes)
+    ? p.sizes.map(s => String(s).trim())
+    : [];
 
-    const p = res.data.product || res.data;
-    if (!p) return alert("Product not found");
-    // ---- SPLIT SIZES INTO CHECKBOX + CUSTOM ----
-const incomingSizes = Array.isArray(p.sizes)
-  ? p.sizes.map(s => String(s).trim())
-  : [];
+  const checkboxSizes = incomingSizes.filter(s =>
+    AVAILABLE_SIZES.includes(s)
+  );
 
-const checkboxSizes = incomingSizes.filter(s =>
-  AVAILABLE_SIZES.includes(s)
-);
+  const customSizes = incomingSizes.filter(s =>
+    !AVAILABLE_SIZES.includes(s)
+  );
 
-const customSizes = incomingSizes.filter(s =>
-  !AVAILABLE_SIZES.includes(s)
-);
+  setForm({
+    title: p.title || "",
+    description: p.description || "",
+    price: p.price || "",
+    mrp: p.mrp || "",
+    stock: p.stock || "",
+    category: p.category || "",
+    brand: p.brand || "",
+    sku: p.sku || "",
+    slug: p.slug || "",
+    videoUrl: p.videoUrl || "",
+    sizes: checkboxSizes,
+    images: p.images || [],
+    published: Boolean(p.published)
+  });
 
-  // ---- SPLIT SIZES AGAIN AFTER SAVE ----
+  setCustomSizesInput(customSizes.join(", "));
 
+  setSwatches((p.colors || []).map(c => c.hex || c));
+  setColorsInput(
+    (p.colors || [])
+      .map(c => (c.name || "").toUpperCase())
+      .join(", ")
+  );
 
+  setUploadedImages(p.images || []);
+}
 
-
-    
-  }
 
   load().finally(() => setLoading(false));
 }, [id]);
