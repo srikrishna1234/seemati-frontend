@@ -59,6 +59,7 @@ async function createProduct(req, res) {
 }
 
 /* ---------- UPDATE (FINAL FIX) ---------- */
+/* ---------- UPDATE (ADMIN – FULL REPLACE, FINAL) ---------- */
 async function updateProduct(req, res) {
   console.log('🔵 UPDATE PRODUCT HIT');
   console.log('🔵 req.body =', JSON.stringify(req.body, null, 2));
@@ -66,16 +67,20 @@ async function updateProduct(req, res) {
   try {
     const { id } = req.params;
 
-    const updated = await Product.findByIdAndUpdate(
-  id,
-  req.body,                 // 🔥 FULL DOCUMENT REPLACEMENT
-  {
-    new: true,
-    runValidators: true,
-    overwrite: true          // 🔒 THIS IS THE KEY
-  }
-).lean();
+    // IMPORTANT: ensure _id is preserved
+    const replacement = {
+      ...req.body,
+      _id: id
+    };
 
+    const updated = await Product.findOneAndReplace(
+      { _id: id },
+      replacement,
+      {
+        new: true,
+        runValidators: true
+      }
+    ).lean();
 
     if (!updated) {
       return res.status(404).json({ error: 'Product not found' });
@@ -87,6 +92,7 @@ async function updateProduct(req, res) {
     return res.status(500).json({ error: 'Failed to update product' });
   }
 }
+
 
 /* ---------- DELETE ---------- */
 async function deleteProduct(req, res) {
