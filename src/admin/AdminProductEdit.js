@@ -145,52 +145,11 @@ const customSizes = incomingSizes.filter(s =>
 );
 
   // ---- SPLIT SIZES AGAIN AFTER SAVE ----
-const incomingSizes = Array.isArray(p.sizes)
-  ? p.sizes.map(s => String(s).trim())
-  : [];
-
-const checkboxSizes = incomingSizes.filter(s =>
-  AVAILABLE_SIZES.includes(s)
-);
-
-const customSizes = incomingSizes.filter(s =>
-  !AVAILABLE_SIZES.includes(s)
-);
-
-setForm({
-  title: p.title || "",
-  description: p.description || "",
-  price: p.price || "",
-  mrp: p.mrp || "",
-  stock: p.stock || "",
-  category: p.category || "",
-  brand: p.brand || "",
-  sku: p.sku || "",
-  slug: p.slug || "",
-  videoUrl: p.videoUrl || "",
-  sizes: checkboxSizes,
-  images: p.images || [],
-  published: Boolean(p.published)
-});
-
-setCustomSizesInput(customSizes.join(", "));
-setSwatches((p.colors || []).map(c => c.hex || c));
-setColorsInput(
-  (p.colors || [])
-    .map(c => (c.name || "").toUpperCase())
-    .join(", ")
-);
 
 
 
 
-    setUploadedImages(p.images || []);
-    setSwatches((p.colors || []).map(c => c.hex || c));
-    setColorsInput(
-      (p.colors || [])
-        .map(c => (c.name || "").toUpperCase())
-        .join(", ")
-    );
+    
   }
 
   load().finally(() => setLoading(false));
@@ -372,9 +331,22 @@ console.log("🚨 FINAL PAYLOAD BEING SENT", {
 
 
 // 🔁 REFRESH FROM BACKEND (ADMIN API)
+// 🔁 REFRESH FROM BACKEND (ADMIN API)
 const res = await axiosInstance.get(`/products/id/${id}`);
-
 const p = res.data.product || res.data;
+
+// ---- SPLIT SIZES AGAIN AFTER SAVE ----
+const incomingSizes = Array.isArray(p.sizes)
+  ? p.sizes.map(s => String(s).trim())
+  : [];
+
+const checkboxSizes = incomingSizes.filter(s =>
+  AVAILABLE_SIZES.includes(s)
+);
+
+const customSizes = incomingSizes.filter(s =>
+  !AVAILABLE_SIZES.includes(s)
+);
 
 setForm({
   title: p.title || "",
@@ -387,10 +359,19 @@ setForm({
   sku: p.sku || "",
   slug: p.slug || "",
   videoUrl: p.videoUrl || "",
-  sizes: p.sizes || [],
+  sizes: checkboxSizes,
   images: p.images || [],
   published: Boolean(p.published)
 });
+
+setCustomSizesInput(customSizes.join(", "));
+setSwatches((p.colors || []).map(c => c.hex || c));
+setColorsInput(
+  (p.colors || [])
+    .map(c => (c.name || "").toUpperCase())
+    .join(", ")
+);
+
 
 alert("Product updated successfully");
 
