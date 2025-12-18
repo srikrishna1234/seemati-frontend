@@ -60,6 +60,7 @@ async function createProduct(req, res) {
 
 /* ---------- UPDATE (FINAL FIX) ---------- */
 /* ---------- UPDATE (ADMIN – FULL REPLACE, FINAL) ---------- */
+/* ---------- UPDATE (ADMIN – SAFE PARTIAL UPDATE) ---------- */
 async function updateProduct(req, res) {
   console.log('🔵 UPDATE PRODUCT HIT');
   console.log('🔵 req.body =', JSON.stringify(req.body, null, 2));
@@ -67,15 +68,9 @@ async function updateProduct(req, res) {
   try {
     const { id } = req.params;
 
-    // IMPORTANT: ensure _id is preserved
-    const replacement = {
-      ...req.body,
-      _id: id
-    };
-
-    const updated = await Product.findOneAndReplace(
-      { _id: id },
-      replacement,
+    const updated = await Product.findByIdAndUpdate(
+      id,
+      { $set: req.body },
       {
         new: true,
         runValidators: true
@@ -92,6 +87,7 @@ async function updateProduct(req, res) {
     return res.status(500).json({ error: 'Failed to update product' });
   }
 }
+
 
 
 /* ---------- DELETE ---------- */
