@@ -126,7 +126,7 @@ const [customSizesInput, setCustomSizesInput] = useState("");
   /* ---------- LOAD PRODUCT ---------- */
   useEffect(() => {
   async function load() {
-    const res = await axiosInstance.get(`/admin/products/${id}`);
+    const res = await axiosInstance.get(`/products/id/${id}`);
 
 
     const p = res.data.product || res.data;
@@ -327,7 +327,7 @@ const normalizedSizes = Array.from(
       ).values()
     );
 
-    const payload = {
+   const payload = {
   ...form,
   price: Number(form.price),
   mrp: Number(form.mrp),
@@ -339,13 +339,19 @@ const normalizedSizes = Array.from(
   published: Boolean(form.published)
 };
 
+console.log("🚨 FINAL PAYLOAD BEING SENT", {
+  sizes: payload.sizes,
+  colors: payload.colors,
+  videoUrl: payload.videoUrl
+});
+
 
     // ✅ SEND JSON PAYLOAD
    await axiosInstance.put(`/admin/products/${id}`, payload);
 
 
 // 🔁 REFRESH FROM BACKEND (ADMIN API)
-const res = await axiosInstance.get(`/admin/products/${id}`);
+const res = await axiosInstance.get(`/products/id/${id}`);
 
 const p = res.data.product || res.data;
 
