@@ -144,7 +144,20 @@ const customSizes = incomingSizes.filter(s =>
   !AVAILABLE_SIZES.includes(s)
 );
 
-  setForm({
+  // ---- SPLIT SIZES AGAIN AFTER SAVE ----
+const incomingSizes = Array.isArray(p.sizes)
+  ? p.sizes.map(s => String(s).trim())
+  : [];
+
+const checkboxSizes = incomingSizes.filter(s =>
+  AVAILABLE_SIZES.includes(s)
+);
+
+const customSizes = incomingSizes.filter(s =>
+  !AVAILABLE_SIZES.includes(s)
+);
+
+setForm({
   title: p.title || "",
   description: p.description || "",
   price: p.price || "",
@@ -155,11 +168,19 @@ const customSizes = incomingSizes.filter(s =>
   sku: p.sku || "",
   slug: p.slug || "",
   videoUrl: p.videoUrl || "",
-  sizes: checkboxSizes,   // ✅ ONLY predefined sizes
+  sizes: checkboxSizes,
   images: p.images || [],
   published: Boolean(p.published)
 });
+
 setCustomSizesInput(customSizes.join(", "));
+setSwatches((p.colors || []).map(c => c.hex || c));
+setColorsInput(
+  (p.colors || [])
+    .map(c => (c.name || "").toUpperCase())
+    .join(", ")
+);
+
 
 
 
