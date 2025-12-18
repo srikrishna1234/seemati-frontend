@@ -60,7 +60,7 @@ try {
   console.warn('[ROUTES] uploadRoutes missing:', err.message);
 }
 
-
+/*
 // -------------------------
 // AUTO-MOUNT ALL OTHERS
 // -------------------------
@@ -79,6 +79,6 @@ fs.readdirSync(routesDir)
       router.use(mount, mod.router || mod);
       console.log(`[ROUTES] Mounted ${mount} (auto)`);
     } catch {}
-  });
+  });*/
 
 module.exports = router;
