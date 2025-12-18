@@ -51,15 +51,18 @@ router.get("/slug/:slug", async (req, res) => {
 
 /* ================= UPDATE ================= */
 router.put("/:id", async (req, res) => {
+console.log("🔥 ROUTES PUT HIT", req.params.id);
+
   const updated = await Product.findByIdAndUpdate(
     req.params.id,
-    req.body,
+    { $set: req.body },   // 🔥 THIS IS THE FIX
     { new: true, runValidators: true }
   ).lean();
 
   if (!updated) return res.status(404).json({ success: false });
   res.json({ success: true, product: updated });
 });
+
 
 /* ================= DELETE ================= */
 router.delete("/:id", async (req, res) => {
