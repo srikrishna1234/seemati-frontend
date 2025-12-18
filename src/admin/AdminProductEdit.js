@@ -93,6 +93,7 @@ export default function AdminProductEdit() {
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
   const colorPickerRef = useRef(null);
+  const saveOnceRef = useRef(false);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -289,7 +290,13 @@ async function load() {
   /* ---------- SAVE ---------- */
   const handleSubmit = async (e) => {
   e.preventDefault();
+
+  // 🔒 HARD STOP: prevent duplicate PUT
+  if (saveOnceRef.current) return;
+  saveOnceRef.current = true;
+
   setSaving(true);
+
 
   try {
     let newUrls = [];
@@ -395,11 +402,13 @@ alert("Product updated successfully");
 
     navigate("/admin/products");
   } catch (err) {
-    console.error(err);
-    alert("Save failed");
-  } finally {
-    setSaving(false);
-  }
+  console.error(err);
+  saveOnceRef.current = false; // 🔓 allow retry
+  alert("Save failed");
+} finally {
+  setSaving(false);
+}
+
 };
 
 
