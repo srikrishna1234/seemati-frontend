@@ -2,6 +2,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axiosInstance from "../api/axiosInstance";
+// Standard checkbox sizes for Add Product page
+const STANDARD_SIZES = ["XS", "S", "M", "L", "XL", "XXL", "3XL"];
 
 /**
  * AddProduct: admin "create product" form
@@ -168,6 +170,9 @@ function generateSku({ brand, category, title }) {
   const counter = String(Math.abs(Date.now()) % 1000).padStart(3, "0");
   return `${prefix}-${counter}`;
 }
+/* ---------- COLOR LOGIC (COPIED FROM EDIT PAGE) ---------- */
+
+
 
 export default function AddProduct() {
   const navigate = useNavigate();
@@ -196,6 +201,7 @@ export default function AddProduct() {
 
   // sizes
   const [sizesInput, setSizesInput] = useState("");
+  const [selectedSizes, setSelectedSizes] = useState([]);
 
   // file selection / upload
   const fileInputRef = useRef(null);
@@ -204,32 +210,32 @@ export default function AddProduct() {
   const [loadingUpload, setLoadingUpload] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const onColorsInputChange = (e) => {
+  const value = e.target.value;
+  setColorsInput(value);
 
+  const names = value
+    .split(",")
+    .map(c => c.trim().toLowerCase())
+    .filter(Boolean);
+
+  const hexes = names
+    .map(n => NAMED_COLORS[n] || normalizeToHexIfPossible(n))
+    .filter(Boolean);
+
+  setSwatches(hexes);
+};
+
+const syncInputFromSwatches = (next) => {
+  setColorsInput(
+    next.map(h => nearestColorName(h).toUpperCase()).join(", ")
+  );
+};
   // Sync text input -> swatches (when user types)
-  useEffect(() => {
-    const arr = colorsInput
-      ? colorsInput.split(",").map(s => s.trim()).filter(Boolean).map(c => normalizeToHexIfPossible(c))
-      : [];
-    setSwatches(arr);
-  }, [colorsInput]);
+  
 
   // Keep colorsInput updated when swatches change (so they stay in sync when user uses picker)
-  useEffect(() => {
-    const s = swatches
-      .map(sv => {
-        if (!sv) return "";
-        // prefer named key if present in NAMED_COLORS
-        const lower = String(sv).toLowerCase();
-        const found = Object.entries(NAMED_COLORS).find(([, v]) => v.toUpperCase() === String(sv).toUpperCase());
-        if (found) return found[0].toUpperCase();
-        return sv;
-      })
-      .filter(Boolean)
-      .join(", ");
-    setColorsInput(s);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [swatches]);
-
+  
   // --- Auto-slug and auto-sku effects ---
 
   // Generate slug from title when title changes unless slug edited manually
@@ -319,22 +325,32 @@ export default function AddProduct() {
     }
   }
   function onColorPickerChange(e) {
-    const val = e.target.value;
-    const idx = colorPickerIndex;
-    setColorPickerIndex(null);
-    if (idx == null) return;
-    setSwatches(prev => {
-      const copy = [...prev];
-      copy[idx] = val.toUpperCase();
-      return copy;
-    });
-  }
+  const val = e.target.value.toUpperCase();
+  setSwatches(prev => {
+    const copy = [...prev];
+    copy[colorPickerIndex] = val;
+    syncInputFromSwatches(copy);
+    return copy;
+  });
+  setColorPickerIndex(null);
+}
+
   function addSwatch() {
-    setSwatches(prev => [...prev, "#FFFFFF"]);
-  }
+  setSwatches(prev => {
+    const next = [...prev, "#FFFFFF"];
+    syncInputFromSwatches(next);
+    return next;
+  });
+}
+
   function removeSwatch(i) {
-    setSwatches(prev => prev.filter((_, idx) => idx !== i));
-  }
+  setSwatches(prev => {
+    const next = prev.filter((_, idx) => idx !== i);
+    syncInputFromSwatches(next);
+    return next;
+  });
+}
+
 
   // Remove uploaded image from list (UI only)
   function removeUploaded(index) {
@@ -347,6 +363,13 @@ export default function AddProduct() {
     setSku(newSku);
     setSkuEdited(true); // treat as manual choice so auto effects won't overwrite
   }
+  function toggleSize(size) {
+  setSelectedSizes(prev =>
+    prev.includes(size)
+      ? prev.filter(s => s !== size)
+      : [...prev, size]
+  );
+}
 
   // create product handler
   async function handleCreateProduct(e) {
@@ -384,9 +407,16 @@ export default function AddProduct() {
         brand,
         category,
         colors: normalizeColorsForBackend(swatches),
-sizes: sizesInput
-  ? sizesInput.split(",").map(s => s.trim()).filter(Boolean)
-  : [],
+sizes: Array.from(
+  new Set([
+    ...selectedSizes,
+    ...(sizesInput
+      ? sizesInput.split(",").map(s => s.trim()).filter(Boolean)
+      : [])
+  ])
+),
+
+
 videoUrl: videoUrl.trim(),
 
         images: finalImageUrls
@@ -477,15 +507,50 @@ videoUrl: videoUrl.trim(),
           </div>
         </div>
 
-        <div style={{ marginTop: 12 }}>
-          <label style={{ display: "block", marginBottom: 4 }}>Description</label>
-          <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={5} style={{ width: "100%" }} />
-        </div>
+        {/* Sizes */}
+<div style={{ marginTop: 16 }}>
+  <label style={{ display: "block", marginBottom: 6, fontWeight: 600 }}>
+    Sizes
+  </label>
+
+  {/* Standard sizes checkboxes */}
+  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+    {STANDARD_SIZES.map(size => (
+      <label key={size} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <input
+          type="checkbox"
+          checked={selectedSizes.includes(size)}
+          onChange={() => toggleSize(size)}
+        />
+        {size}
+      </label>
+    ))}
+  </div>
+
+  {/* Custom sizes */}
+  <div style={{ marginTop: 10 }}>
+    <label style={{ fontSize: 13, color: "#555" }}>
+      Custom sizes (comma separated – alphanumeric allowed)
+    </label>
+    <input
+      value={sizesInput}
+      onChange={(e) => setSizesInput(e.target.value)}
+      placeholder="4XL, 5XL, 6XL, 100, 105, FreeSize"
+      style={{ width: "100%", marginTop: 4 }}
+    />
+  </div>
+</div>
+
 
         {/* Colors: text input + swatches (editable with color picker) */}
         <div style={{ marginTop: 12 }}>
           <label style={{ display: "block", marginBottom: 6 }}>Colors (comma-separated)</label>
-          <input value={colorsInput} onChange={(e) => setColorsInput(e.target.value)} placeholder="#1026CB, #1A84C7, red" style={{ width: "100%" }} />
+          <input
+  value={colorsInput}
+  onChange={onColorsInputChange}
+  placeholder="#1026CB, #1A84C7, red"
+  style={{ width: "100%" }}
+/>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 10, alignItems: "center" }}>
             {swatches.map((c, i) => {
               const isHex = /^#([0-9A-Fa-f]{6})$/.test(String(c).trim());
@@ -525,10 +590,7 @@ videoUrl: videoUrl.trim(),
           </div>
         </div>
 
-        <div style={{ marginTop: 12 }}>
-          <label style={{ display: "block", marginBottom: 4 }}>Sizes (comma separated)</label>
-          <input value={sizesInput} onChange={(e) => setSizesInput(e.target.value)} placeholder="L, XL, XXL" style={{ width: "100%" }} />
-        </div>
+        
 
         <div style={{ marginTop: 12 }}>
           <label style={{ display: "block", marginBottom: 4 }}>Video URL (YouTube)</label>
