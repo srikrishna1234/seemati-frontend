@@ -48,6 +48,17 @@ const NAMED_COLORS = {
   "#010913": "black",
   "#584141": "brown"
 };
+function normalizeColorsForBackend(swatches) {
+  return swatches
+    .filter(Boolean)
+    .map(c => {
+      const hex = /^#([0-9A-Fa-f]{6})$/.test(c) ? c.toUpperCase() : null;
+      return hex
+        ? { name: nearestColorName(hex), hex }
+        : null;
+    })
+    .filter(Boolean);
+}
 
 // Helpers
 function hexToRgb(hex) {
@@ -269,6 +280,7 @@ export default function AddProduct() {
     const resp = await axiosInstance.post("/api/uploadRoutes/upload", form, {
       headers: { "Content-Type": "multipart/form-data" },
       withCredentials: true
+	  
     });
 
     const data = resp?.data || {};
@@ -371,12 +383,16 @@ export default function AddProduct() {
         stock: Number(stock) || 0,
         brand,
         category,
-        videoUrl: videoUrl || "",
-        colors: swatches.map(s => s), // array of strings (hex or names)
-        sizes: sizesInput ? sizesInput.split(",").map(s => s.trim()).filter(Boolean) : [],
+        colors: normalizeColorsForBackend(swatches),
+sizes: sizesInput
+  ? sizesInput.split(",").map(s => s.trim()).filter(Boolean)
+  : [],
+videoUrl: videoUrl.trim(),
+
         images: finalImageUrls
       };
-
+      console.log("CREATE PRODUCT PAYLOAD", body);
+   
       const resp = await axiosInstance.post("/api/products", body, { withCredentials: true });
       const data = resp && resp.data ? resp.data : {};
       if (data && (data.success || data._id || data.id || data.product)) {
