@@ -264,7 +264,7 @@ const frequentlyBought = relatedProducts.slice(0, 3);
   `/api/products?slug=${encodeURIComponent(slug)}`,
   `/api/products/${encodeURIComponent(slug)}`,
 ];
-
+ let lastError = null;
 for (const ep of endpoints) {
   try {
     const resp = await fetch(ep);
