@@ -1,7 +1,6 @@
 // src/pages/ProductListPage.jsx
 import React, { useEffect, useRef, useState } from "react";
 import ShopProductCard from "../shop/shopProductCard";
-import axios from "../api/axiosInstance";
 
 /**
  * Small helper to normalize/resolve image objects/URLs to absolute URLs
@@ -71,11 +70,17 @@ export default function ProductListPage({ limit = 8 }) {
         const fields =
           "title,price,mrp,compareAtPrice,slug,thumbnail,images,description";
         // Request products from backend via axiosInstance — use /api/products for local proxy
-        const res = await axios.get(
-          `/api/products?page=1&limit=${encodeURIComponent(limit)}&fields=${encodeURIComponent(fields)}`
-        );
+        const resp = await fetch(
+  `/api/products?page=1&limit=${encodeURIComponent(limit)}&fields=${encodeURIComponent(fields)}`
+);
 
-        const data = res?.data?.products ?? res?.data ?? [];
+if (!resp.ok) {
+  throw new Error(`Public /api/products failed with ${resp.status}`);
+}
+
+const json = await resp.json();
+const data = json?.products ?? json ?? [];
+
         const normalized = (Array.isArray(data) ? data : []).map((p) => {
           const images = Array.isArray(p.images)
             ? p.images

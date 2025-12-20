@@ -1,9 +1,10 @@
 // src/pages/ProductDetail.jsx
 import React, { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import axios from "../api/axiosInstance";
 import { getImageUrl, getImageUrls } from "../utils/imageUtils";
-import { addOrIncrementItem, loadCart, computeTotals, SHIPPING_THRESHOLD } from "../utils/cartHelpers";
+import { loadCart, computeTotals, SHIPPING_THRESHOLD } from "../utils/cartHelpers";
+
+
 import { useCartDispatch } from "../context/CartContext";
 import colorNames from "../utils/colorNames";
 
@@ -181,6 +182,7 @@ export default function ProductDetailPage({ products = [] }) {
   const { slug } = useParams();
   const navigate = useNavigate();
   const cartDispatch = useCartDispatch();
+ const addToCartLockRef = useRef(false);
 
   const [product, setProduct] = useState(() => {
     try {
@@ -211,6 +213,9 @@ export default function ProductDetailPage({ products = [] }) {
   // gallery state
   const [galleryUrls, setGalleryUrls] = useState([]); // array of resolved urls
   const [galleryIndex, setGalleryIndex] = useState(0);
+// related products (customers also viewed / frequently bought)
+const [relatedProducts, setRelatedProducts] = useState([]);
+const frequentlyBought = relatedProducts.slice(0, 3);
 
   // color list derived (each { raw, hex, name, imageUrl })
   const [derivedColors, setDerivedColors] = useState([]);
@@ -256,17 +261,16 @@ export default function ProductDetailPage({ products = [] }) {
 
       // candidate endpoints on backend — call backend base via axios instance
       const endpoints = [
-        `/api/products?slug=${encodeURIComponent(slug)}`,
-        `/api/products/${encodeURIComponent(slug)}`,
-      ];
+  `/api/products?slug=${encodeURIComponent(slug)}`,
+  `/api/products/${encodeURIComponent(slug)}`,
+];
 
-      let lastError = null;
-      for (const ep of endpoints) {
-        try {
-          const res = await axios.get(ep);
-          if (!mounted) return;
+for (const ep of endpoints) {
+  try {
+    const resp = await fetch(ep);
+    if (!resp.ok) throw new Error(`Failed ${ep} ${resp.status}`);
+    const data = await resp.json();
 
-          const data = res.data;
           let resolved = null;
 
           if (data) {
@@ -297,6 +301,42 @@ export default function ProductDetailPage({ products = [] }) {
     fetchProduct();
     return () => { mounted = false; };
   }, [slug]);
+  // fetch related products (customers also viewed / frequently bought)
+useEffect(() => {
+  if (!product?._id || !product?.category) return;
+
+  let mounted = true;
+
+  async function fetchRelatedProducts() {
+    try {
+     const resp = await fetch(
+  `/api/products?category=${encodeURIComponent(product.category)}&limit=8`
+);
+if (!resp.ok) throw new Error("Related products fetch failed");
+const data = await resp.json();
+
+
+      const list = Array.isArray(data)
+  ? data
+  : data?.products || [];
+
+      const filtered = list.filter(
+        (p) => p._id !== product._id && p.slug !== product.slug
+      );
+
+      if (mounted) {
+        setRelatedProducts(filtered.slice(0, 6));
+      }
+    } catch (err) {
+      console.warn("[ProductDetail] related products fetch failed", err);
+    }
+  }
+
+  fetchRelatedProducts();
+  return () => {
+    mounted = false;
+  };
+}, [product?._id, product?.category]);
 
   // Build gallery URLs whenever product.images (or product.image/thumbnail fallback) changes
   useEffect(() => {
@@ -426,44 +466,63 @@ export default function ProductDetailPage({ products = [] }) {
   function onQtyChange(e) { setQuantity(clampQty(e.target.value)); }
 
   async function handleAddToCart(e) {
-    e?.preventDefault?.();
-    if (!product) return;
-    if (Array.isArray(product.colors) && product.colors.length > 0 && !selectedColor) { setError("Please select a color."); return; }
-    if (Array.isArray(product.sizes) && product.sizes.length > 0 && !selectedSize) { setError("Please select a size."); return; }
+  e?.preventDefault?.();
+  if (!product) return;
 
-    setAdding(true);
-    setError(null);
+  // 🔒 STRICTMODE GUARD (prevents double add)
+  if (addToCartLockRef.current) return;
+  addToCartLockRef.current = true;
 
-    const idBase = product._id ?? product.id ?? product.slug ?? Math.random().toString(36).slice(2, 9);
-    const variantKeyParts = [idBase];
-    if (selectedColor) variantKeyParts.push(`c:${String(selectedColor)}`);
-    if (selectedSize) variantKeyParts.push(`s:${String(selectedSize)}`);
-    const variantKey = variantKeyParts.join("|");
-
-    const itemPayload = {
-      _id: variantKey,
-      productId: idBase,
-      slug: product.slug,
-      title: product.title ?? product.name ?? "Product",
-      price: Number(product.price ?? product.salePrice ?? 0),
-      images: product.images ?? (product.image ? [{ url: product.image }] : []),
-      image: product.imageUrl ?? (product.images && product.images[0] ? (product.images[0].url || product.images[0]) : null),
-      quantity: clampQty(quantity),
-      meta: { color: selectedColor ?? null, size: selectedSize ?? null },
-    };
-
-    try {
-      const saved = await addOrIncrementItem(itemPayload, itemPayload.quantity);
-      try { if (typeof cartDispatch === "function") cartDispatch({ type: "INITIALIZE", payload: saved }); } catch (err) { console.warn("[ProductDetail] context initialize failed:", err); }
-      try { window.dispatchEvent(new Event("cart-updated")); } catch (e) {}
-      try { const comp = computeTotals(saved); checkAndTriggerBurst(comp.subtotal || 0, productImageContainerRef.current || document.body); } catch (e) {}
-    } catch (err) {
-      console.error("Add to cart failed (product page):", err);
-      setError("Unable to add to cart. See console for details.");
-    } finally {
-      setAdding(false);
-    }
+  if (Array.isArray(product.colors) && product.colors.length > 0 && !selectedColor) {
+    setError("Please select a color.");
+    addToCartLockRef.current = false;
+    return;
   }
+  if (Array.isArray(product.sizes) && product.sizes.length > 0 && !selectedSize) {
+    setError("Please select a size.");
+    addToCartLockRef.current = false;
+    return;
+  }
+
+  setAdding(true);
+  setError(null);
+
+  try {
+    if (typeof cartDispatch === "function") {
+      cartDispatch({
+        type: "ADD_ITEM",
+        payload: {
+          productId: product._id ?? product.id ?? product.slug,
+          title: product.title ?? product.name ?? "Product",
+          price: Number(product.price ?? 0),
+          image:
+            product.image ??
+            (product.images && product.images[0]
+              ? product.images[0].url || product.images[0]
+              : null),
+          quantity: clampQty(quantity),
+          meta: {
+            color: selectedColor ?? null,
+            size: selectedSize ?? null,
+          },
+        },
+      });
+    }
+
+    window.dispatchEvent(new Event("cart-updated"));
+  } catch (err) {
+    console.error("Add to cart failed:", err);
+    setError("Unable to add to cart.");
+  } finally {
+    setAdding(false);
+
+    // 🔓 allow next click
+    setTimeout(() => {
+      addToCartLockRef.current = false;
+    }, 0);
+  }
+}
+
 
   const leftForFree = Math.max(0, (SHIPPING_THRESHOLD - (cartTotals.subtotal || 0)));
 
@@ -481,7 +540,7 @@ export default function ProductDetailPage({ products = [] }) {
   const embedUrl = youtubeEmbedUrl(possibleVideo);
 
   if (loading) {
-    return <div style={{ padding: 24 }}><p>Loading product…</p></div>;
+    return <div style={{ padding: 24, paddingBottom: 120 }}><p>Loading product…</p></div>;
   }
 
   if (!product) {
@@ -634,6 +693,76 @@ export default function ProductDetailPage({ products = [] }) {
 
         {/* Middle: product info (colors + sizes + CTA) */}
         <div style={{ minWidth: 320 }}>
+		 {/* Free shipping info (moved near title) */}
+
+  <div
+  style={{
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    marginBottom: 12,
+    padding: "8px 14px",
+    background: "#ecfdf5",
+    border: "1px solid #a7f3d0",
+    color: "#065f46",
+    borderRadius: 999,
+    fontWeight: 700,
+    fontSize: 14,
+    flexWrap: "wrap",
+    textAlign: "center",
+    marginLeft: "auto",
+    marginRight: "auto",
+    maxWidth: 980,
+  }}
+>
+  {cartTotals.subtotal < SHIPPING_THRESHOLD ? (
+    <>
+      <span>📦</span>
+      <div>
+        <div>
+          Free shipping available on orders above ₹{SHIPPING_THRESHOLD}
+        </div>
+        <div>
+          Add ₹{Math.max(0, SHIPPING_THRESHOLD - cartTotals.subtotal).toFixed(2)} more
+          to get FREE shipping
+        </div>
+        <div>
+          Current subtotal ₹{(cartTotals.subtotal || 0).toFixed(2)}
+        </div>
+      </div>
+    </>
+  ) : (
+    <>
+      <span>🎉</span>
+      <span>
+        You have free shipping! Subtotal ₹{(cartTotals.subtotal || 0).toFixed(2)}
+      </span>
+
+      <button
+        onClick={() =>
+          burstAt(productImageContainerRef.current || document.body, {
+            count: 36,
+          })
+        }
+        style={{
+          marginLeft: 6,
+          background: "#10b981",
+          color: "#fff",
+          border: "none",
+          padding: "6px 12px",
+          borderRadius: 999,
+          cursor: "pointer",
+          fontWeight: 700,
+        }}
+      >
+        Celebrate
+      </button>
+    </>
+  )}
+</div>
+
+
           <h1 style={{ marginTop: 0 }}>{product.title}</h1>
           {product.description && <p style={{ color: "#374151" }}>{product.description}</p>}
 
@@ -645,6 +774,49 @@ export default function ProductDetailPage({ products = [] }) {
               ₹{Number(product.price ?? 0).toFixed(2)}
             </div>
           </div>
+          {/* Frequently Bought Together */}
+{frequentlyBought.length > 0 && (
+  <div style={{ marginTop: 18 }}>
+    <div style={{ fontWeight: 700, marginBottom: 10 }}>
+      Frequently Bought Together
+    </div>
+
+    <div style={{ display: "flex", gap: 12 }}>
+      {frequentlyBought.map((p) => (
+        <Link
+          key={p._id}
+          to={`/product/${p.slug}`}
+          style={{
+            textDecoration: "none",
+            color: "inherit",
+            border: "1px solid #eee",
+            borderRadius: 6,
+            padding: 8,
+            width: 110,
+            background: "#fff",
+          }}
+        >
+          <img
+            src={getImageUrl(p.image || p.images?.[0])}
+            alt={p.title}
+            style={{
+              width: "100%",
+              height: 110,
+              objectFit: "cover",
+              borderRadius: 4,
+            }}
+          />
+          <div style={{ fontSize: 12, fontWeight: 600, marginTop: 6 }}>
+            {p.title}
+          </div>
+          <div style={{ fontSize: 12, color: "#0b5cff", fontWeight: 700 }}>
+            ₹{Number(p.price || 0).toFixed(2)}
+          </div>
+        </Link>
+      ))}
+    </div>
+  </div>
+)}
 
           {/* Colors: render improved swatches with friendly names (smaller) */}
           {derivedColors.length > 0 && (
@@ -802,53 +974,55 @@ export default function ProductDetailPage({ products = [] }) {
           </div>
         )}
       </div>
+      {/* Related products */}
+{relatedProducts.length > 0 && (
+  <div style={{ marginTop: 48 }}>
+    <h2 style={{ marginBottom: 16 }}>Customers also viewed</h2>
 
-      {/* shipping floating bar kept unchanged */}
-      <div
-        aria-hidden="false"
-        style={{
-          position: "fixed",
-          left: 20,
-          right: 20,
-          bottom: 20,
-          margin: "0 auto",
-          maxWidth: 980,
-          background: "#e6fffa",
-          border: "1px solid #bbf7d0",
-          color: "#064e3b",
-          padding: "12px 18px",
-          borderRadius: 999,
-          boxShadow: "0 6px 18px rgba(2,6,23,0.06)",
-          display: "flex",
-          alignItems: "center",
-          gap: 12,
-          justifyContent: "center",
-          zIndex: 9999,
-        }}
-      >
-        {leftForFree > 0 ? (
-          <>
-            <span style={{ fontWeight: 700 }}>📦</span>
-            <div style={{ fontWeight: 700 }}>Add ₹{leftForFree.toFixed(2)} more to get free shipping.</div>
-            <div style={{ color: "#065f46" }}>Subtotal ₹{(cartTotals.subtotal || 0).toFixed(2)}</div>
-            <div style={{ marginLeft: 12 }}>
-              <button onClick={() => navigate("/cart")} style={{ background: "#0b5cff", color: "#fff", padding: "8px 12px", borderRadius: 6, border: "none" }}>
-                View Cart
-              </button>
-            </div>
-          </>
-        ) : (
-          <>
-            <span style={{ fontWeight: 700 }}>🎉</span>
-            <div style={{ fontWeight: 700 }}>You have free shipping! Subtotal ₹{(cartTotals.subtotal || 0).toFixed(2)}</div>
-            <div style={{ marginLeft: 12 }}>
-              <button onClick={() => burstAt(productImageContainerRef.current || document.body, { count: 36 })} style={{ background: "#10b981", color: "#fff", padding: "8px 12px", borderRadius: 6, border: "none" }}>
-                Celebrate
-              </button>
-            </div>
-          </>
-        )}
-      </div>
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
+        gap: 16,
+      }}
+    >
+      {relatedProducts.map((p) => (
+        <Link
+          key={p._id}
+          to={`/product/${p.slug}`}
+          style={{
+            textDecoration: "none",
+            color: "inherit",
+            border: "1px solid #eee",
+            borderRadius: 8,
+            padding: 12,
+            background: "#fff",
+          }}
+        >
+          <img
+            src={getImageUrl(p.image || p.images?.[0])}
+            alt={p.title}
+            style={{
+              width: "100%",
+              height: 180,
+              objectFit: "cover",
+              borderRadius: 6,
+            }}
+          />
+          <div style={{ marginTop: 8, fontWeight: 700 }}>
+            {p.title}
+          </div>
+          <div style={{ color: "#0b5cff", fontWeight: 800 }}>
+            ₹{Number(p.price || 0).toFixed(2)}
+          </div>
+        </Link>
+      ))}
     </div>
-  );
+  </div>
+)}
+
+</div>
+
+);
 }
+
