@@ -506,6 +506,18 @@ videoUrl: videoUrl.trim(),
             <input value={category} onChange={(e) => setCategory(e.target.value)} />
           </div>
         </div>
+        <div style={{ marginTop: 12 }}>
+  <label style={{ display: "block", marginBottom: 4 }}>
+    Description
+  </label>
+  <textarea
+    value={description}
+    onChange={(e) => setDescription(e.target.value)}
+    rows={4}
+    style={{ width: "100%" }}
+    placeholder="Product description (fabric, fit, usage, etc.)"
+  />
+</div>
 
         {/* Sizes */}
 <div style={{ marginTop: 16 }}>
