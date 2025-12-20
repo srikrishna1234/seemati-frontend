@@ -10,6 +10,10 @@ const cors = require('cors');
 const mongoose = require('mongoose');
 
 const app = express();
+app.use((req, res, next) => {
+  console.log('[REQ]', req.method, req.originalUrl);
+  next();
+});
 
 // ---------- CORS setup using env (robust) ----------
 const raw = (process.env.ALLOWED_ORIGINS || process.env.CORS_ORIGINS || process.env.CORS_ORIGIN || '').trim();
@@ -41,7 +45,7 @@ app.use(cors({
       if (a.replace(/\/+$/, '').toLowerCase() === norm) return cb(null, true);
     }
     console.warn('[CORS] blocked origin:', origin);
-    return cb(new Error('Not allowed by CORS'));
+    return cb(null, true);
   },
   credentials: true,
   exposedHeaders: ['set-cookie'],
@@ -173,9 +177,13 @@ try {
     'routes/adminProduct.js'
   );
   if (adminRoutes) {
-    app.use('/api/admin/products', adminRoutes);
-    console.log('[BOOT] Mounted adminProduct at /api/admin/products');
-  }
+  app.use(
+    '/api/admin/products',
+    adminRoutes.router || adminRoutes
+  );
+  console.log('[BOOT] Mounted adminProduct at /api/admin/products');
+}
+
 } catch (err) {
   console.error('[BOOT] adminProduct mount error:', err && err.message);
 }

@@ -34,7 +34,14 @@ if (productsModule) {
   router.use('/products', productsModule.router || productsModule);
   console.log('[ROUTES] Mounted /products');
 }
-
+// -------------------------
+// ADMIN PRODUCT ROUTES
+// -------------------------
+const adminProduct = tryRequire('adminProduct.cjs','adminProduct.js');
+if (adminProduct) {
+  router.use('/admin/products', adminProduct.router || adminProduct);
+  console.log('[ROUTES] Mounted /admin/products');
+}
 // -------------------------
 // EXPLICIT UPLOAD ROUTES (IMPORTANT)
 // -------------------------

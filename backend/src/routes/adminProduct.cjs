@@ -1,3 +1,4 @@
+
 // backend/src/routes/adminProduct.cjs
 'use strict';
 
@@ -21,10 +22,11 @@ try {
 
 /* ---------- ROUTES (NO WRAPPERS, NO DOUBLE RESPONSES) ---------- */
 
-router.get('/products', controller.getAllProducts);
-router.post('/products', controller.createProduct);
-router.get('/products/:id', controller.getProductById);
+// All routes are RELATIVE to mount path
+router.get('/', controller.getAllProducts);
+router.post('/', controller.createProduct);
+router.get('/:id', controller.getProductById);
 router.put('/:id', controller.updateProduct);
-router.delete('/products/:id', controller.deleteProduct);
+router.delete('/:id', controller.deleteProduct);
 
 module.exports = router;

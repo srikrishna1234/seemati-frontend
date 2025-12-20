@@ -17,6 +17,28 @@ const productSchema = new mongoose.Schema({
   // frontend expects an array of STRINGS
   thumbnail: { type: String, default: '' },
   images: { type: [String], default: [] },
+    // Sizes (checkbox + custom)
+  sizes: {
+    type: [String],
+    default: []
+  },
+
+  // Colors [{ name, hex }]
+  colors: {
+    type: [
+      {
+        name: { type: String, required: true },
+        hex: { type: String, required: true }
+      }
+    ],
+    default: []
+  },
+
+  // Optional product video (YouTube)
+  videoUrl: {
+    type: String,
+    default: ""
+  },
 
   stock: { type: Number, default: 0 },
   published: { type: Boolean, default: false },
@@ -28,6 +50,4 @@ const productSchema = new mongoose.Schema({
 });
 
 // Correct safe model export
-module.exports =
-  mongoose.models.Product ||
-  mongoose.model("Product", productSchema);
+module.exports = mongoose.model("Product", productSchema);

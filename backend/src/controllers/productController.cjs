@@ -48,15 +48,40 @@ async function getProductById(req, res) {
 
 /* ---------- CREATE ---------- */
 async function createProduct(req, res) {
+  console.log('🟢 CREATE PRODUCT HIT');
+  console.log('🟢 req.body =', JSON.stringify(req.body, null, 2));
+
   try {
-    const p = new Product(req.body);
-    await p.save();
-    return res.status(201).json(p);
+    const data = {
+      title: req.body.title,
+      description: req.body.description || "",
+      price: req.body.price || 0,
+      mrp: req.body.mrp || 0,
+      compareAtPrice: req.body.compareAtPrice || 0,
+      stock: req.body.stock || 0,
+      brand: req.body.brand || "",
+      category: req.body.category || "",
+      sku: req.body.sku || "",
+      slug: req.body.slug || "",
+      images: Array.isArray(req.body.images) ? req.body.images : [],
+      published: !!req.body.published,
+
+      // ✅ SAME 3 FIELDS
+      sizes: Array.isArray(req.body.sizes) ? req.body.sizes : [],
+      colors: Array.isArray(req.body.colors) ? req.body.colors : [],
+      videoUrl: req.body.videoUrl || ""
+    };
+
+    const product = new Product(data);
+    await product.save();
+
+    return res.status(201).json(product);
   } catch (err) {
     console.error('[productController] createProduct error:', err);
     return res.status(500).json({ error: 'Failed to create product' });
   }
 }
+
 
 /* ---------- UPDATE (FINAL FIX) ---------- */
 async function updateProduct(req, res) {
@@ -66,21 +91,21 @@ async function updateProduct(req, res) {
   try {
     const { id } = req.params;
 
-    // ✅ Explicit update — NO guessing by Mongo
     const update = {
       title: req.body.title,
-      description: req.body.description,
-      price: req.body.price,
-      mrp: req.body.mrp,
-      stock: req.body.stock,
-      category: req.body.category,
-      brand: req.body.brand,
-      sku: req.body.sku,
-      slug: req.body.slug,
-      images: req.body.images,
-      published: req.body.published,
+      description: req.body.description || "",
+      price: req.body.price || 0,
+      mrp: req.body.mrp || 0,
+      compareAtPrice: req.body.compareAtPrice || 0,
+      stock: req.body.stock || 0,
+      brand: req.body.brand || "",
+      category: req.body.category || "",
+      sku: req.body.sku || "",
+      slug: req.body.slug || "",
+      images: Array.isArray(req.body.images) ? req.body.images : [],
+      published: !!req.body.published,
 
-      // 🔥 FORCE REPLACEMENT (THE FIX)
+      // ✅ CRITICAL FIELDS
       sizes: Array.isArray(req.body.sizes) ? req.body.sizes : [],
       colors: Array.isArray(req.body.colors) ? req.body.colors : [],
       videoUrl: req.body.videoUrl || ""
@@ -88,7 +113,7 @@ async function updateProduct(req, res) {
 
     const updated = await Product.findByIdAndUpdate(
       id,
-      update,               // ❗ NOT $set
+      { $set: update },                 // 🔥 THIS IS THE FIX
       { new: true, runValidators: true }
     );
 
