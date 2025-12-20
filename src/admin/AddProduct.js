@@ -283,7 +283,7 @@ const syncInputFromSwatches = (next) => {
   setLoadingUpload(true);
   try {
     // Correct endpoint (same as AdminProductEdit)
-    const resp = await axiosInstance.post("/api/uploadRoutes/upload", form, {
+    const resp = await axiosInstance.post("/uploadRoutes/upload", form, {
       headers: { "Content-Type": "multipart/form-data" },
       withCredentials: true
 	  
@@ -423,7 +423,7 @@ videoUrl: videoUrl.trim(),
       };
       console.log("CREATE PRODUCT PAYLOAD", body);
    
-      const resp = await axiosInstance.post("/api/products", body, { withCredentials: true });
+      const resp = await axiosInstance.post("/admin/products", body, { withCredentials: true });
       const data = resp && resp.data ? resp.data : {};
       if (data && (data.success || data._id || data.id || data.product)) {
         setMessage("Product created.");
