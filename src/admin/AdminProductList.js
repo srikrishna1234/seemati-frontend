@@ -34,7 +34,7 @@ export default function AdminProductList() {
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
       try {
-        const res = await axios.get("/api/products", { headers });
+        const res = await axios.get("/products", { headers });
 
         const list =
           Array.isArray(res.data?.products)
@@ -106,7 +106,7 @@ export default function AdminProductList() {
     setActionMsg("Deleting...");
 
     try {
-      const res = await axios.delete(`/api/products/${id}`);
+      const res = await axios.delete(`/products/${id}`);
 
       if (!res.data?.success) {
         throw new Error(res.data?.message || "Delete failed");

@@ -353,7 +353,7 @@ console.log("🚨 FINAL PAYLOAD BEING SENT", {
 
 
     // ✅ SEND JSON PAYLOAD
-   await axiosInstance.put(`/admin/products/${id}`, payload);
+await axiosInstance.put(`/admin/products/${id}`, payload);
 
 /*
 // 🔁 REFRESH FROM BACKEND (ADMIN API)
