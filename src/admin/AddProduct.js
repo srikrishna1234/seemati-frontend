@@ -1,4 +1,4 @@
-// src/admin/AddProduct.jsx
+// src/admin/AddProduct.js
 import React, { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axiosInstance from "../api/axiosInstance";
@@ -470,6 +470,18 @@ videoUrl: videoUrl.trim(),
           <label style={{ display: "block", marginBottom: 4 }}>Slug</label>
           <input value={slug} onChange={(e) => { setSlug(e.target.value); setSlugEdited(true); }} placeholder="example-product-slug" style={{ width: "100%" }} />
         </div>
+        <div style={{ marginBottom: 12 }}>
+  <label style={{ display: "block", marginBottom: 4 }}>
+    Description
+  </label>
+  <textarea
+    value={description}
+    onChange={(e) => setDescription(e.target.value)}
+    rows={4}
+    style={{ width: "100%" }}
+    placeholder="Product description (fabric, fit, usage, etc.)"
+  />
+</div>
 
         <div style={{ display: "flex", gap: 12 }}>
           <div style={{ flex: 1 }}>
@@ -506,18 +518,7 @@ videoUrl: videoUrl.trim(),
             <input value={category} onChange={(e) => setCategory(e.target.value)} />
           </div>
         </div>
-        <div style={{ marginTop: 12 }}>
-  <label style={{ display: "block", marginBottom: 4 }}>
-    Description
-  </label>
-  <textarea
-    value={description}
-    onChange={(e) => setDescription(e.target.value)}
-    rows={4}
-    style={{ width: "100%" }}
-    placeholder="Product description (fabric, fit, usage, etc.)"
-  />
-</div>
+        
 
         {/* Sizes */}
 <div style={{ marginTop: 16 }}>
