@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://seemati-backend.onrender.com/api/:path*"
+      "destination": "https://api.seemati.in/api/:path*"
     },
     {
       "source": "/(.*)",
