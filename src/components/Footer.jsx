@@ -1,8 +1,23 @@
 // src/components/Footer.jsx
 import React from "react";
 import { Link } from "react-router-dom";
+import { useCartState } from "../context/CartContext";
 
 export default function Footer() {
+	  const { items } = useCartState();
+
+  const cartCount = Array.isArray(items)
+    ? items.reduce((sum, i) => sum + (i.quantity || 1), 0)
+    : 0;
+
+  // wishlist count from localStorage
+  let wishlistCount = 0;
+  try {
+    const raw = localStorage.getItem("wishlist_v1");
+    const arr = JSON.parse(raw || "[]");
+    wishlistCount = Array.isArray(arr) ? arr.length : 0;
+  } catch {}
+
   return (
     <footer style={{ background: "#fafafa", borderTop: "1px solid #eee", padding: "40px 16px" }}>
       <div style={{ maxWidth: 1100, margin: "0 auto", display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20 }}>
@@ -28,13 +43,26 @@ export default function Footer() {
         <div>
           <h4 style={{ margin: "0 0 10px 0" }}>Help & policies</h4>
           <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-            <li><Link to="/faq">FAQ</Link></li>
-            <li><Link to="/size-guide">Size Guide</Link></li>
-            <li><Link to="/shipping">Shipping</Link></li>
-            <li><Link to="/returns">Returns</Link></li>
-            <li><Link to="/privacy-policy">Privacy Policy</Link></li>
-            <li><Link to="/terms">Terms & Conditions</Link></li>
-          </ul>
+  <li><Link to="/faq">FAQ</Link></li>
+  <li><Link to="/size-guide">Size Guide</Link></li>
+  <li><Link to="/shipping">Shipping</Link></li>
+  <li><Link to="/returns">Returns</Link></li>
+  <li><Link to="/privacy-policy">Privacy Policy</Link></li>
+  <li><Link to="/terms">Terms & Conditions</Link></li>
+
+  <li>
+    <Link to="/wishlist">
+      Wishlist {wishlistCount > 0 && `(${wishlistCount})`}
+    </Link>
+  </li>
+
+  <li>
+    <Link to="/cart">
+      Cart {cartCount > 0 && `(${cartCount})`}
+    </Link>
+  </li>
+</ul>
+
         </div>
       </div>
 
