@@ -7,6 +7,8 @@ import { HelmetProvider } from "react-helmet-async";
 import App from "./App";
 import "./index.css";
 import "./utils/axiosConfig"; // safe file (should not read localStorage at module top)
+import { CartProvider } from "./context/CartContext";
+
 // -----------------------------------------------------------------
 
 // Install global handlers right after imports (safe + eslint-compliant)
@@ -110,11 +112,13 @@ installGlobalHandlers();
 // Render the app inside a BrowserRouter & HelmetProvider so hooks like useNavigate and Helmet work everywhere
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(
-  <React.StrictMode>
-    <HelmetProvider>
-      <BrowserRouter>
+  <HelmetProvider>
+    <BrowserRouter>
+      <CartProvider>
         <App />
-      </BrowserRouter>
-    </HelmetProvider>
-  </React.StrictMode>
+      </CartProvider>
+    </BrowserRouter>
+  </HelmetProvider>
 );
+
+

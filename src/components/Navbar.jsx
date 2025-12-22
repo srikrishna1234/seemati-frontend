@@ -1,12 +1,44 @@
 // src/components/Navbar.jsx
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { NavLink } from "react-router-dom";
+import { useCartState } from "../context/CartContext";
 import "./NavFooter.css";
+// ---------- Wishlist helpers ----------
+const WISHLIST_KEY = "wishlist_v1";
+
+function loadWishlist() {
+  try {
+    const raw = localStorage.getItem(WISHLIST_KEY) || "[]";
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
 
 export default function Navbar() {
   const [open, setOpen] = useState(false);
+  const { items } = useCartState(); // 👈 CONNECT TO CART
+const [wishlistCount, setWishlistCount] = useState(0);
 
   const closeMenu = () => setOpen(false);
+// sync wishlist count
+useEffect(() => {
+  function syncWishlist() {
+    setWishlistCount(loadWishlist().length);
+  }
+
+  syncWishlist(); // initial load
+  window.addEventListener("wishlist-updated", syncWishlist);
+
+  return () => {
+    window.removeEventListener("wishlist-updated", syncWishlist);
+  };
+}, []);
+
+  const cartCount = Array.isArray(items)
+    ? items.reduce((sum, i) => sum + (i.quantity || 1), 0)
+    : 0;
 
   return (
     <header className="site-nav">
@@ -27,55 +59,26 @@ export default function Navbar() {
         </button>
 
         <nav className={`nav-links ${open ? "open" : ""}`}>
-          <NavLink to="/" onClick={closeMenu} className="nav-item">
-            Home
-          </NavLink>
+          <NavLink to="/" onClick={closeMenu} className="nav-item">Home</NavLink>
+          <NavLink to="/shop" onClick={closeMenu} className="nav-item">Shop</NavLink>
+          <NavLink to="/products" onClick={closeMenu} className="nav-item">Products</NavLink>
 
-          <NavLink to="/shop" onClick={closeMenu} className="nav-item">
-            Shop
-          </NavLink>
+          {/* ❤️ Wishlist */}
+          <NavLink to="/wishlist" onClick={closeMenu} className="nav-item wishlist-link">
+  ❤️
+  {wishlistCount > 0 && (
+    <span className="cart-count">{wishlistCount}</span>
+  )}
+</NavLink>
 
-          <NavLink to="/products" onClick={closeMenu} className="nav-item">
-            Products
-          </NavLink>
-
-          <NavLink to="/faq" onClick={closeMenu} className="nav-item">
-            FAQ
-          </NavLink>
-
-          <NavLink to="/size-guide" onClick={closeMenu} className="nav-item">
-            Size Guide
-          </NavLink>
-
-          <NavLink to="/testimonials" onClick={closeMenu} className="nav-item">
-            Reviews
-          </NavLink>
-
-          <NavLink to="/become-distributor" onClick={closeMenu} className="nav-item">
-            Distributor
-          </NavLink>
-
-          <NavLink to="/about" onClick={closeMenu} className="nav-item">
-            About
-          </NavLink>
-
-          <NavLink to="/contact" onClick={closeMenu} className="nav-item">
-            Contact
-          </NavLink>
-
-          <NavLink to="/privacy-policy" onClick={closeMenu} className="nav-item nav-legal">
-            Privacy
-          </NavLink>
-
-          <NavLink to="/terms" onClick={closeMenu} className="nav-item nav-legal">
-            Terms
-          </NavLink>
-
+          {/* 🛒 Cart with count */}
           <NavLink to="/cart" onClick={closeMenu} className="nav-item cart-link">
-            Cart
+            🛒
+            {cartCount > 0 && (
+              <span className="cart-count">{cartCount}</span>
+            )}
           </NavLink>
 
-          {/* Admin link (hidden on small screens; visible to admin users ideally) */}
           <NavLink to="/admin" onClick={closeMenu} className="nav-item admin-link">
             Admin
           </NavLink>

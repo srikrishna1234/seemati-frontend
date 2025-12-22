@@ -509,8 +509,7 @@ const data = await resp.json();
       });
     }
 
-    window.dispatchEvent(new Event("cart-updated"));
-  } catch (err) {
+      } catch (err) {
     console.error("Add to cart failed:", err);
     setError("Unable to add to cart.");
   } finally {
@@ -901,8 +900,9 @@ const data = await resp.json();
 
           <div style={{ marginTop: 18, display: "flex", gap: 12 }}>
             <button
-              onClick={handleAddToCart}
-              disabled={adding}
+  type="button"
+  onClick={handleAddToCart}
+  disabled={adding}
               style={{
                 background: "#f59e0b",
                 color: "#fff",

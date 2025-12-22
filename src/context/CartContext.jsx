@@ -35,9 +35,22 @@ function calculateTotals(items) {
 
 function reducer(state, action) {
   switch (action.type) {
-    case "INITIALIZE": {
-      return action.payload;
-    }
+   case "INITIALIZE": {
+  const items = Array.isArray(action.payload?.items)
+    ? action.payload.items
+    : Array.isArray(action.payload)
+    ? action.payload
+    : [];
+
+  const totals = action.payload?.totals
+    ? action.payload.totals
+    : calculateTotals(items);
+
+  const next = { items, totals };
+  saveCart(next);
+  return next;
+}
+
     case "ADD_ITEM": {
       const item = action.payload;
       const items = [...state.items];
