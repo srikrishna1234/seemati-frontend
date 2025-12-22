@@ -235,7 +235,8 @@ useEffect(() => {
     }
   }}
 >
-  Save for later
+  Move to wishlist
+
 </button>
                   <button onClick={() => persistAndSync(removeItem(id))} style={{ color: "red" }}>
                     Remove
