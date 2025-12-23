@@ -5,7 +5,7 @@ import { loadCart, computeTotals, SHIPPING_THRESHOLD } from "../utils/cartHelper
 const DISMISS_KEY = "seemati_free_shipping_dismissed_v1";
 
 // SMALL bottom offset => bar sits lower (closer to bottom of viewport).
-const BAR_BOTTOM_OFFSET = 6; // nudged lower
+
 
 // Extra buffer added to body padding (px) to ensure no overlap.
 const BUFFER = 28; // slightly larger safety buffer
@@ -108,24 +108,7 @@ export default function FreeShippingBar() {
   const resizeObserverRef = useRef(null);
 
   // update subtotal when cart changes
-  useEffect(() => {
-    function onCartUpdated() {
-      try {
-        const raw = loadCart();
-        const comp = computeTotals(Array.isArray(raw) ? { items: raw } : raw);
-        setSubtotal(comp.subtotal ?? 0);
-      } catch (e) {
-        console.error("FreeShippingBar compute error:", e);
-      }
-    }
-    window.addEventListener("cart-updated", onCartUpdated);
-    window.addEventListener("storage", onCartUpdated);
-    return () => {
-      window.removeEventListener("cart-updated", onCartUpdated);
-      window.removeEventListener("storage", onCartUpdated);
-    };
-  }, []);
-
+  
   // confetti on threshold crossing
   useEffect(() => {
     const prevQual = prevQualRef.current;
@@ -165,7 +148,7 @@ export default function FreeShippingBar() {
         const rect = el.getBoundingClientRect();
         // body padding equals bar height + buffer (do NOT add BAR_BOTTOM_OFFSET here)
         const pb = Math.ceil(rect.height + BUFFER);
-        document.body.style.paddingBottom = pb + "px";
+        document.body.style.paddingTop = pb + "px";
       } catch (e) {
         console.error("applyBodyPadding error", e);
       }
@@ -223,21 +206,19 @@ export default function FreeShippingBar() {
   const qualifies = remaining <= 0;
 
   // inline styles - centered using translateX(-50%)
-  const outerStyle = {
-    position: "fixed",
-    left: "50%",
-    bottom: BAR_BOTTOM_OFFSET,
-    transform: "translateX(-50%)",
-    zIndex: 9999,
-    display: "flex",
-    justifyContent: "center",
-    pointerEvents: "auto",
-    width: "100%",
-    paddingLeft: 12,
-    paddingRight: 12,
-    boxSizing: "border-box",
-    transition: "bottom 180ms ease, opacity 180ms ease",
-  };
+ const outerStyle = {
+  position: "sticky",
+  top: 0,
+  zIndex: 9999,
+  display: "flex",
+  justifyContent: "center",
+  pointerEvents: "auto",
+  width: "100%",
+  padding: "8px 12px",
+  boxSizing: "border-box",
+  background: "transparent",
+};
+
 
   const cardStyle = {
     position: "relative",
