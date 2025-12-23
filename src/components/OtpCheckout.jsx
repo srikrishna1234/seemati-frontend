@@ -82,7 +82,7 @@ function OtpModal({ open, onClose, prefillPhone, onVerified }) {
     if (!phone) return setError("Please enter phone");
     setLoading(true);
     try {
-      const res = await fetch(`${API}/api/auth/send-otp`, {
+      const res = await fetch(`/api/auth/send-otp`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phone }),
@@ -131,12 +131,12 @@ function OtpModal({ open, onClose, prefillPhone, onVerified }) {
     if (!code) return setError("Enter the OTP");
     setLoading(true);
     try {
-      const res = await fetch(`${API}/api/auth/verify-otp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone, code }),
-        credentials: "include",
-      });
+     const res = await fetch(`${API}/api/auth/verify-otp`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ phone, otp: code }),
+  credentials: "include",
+});
 
       // If server sends 429 here (unlikely), handle gracefully
       if (res.status === 429) {
