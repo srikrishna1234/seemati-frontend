@@ -348,10 +348,43 @@ export function CheckoutWithOtp({ initialCart = [], onOrderPlaced }) {
   }
 
   function onOtpVerified(userInfo) {
-    setUser(userInfo);
-    // resume placing order after verification
-    setTimeout(() => { placeOrder(); }, 200);
-  }
+  setUser(userInfo);
+
+  // SAFELY place order with verified user
+  (async () => {
+    try {
+      setError(null);
+      setLoading(true);
+
+      const payload = {
+        customer,
+        items: cart,
+        paymentMethod: "cod",
+      };
+
+      const res = await fetch(`${API}/api/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        const d = await res.json();
+        throw new Error(d?.message || "Order failed");
+      }
+
+      const data = await res.json();
+
+      onOrderPlaced && onOrderPlaced(data.orderId, data.order);
+    } catch (e) {
+      setError(e.message || "Order failed after OTP");
+    } finally {
+      setLoading(false);
+    }
+  })();
+}
+
 
   return (
   <div className="space-y-8">
