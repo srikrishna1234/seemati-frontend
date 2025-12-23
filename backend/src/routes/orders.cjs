@@ -4,10 +4,10 @@ const router = express.Router();
 const mongoose = require("mongoose");
 
 const Order = require("../../models/Order.cjs");
-const { authMiddleware } = require("../lib/auth.cjs");
+const adminAuth = require("../middleware/adminAuth.cjs");
 
 // Create order (POST /api/orders) â€” requires auth
-router.post("/", authMiddleware, async (req, res) => {
+router.post("/", adminAuth, async (req, res) => {
   try {
     const { customer, items, totals, paymentMethod } = req.body || {};
     if (!items || !Array.isArray(items) || items.length === 0) {
@@ -39,7 +39,7 @@ router.post("/", authMiddleware, async (req, res) => {
 
 // Fetch current user's orders (GET /api/orders/mine) â€” requires auth
 // IMPORTANT: declare this before the param route "/:id" so "mine" doesn't get treated as an id.
-router.get("/mine", authMiddleware, async (req, res) => {
+router.get("/mine", adminAuth, async (req, res) => {
   try {
     console.log("[DEBUG] /api/orders/mine entered");
     console.log("[DEBUG] req.user:", req.user);
@@ -62,7 +62,7 @@ router.get("/mine", authMiddleware, async (req, res) => {
 });
 
 // Fetch a single order by id (GET /api/orders/:id) â€” requires auth and ownership/admin
-router.get("/:id", authMiddleware, async (req, res) => {
+router.get("/:id", adminAuth, async (req, res) => {
   const { id } = req.params;
   if (!id) return res.status(400).json({ message: "Missing id parameter" });
 
