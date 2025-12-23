@@ -1,5 +1,21 @@
 // src/components/OtpCheckout.jsx
 import React, { useState, useEffect, useRef } from "react";
+const inputStyle =
+  "w-full px-4 py-4 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-pink-400 bg-white";
+
+const labelStyle =
+  "text-sm font-medium text-gray-700 mb-4 block";
+
+
+const sectionCard =
+  "bg-white p-6 rounded-xl shadow-sm border border-gray-100";
+
+const primaryBtn =
+  "w-full h-12 bg-black text-white rounded-lg font-semibold text-base hover:bg-gray-900 transition shadow-md";
+
+const secondaryBtn =
+  "w-full h-12 bg-white border border-gray-300 text-gray-800 rounded-lg font-medium hover:bg-gray-50 transition";
+
 
 // Use relative API paths (CRA proxy forwards to backend in dev)
 const API = "";
@@ -338,34 +354,107 @@ export function CheckoutWithOtp({ initialCart = [], onOrderPlaced }) {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="bg-white p-4 rounded shadow">
-        <h2 className="text-xl font-semibold">Checkout</h2>
-        <div className="mt-3 grid grid-cols-1 gap-3">
-          <input value={customer.name} onChange={(e) => setCustomer({ ...customer, name: e.target.value })} placeholder="Full name" className="w-full border p-2 rounded" />
-          <input value={customer.phone} onChange={(e) => setCustomer({ ...customer, phone: e.target.value })} placeholder="Phone (+91...)" className="w-full border p-2 rounded" />
-          <textarea value={customer.address} onChange={(e) => setCustomer({ ...customer, address: e.target.value })} placeholder="Address" className="w-full border p-2 rounded" />
-        </div>
+  <div className="space-y-8">
 
-        <div className="mt-4">
-          <h3 className="font-medium">Order summary</h3>
-          <ul className="mt-2 space-y-2">
-            {cart.map((it, idx) => (
-              <li key={idx} className="flex justify-between">
-                <div>{it.title} x {it.quantity}</div>
-                <div>₹{it.price * it.quantity}</div>
-              </li>
-            ))}
-          </ul>
-        </div>
+      <div className="bg-white p-10 rounded-2xl shadow-lg border border-gray-100">
+  <div className="max-w-xl">
+        <h2 className="text-xl font-semibold">
+  Checkout
+</h2>
+
+		<p className="text-sm text-gray-500 mt-1">
+  Enter your details to place the order
+</p>
+
+<div style={{ marginTop: 24, maxWidth: 520 }}>
+
+  {/* Full name */}
+  <div style={{ marginBottom: 32 }}>
+    <label style={{ display: "block", marginBottom: 12, fontWeight: 500 }}>
+      Full name
+    </label>
+    <input
+      value={customer.name}
+      onChange={(e) => setCustomer({ ...customer, name: e.target.value })}
+      placeholder="Your full name"
+      style={{
+        width: "100%",
+        padding: "14px 16px",
+        border: "1px solid #ccc",
+        borderRadius: 6,
+      }}
+    />
+  </div>
+
+  {/* Phone number */}
+  <div style={{ marginBottom: 32 }}>
+    <label style={{ display: "block", marginBottom: 12, fontWeight: 500 }}>
+      Phone number
+    </label>
+    <input
+      value={customer.phone}
+      onChange={(e) => setCustomer({ ...customer, phone: e.target.value })}
+      placeholder="+91XXXXXXXXXX"
+      inputMode="tel"
+      style={{
+        width: "100%",
+        padding: "14px 16px",
+        border: "1px solid #ccc",
+        borderRadius: 6,
+      }}
+    />
+  </div>
+
+  {/* Delivery address */}
+  <div style={{ marginBottom: 36 }}>
+    <label style={{ display: "block", marginBottom: 12, fontWeight: 500 }}>
+      Delivery address
+    </label>
+    <textarea
+      value={customer.address}
+      onChange={(e) => setCustomer({ ...customer, address: e.target.value })}
+      placeholder="House no, street, area, city, pincode"
+      style={{
+        width: "100%",
+        padding: "14px 16px",
+        border: "1px solid #ccc",
+        borderRadius: 6,
+        minHeight: 150,
+      }}
+    />
+  </div>
+
+</div>
+
+
+
+       
 
         {error && <div className="text-red-600 mt-3">{error}</div>}
 
-        <div className="mt-4 flex gap-2">
-          <button onClick={placeOrder} disabled={loading} className="px-4 py-2 bg-indigo-600 text-white rounded">{loading ? "Placing..." : "Place order"}</button>
-          <button onClick={() => setOtpOpen(true)} className="px-4 py-2 border rounded">Login / Verify</button>
+        <div className="mt-10">
+          <div className="mt-10 grid grid-cols-1 gap-5">
+  <button
+    onClick={placeOrder}
+    disabled={loading}
+    className={primaryBtn}
+  >
+    {loading ? "Placing order…" : "Place order securely"}
+  </button>
+
+  {!user && (
+    <button
+      onClick={() => setOtpOpen(true)}
+      className={secondaryBtn}
+    >
+      Login / Verify via OTP
+    </button>
+  )}
+</div>
+
         </div>
       </div>
+        </div>
 
       <OtpModal open={otpOpen} onClose={() => setOtpOpen(false)} prefillPhone={customer.phone} onVerified={onOtpVerified} />
     </div>
