@@ -47,16 +47,17 @@ function createToken(payload) {
 // Cookie options
 function makeCookieOptions() {
   const secure = NODE_ENV === 'production';
-  const opts = {
+
+  return {
     httpOnly: true,
     secure,
     sameSite: 'None',
-    maxAge: parseInt(process.env.COOKIE_MAX_AGE, 10) || 1000 * 60 * 60 * 24 * 7,
+    domain: '.seemati.in',   // ✅ THIS IS THE FIX
     path: '/',
+    maxAge: parseInt(process.env.COOKIE_MAX_AGE, 10) || 1000 * 60 * 60 * 24 * 7,
   };
-  if (COOKIE_DOMAIN) opts.domain = COOKIE_DOMAIN;
-  return opts;
 }
+
 
 // Normalize provider result to { success: boolean, ... }
 async function callSendOtp(phone) {
