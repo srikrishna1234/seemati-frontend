@@ -167,6 +167,26 @@ try {
 } catch (err) {
   console.error('[BOOT] productRoutes mount error:', err && err.message);
 }
+// -------------------------
+// ORDER ROUTES (CRITICAL)
+// -------------------------
+try {
+  const orderRoutes = tryRequire(
+    'src/routes/orders.cjs',
+    'src/routes/orders.js',
+    'routes/orders.cjs',
+    'routes/orders.js'
+  );
+
+  if (orderRoutes) {
+    app.use('/api/orders', orderRoutes);
+    console.log('[BOOT] Mounted orderRoutes at /api/orders');
+  } else {
+    console.warn('[BOOT] orderRoutes not found');
+  }
+} catch (err) {
+  console.error('[BOOT] orderRoutes mount error:', err && err.message);
+}
 
 // Admin product mount (optional)
 try {
