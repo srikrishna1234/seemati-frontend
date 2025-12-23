@@ -254,7 +254,43 @@ useEffect(() => {
             <div>Shipping: {totals.shipping === 0 ? "FREE" : totals.shipping}</div>
             <strong>Total: ₹{(totals.total || 0).toFixed(2)}</strong>
 
-            <button style={{ width: "100%", marginTop: 12 }}>Proceed to Checkout</button>
+            {items.length > 0 ? (
+  <button
+  style={{
+    width: "100%",
+    marginTop: 12,
+    background: "#16a34a",
+    color: "#fff",
+    border: "none",
+    padding: "10px",
+    fontWeight: 700,
+    cursor: "pointer",
+  }}
+  onClick={(e) => {
+    e.preventDefault();
+    navigate("/checkout");
+  }}
+>
+  Proceed to Checkout
+</button>
+
+) : (
+  <div
+    style={{
+      marginTop: 12,
+      padding: "10px",
+      background: "#fef3c7",
+      border: "1px solid #fde68a",
+      color: "#92400e",
+      borderRadius: 6,
+      fontWeight: 600,
+      textAlign: "center",
+    }}
+  >
+    Add items to cart to proceed to checkout
+  </div>
+)}
+
             <button onClick={() => persistAndSync(clearCart())} style={{ width: "100%", marginTop: 8 }}>
               Clear cart
             </button>
