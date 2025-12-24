@@ -18,7 +18,11 @@ const TotalsSchema = new Schema({
 }, { _id: false });
 
 const OrderSchema = new Schema({
-  userId: { type: Schema.Types.ObjectId, ref: "User", index: true, required: false },
+  userId: {
+    type: String,          // ✅ FIXED: phone number from OTP
+    index: true,
+    required: true
+  },
   customer: {
     name: String,
     phone: String,
