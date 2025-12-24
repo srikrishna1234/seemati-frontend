@@ -221,11 +221,27 @@ function OtpModal({ open, onClose, prefillPhone, onVerified }) {
             <div className="flex gap-2">
               <button onClick={onClose} className="px-3 py-2 border rounded">Cancel</button>
               {step === 1 ? (
-                <button onClick={sendOtp} disabled={loading} className="px-3 py-2 bg-blue-600 text-white rounded">
+                <button
+  type="button"
+  onClick={(e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    sendOtp();
+  }}
+  disabled={loading}
+ className="px-3 py-2 bg-blue-600 text-white rounded">
                   {loading ? "Sending..." : "Send OTP"}
                 </button>
               ) : (
-                <button onClick={verifyOtp} disabled={loading} className="px-3 py-2 bg-green-600 text-white rounded">
+               <button
+  type="button"
+  onClick={(e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    verifyOtp();
+  }}
+  disabled={loading}
+className="px-3 py-2 bg-green-600 text-white rounded">
                   {loading ? "Verifying..." : "Verify OTP"}
                 </button>
               )}
@@ -444,11 +460,13 @@ export function CheckoutWithOtp({ initialCart = [], onOrderPlaced }) {
   type="button"
   onClick={(e) => {
     e.preventDefault();
+    e.stopPropagation();
     placeOrder();
   }}
   disabled={loading}
   className={primaryBtn}
 >
+
   {loading ? "Placing order…" : "Place order securely"}
 </button>
 
