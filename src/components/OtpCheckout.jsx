@@ -301,51 +301,24 @@ export function CheckoutWithOtp({ initialCart = [], onOrderPlaced }) {
     })();
   }, []);
 
-  async function placeOrder() {
-    setError(null);
-    setLoading(true);
+  function placeOrder() {
+  setError(null);
 
-    if (!cart || cart.length === 0) {
-      setError("Cart is empty");
-      setLoading(false);
-      return;
-    }
-
-    if (!user) {
-      setOtpOpen(true);
-      setLoading(false);
-      return;
-    }
-
-    try {
-      const payload = { customer, items: cart, paymentMethod: "cod" };
-      const res = await fetch(`${API}/api/orders`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        credentials: "include",
-      });
-
-      if (!res.ok) {
-        let d = null;
-        try { d = await res.json(); } catch (e) { warn('placeOrder parse error', e); }
-        throw new Error((d && d.message) || `Server ${res.status}`);
-      }
-
-      const data = await res.json();
-      if (!data || !data.ok) throw new Error(data?.message || "Order failed");
-
-      // inform parent — parent should clear cart and navigate
-      onOrderPlaced && onOrderPlaced(data.orderId, data.order);
-      log('Order placed', data.orderId);
-      // DO NOT call window.location.href here — parent handles navigation
-    } catch (e) {
-      setError(e.message || String(e));
-      errorLog('placeOrder error', e);
-    } finally {
-      setLoading(false);
-    }
+  if (!cart || cart.length === 0) {
+    setError("Cart is empty");
+    return;
   }
+
+  if (!customer.name || !customer.phone || !customer.address) {
+    setError("Please fill all customer details");
+    return;
+  }
+
+  // 🔒 IMPORTANT:
+  // Place order button ONLY opens OTP
+  setOtpOpen(true);
+}
+
 
   function onOtpVerified(userInfo) {
   setUser(userInfo);
@@ -475,14 +448,7 @@ export function CheckoutWithOtp({ initialCart = [], onOrderPlaced }) {
     {loading ? "Placing order…" : "Place order securely"}
   </button>
 
-  {!user && (
-    <button
-      onClick={() => setOtpOpen(true)}
-      className={secondaryBtn}
-    >
-      Login / Verify via OTP
-    </button>
-  )}
+  
 </div>
 
         </div>
