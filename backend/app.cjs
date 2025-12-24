@@ -207,6 +207,26 @@ try {
 } catch (err) {
   console.error('[BOOT] adminProduct mount error:', err && err.message);
 }
+// -------------------------
+// ADMIN ORDER ROUTES (EXPLICIT)
+// -------------------------
+try {
+  const adminOrders = tryRequire(
+    'src/routes/adminOrders.cjs',
+    'src/routes/adminOrders.js',
+    'routes/adminOrders.cjs',
+    'routes/adminOrders.js'
+  );
+
+  if (adminOrders) {
+    app.use('/api/admin', adminOrders.router || adminOrders);
+    console.log('[BOOT] Mounted adminOrders at /api/admin/orders');
+  } else {
+    console.warn('[BOOT] adminOrders not found');
+  }
+} catch (err) {
+  console.error('[BOOT] adminOrders mount error:', err && err.message);
+}
 
 // Generic health endpoint
 app.get('/api/health', (req, res) => res.json({ ok: true, time: new Date().toISOString() }));
