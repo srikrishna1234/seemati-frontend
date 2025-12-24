@@ -45,11 +45,17 @@ if (adminProduct) {
 // -------------------------
 // ADMIN ORDER ROUTES
 // -------------------------
-const adminOrders = tryRequire('adminOrders.cjs','adminOrders.js');
-if (adminOrders) {
-  router.use('/admin', adminOrders.router || adminOrders);
+// -------------------------
+// ADMIN ORDER ROUTES (EXPLICIT MOUNT)
+// -------------------------
+try {
+  const adminOrders = require('./adminOrders.cjs');
+  router.use('/admin', adminOrders);
   console.log('[ROUTES] Mounted /admin/orders');
+} catch (err) {
+  console.warn('[ROUTES] adminOrders missing:', err.message);
 }
+
 
 // -------------------------
 // EXPLICIT UPLOAD ROUTES (IMPORTANT)
