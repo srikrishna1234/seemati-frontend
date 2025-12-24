@@ -97,23 +97,25 @@ export default function Checkout() {
   /* ================= ORDER SUCCESS ================= */
   function handleOrderPlaced(orderId, order) {
   try {
-    // ✅ Clear BOTH cart storage formats
-    localStorage.removeItem("cart");
+    // ✅ CLEAR BOTH CART SHAPES
+    localStorage.removeItem("cart");          // legacy
+    localStorage.removeItem("seemati_cart");  // new (if used)
 
-    // Safety: overwrite with empty array
-    saveCart([]);
+    // ✅ FORCE EMPTY CART IN BOTH FORMATS
+    localStorage.setItem("cart", JSON.stringify([]));
+    localStorage.setItem("seemati_cart", JSON.stringify({ items: [] }));
 
-    // Notify everywhere
+    // ✅ DISPATCH BOTH EVENTS
     window.dispatchEvent(new Event("cart-updated"));
+    window.dispatchEvent(new Event("storage"));
   } catch (e) {
-    console.error("Failed to clear cart after order", e);
+    console.error("Failed to clear cart", e);
   }
 
-  // Allow React to re-render navbar/cart
-  setTimeout(() => {
-    navigate("/");
-  }, 300);
+  // ✅ SAFE NAVIGATION
+  navigate("/");
 }
+
 
 
 
