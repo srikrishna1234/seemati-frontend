@@ -97,20 +97,24 @@ export default function Checkout() {
   /* ================= ORDER SUCCESS ================= */
   function handleOrderPlaced(orderId, order) {
   try {
-    // 1. Clear cart storage
-    saveCart({ items: [] });
+    // ✅ Clear BOTH cart storage formats
+    localStorage.removeItem("cart");
 
-    // 2. Notify all listeners (Navbar, Cart page, etc.)
+    // Safety: overwrite with empty array
+    saveCart([]);
+
+    // Notify everywhere
     window.dispatchEvent(new Event("cart-updated"));
   } catch (e) {
     console.error("Failed to clear cart after order", e);
   }
 
-  // 3. Give React time to re-render cart state
+  // Allow React to re-render navbar/cart
   setTimeout(() => {
     navigate("/");
-  }, 300); // 👈 CRITICAL
+  }, 300);
 }
+
 
 
 
