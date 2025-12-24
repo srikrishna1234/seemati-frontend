@@ -5,7 +5,8 @@ const express = require('express');
 const router = express.Router();
 
 const adminAuth = require('../middleware/adminAuth.cjs');
-const Order = require('../models/Order.cjs');
+const Order = require('../../models/Order.cjs');
+
 
 /**
  * GET /api/admin/orders
