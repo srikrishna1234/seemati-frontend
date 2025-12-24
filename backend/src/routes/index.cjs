@@ -43,6 +43,15 @@ if (adminProduct) {
   console.log('[ROUTES] Mounted /admin/products');
 }
 // -------------------------
+// ADMIN ORDER ROUTES
+// -------------------------
+const adminOrders = tryRequire('adminOrders.cjs','adminOrders.js');
+if (adminOrders) {
+  router.use('/admin', adminOrders.router || adminOrders);
+  console.log('[ROUTES] Mounted /admin/orders');
+}
+
+// -------------------------
 // EXPLICIT UPLOAD ROUTES (IMPORTANT)
 // -------------------------
 const uploadRoutes = tryRequire('uploadRoutes.cjs','uploadRoutes.js');
