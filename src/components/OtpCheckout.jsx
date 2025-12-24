@@ -1,5 +1,7 @@
 // src/components/OtpCheckout.jsx
 import React, { useState, useEffect, useRef } from "react";
+import { clearCart } from "../utils/cartHelpers";
+
 const inputStyle =
   "w-full px-4 py-4 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-pink-400 bg-white";
 
@@ -365,7 +367,17 @@ export function CheckoutWithOtp({ initialCart = [], onOrderPlaced }) {
 
       const data = await res.json();
 
-      onOrderPlaced && onOrderPlaced(data.orderId, data.order);
+// 🔥 HARD CLEAR CART AFTER SUCCESSFUL ORDER
+clearCart();
+
+// notify all listeners (navbar, cart page, etc.)
+try {
+  window.dispatchEvent(new Event("cart-updated"));
+} catch (e) {}
+
+// continue normal flow
+onOrderPlaced && onOrderPlaced(data.orderId, data.order);
+
     } catch (e) {
       setError(e.message || "Order failed after OTP");
     } finally {
