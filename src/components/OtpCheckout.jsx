@@ -440,13 +440,18 @@ export function CheckoutWithOtp({ initialCart = [], onOrderPlaced }) {
 
         <div className="mt-10">
           <div className="mt-10 grid grid-cols-1 gap-5">
-  <button
-    onClick={placeOrder}
-    disabled={loading}
-    className={primaryBtn}
-  >
-    {loading ? "Placing order…" : "Place order securely"}
-  </button>
+ <button
+  type="button"
+  onClick={(e) => {
+    e.preventDefault();
+    placeOrder();
+  }}
+  disabled={loading}
+  className={primaryBtn}
+>
+  {loading ? "Placing order…" : "Place order securely"}
+</button>
+
 
   
 </div>
