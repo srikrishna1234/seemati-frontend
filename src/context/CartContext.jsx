@@ -111,6 +111,21 @@ export function CartProvider({ children }) {
     if (!init.totals) init.totals = calculateTotals(init.items || []);
     dispatch({ type: "INITIALIZE", payload: init });
   }, []);
+  // 🔁 listen for cart updates (checkout, clearCart, etc.)
+  useEffect(() => {
+    function handleCartUpdated() {
+      const updated = loadCart();
+      if (!updated.totals) {
+        updated.totals = calculateTotals(updated.items || []);
+      }
+      dispatch({ type: "INITIALIZE", payload: updated });
+    }
+
+    window.addEventListener("cart-updated", handleCartUpdated);
+    return () => {
+      window.removeEventListener("cart-updated", handleCartUpdated);
+    };
+  }, []);
 
   return (
     <CartStateContext.Provider value={state}>
