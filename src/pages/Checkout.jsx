@@ -95,26 +95,23 @@ export default function Checkout() {
   }
 
   /* ================= ORDER SUCCESS ================= */
-  function handleOrderPlaced(orderId, order) {
+ function handleOrderPlaced(orderId, order) {
   try {
-    // ✅ CLEAR BOTH CART SHAPES
-    localStorage.removeItem("cart");          // legacy
-    localStorage.removeItem("seemati_cart");  // new (if used)
+    // Clear BOTH cart shapes (array + object)
+    localStorage.removeItem("cart");
+    localStorage.setItem("cart", JSON.stringify({ items: [] }));
+    localStorage.setItem("cart_items", JSON.stringify([])); // safety for legacy
 
-    // ✅ FORCE EMPTY CART IN BOTH FORMATS
-    localStorage.setItem("cart", JSON.stringify([]));
-    localStorage.setItem("seemati_cart", JSON.stringify({ items: [] }));
-
-    // ✅ DISPATCH BOTH EVENTS
+    // Notify entire app
     window.dispatchEvent(new Event("cart-updated"));
-    window.dispatchEvent(new Event("storage"));
+    window.dispatchEvent(new StorageEvent("storage"));
   } catch (e) {
     console.error("Failed to clear cart", e);
   }
 
-  // ✅ SAFE NAVIGATION
   navigate("/");
 }
+
 
 
 
