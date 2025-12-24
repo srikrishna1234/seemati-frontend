@@ -37,7 +37,7 @@ export function loadCart() {
 export function saveCart(cartObj) {
   try {
     const normalized = Array.isArray(cartObj) ? { items: cartObj } : (cartObj && cartObj.items ? { items: cartObj.items } : { items: [] });
-    localStorage.setItem(CART_KEY, JSON.stringify(normalized.items));
+    localStorage.setItem(CART_KEY, JSON.stringify(normalized));
     // Note: we save as array to be tolerant with older code that expects an array in storage.
     // Also emit event to notify UI listeners.
     try { window.dispatchEvent(new Event("cart-updated")); } catch (e) {}
@@ -145,10 +145,23 @@ export function removeItem(productId) {
 
 export function clearCart() {
   try {
-    const saved = saveCart([]);
-    return saved;
+    // 🔥 remove all legacy cart keys
+    localStorage.removeItem("cart");
+    localStorage.removeItem("cart_items");
+    localStorage.removeItem("seemati_cart");
+    localStorage.removeItem(CART_KEY);
+
+    const empty = { items: [] };
+    localStorage.setItem(CART_KEY, JSON.stringify(empty));
+
+    try {
+      window.dispatchEvent(new Event("cart-updated"));
+    } catch (e) {}
+
+    return empty;
   } catch (e) {
     console.error("[cartHelpers] clearCart error", e);
     return { items: [] };
   }
 }
+
