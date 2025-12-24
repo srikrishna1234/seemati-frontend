@@ -97,18 +97,21 @@ export default function Checkout() {
   /* ================= ORDER SUCCESS ================= */
   function handleOrderPlaced(orderId, order) {
   try {
-    // Clear cart in localStorage
+    // 1. Clear cart storage
     saveCart({ items: [] });
 
-    // Notify app that cart changed
+    // 2. Notify all listeners (Navbar, Cart page, etc.)
     window.dispatchEvent(new Event("cart-updated"));
   } catch (e) {
     console.error("Failed to clear cart after order", e);
   }
 
-  // SAFE redirect (route exists)
-  navigate("/");
+  // 3. Give React time to re-render cart state
+  setTimeout(() => {
+    navigate("/");
+  }, 300); // 👈 CRITICAL
 }
+
 
 
   /* ================= STYLES ================= */
