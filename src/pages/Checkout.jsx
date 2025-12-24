@@ -96,13 +96,20 @@ export default function Checkout() {
 
   /* ================= ORDER SUCCESS ================= */
   function handleOrderPlaced(orderId, order) {
-    try {
-      saveCart({ items: [] });
-      window.dispatchEvent(new Event("cart-updated"));
-    } catch {}
+  try {
+    // Clear cart in localStorage
+    saveCart({ items: [] });
 
-    navigate(`/order-success/${orderId || order?._id || ""}`);
+    // Notify app that cart changed
+    window.dispatchEvent(new Event("cart-updated"));
+  } catch (e) {
+    console.error("Failed to clear cart after order", e);
   }
+
+  // SAFE redirect (route exists)
+  navigate("/");
+}
+
 
   /* ================= STYLES ================= */
   const pageStyle = {
