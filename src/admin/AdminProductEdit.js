@@ -274,7 +274,14 @@ async function load() {
   const fd = new FormData();
   selectedFiles.forEach(s => fd.append("files", s.file));
 
-  const res = await axiosInstance.post("/uploadRoutes/upload", fd);
+  const res = await axiosInstance.post(
+  "/uploadRoutes/upload",
+  fd,
+  {
+    headers: { "Content-Type": "multipart/form-data" },
+    withCredentials: true
+  }
+);
 
   const urls = (res.data.uploaded || [])
     .map(u => u.url)
