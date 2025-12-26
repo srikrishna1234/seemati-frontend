@@ -64,10 +64,24 @@ export default function HomePage() {
           <p className="lead">Comfort-first kurti pants and palazzos — made for everyday wear.</p>
 
           <div className="cta-row">
-            <Link to="/shop" className="btn btn-primary">Explore Fabrics</Link>
-            <Link to="/become-distributor" className="btn btn-outline">Become a distributor</Link>
-            <Link to="/products" className="btn btn-ghost">Browse all</Link>
-          </div>
+  <Link to="/shop?category=kurti-pants" className="btn btn-primary">
+    Kurti Pants
+  </Link>
+
+  <Link to="/shop?category=palazzos" className="btn btn-primary">
+    Palazzos
+  </Link>
+
+  <Link to="/shop?category=leggings" className="btn btn-primary">
+    Leggings
+  </Link>
+
+  <Link to="/shop" className="btn btn-ghost">
+    Browse all
+  </Link>
+</div>
+
+
         </div>
       </section>
 
@@ -128,7 +142,7 @@ export default function HomePage() {
         <section style={{ marginBottom: 32 }}>
           <h2>Featured Products</h2>
           <div style={{ marginTop: 12 }}>
-            <ShopProducts limit={8} />
+            <ShopProducts preview={true} limit={8} />
           </div>
         </section>
 

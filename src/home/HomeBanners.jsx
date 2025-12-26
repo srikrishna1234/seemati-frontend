@@ -23,16 +23,18 @@ export default function HomeBanners({ banners = DEFAULT_BANNERS }) {
 
   return (
     <div
-      aria-label="Promotional offers"
-      style={{
-        display: "flex",
-        gap: 12,
-        margin: "18px 0",
-        overflowX: "auto",
-        padding: "8px 6px",
-        scrollSnapType: "x mandatory",
-      }}
-    >
+  aria-label="Promotional offers"
+  style={{
+    display: "flex",
+    justifyContent: "center",   // ✅ CENTER ON DESKTOP
+    gap: 16,
+    margin: "18px auto",
+    overflowX: "auto",          // ✅ KEEP SCROLL FOR MOBILE
+    padding: "8px 6px",
+    scrollSnapType: "x mandatory",
+  }}
+>
+
       {banners.map((b) => (
         <a
           key={b.id}

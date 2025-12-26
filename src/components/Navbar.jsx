@@ -3,6 +3,8 @@ import React, { useState, useEffect } from "react";
 import { NavLink } from "react-router-dom";
 import { useCartState } from "../context/CartContext";
 import "./NavFooter.css";
+import { useNavigate, useLocation } from "react-router-dom";
+
 // ---------- Wishlist helpers ----------
 const WISHLIST_KEY = "wishlist_v1";
 
@@ -20,6 +22,9 @@ export default function Navbar() {
   const [open, setOpen] = useState(false);
   const { items } = useCartState(); // 👈 CONNECT TO CART
 const [wishlistCount, setWishlistCount] = useState(0);
+const navigate = useNavigate();
+const location = useLocation();
+const [search, setSearch] = useState("");
 
   const closeMenu = () => setOpen(false);
 // sync wishlist count
@@ -39,6 +44,13 @@ useEffect(() => {
   const cartCount = Array.isArray(items)
     ? items.reduce((sum, i) => sum + (i.quantity || 1), 0)
     : 0;
+const handleSearch = (e) => {
+  e.preventDefault();
+  if (!search.trim()) return;
+
+  navigate(`/shop?q=${encodeURIComponent(search.trim())}`);
+  setOpen(false); // close mobile menu
+};
 
   return (
     <header className="site-nav">
@@ -61,7 +73,16 @@ useEffect(() => {
         <nav className={`nav-links ${open ? "open" : ""}`}>
           <NavLink to="/" onClick={closeMenu} className="nav-item">Home</NavLink>
           <NavLink to="/shop" onClick={closeMenu} className="nav-item">Shop</NavLink>
-          <NavLink to="/products" onClick={closeMenu} className="nav-item">Products</NavLink>
+<NavLink to="/distributor">Become a Distributor</NavLink>
+<form onSubmit={handleSearch} className="nav-search">
+  <input
+    type="search"
+    placeholder="Search products"
+    value={search}
+    onChange={(e) => setSearch(e.target.value)}
+    className="nav-search-input"
+  />
+</form>
 
           {/* ❤️ Wishlist */}
           <NavLink to="/wishlist" onClick={closeMenu} className="nav-item wishlist-link">

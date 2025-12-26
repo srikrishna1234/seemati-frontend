@@ -142,3 +142,15 @@
   .brand-logo { width: 36px; height: 36px; }
   .nav-links .admin-link { display: none; }
 }
+.nav-search {
+  display: flex;
+  align-items: center;
+}
+
+.nav-search-input {
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid #ddd;
+  font-size: 14px;
+  min-width: 160px;
+}

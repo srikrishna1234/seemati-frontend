@@ -5,32 +5,32 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import Navbar from "./components/Navbar";
 import Footer from "./components/Footer";
 import CookieConsent from "./components/CookieConsent";
-import "./components/CookieConsent.css"; // ensure your cookie CSS is loaded
+import "./components/CookieConsent.css";
 
-// Lazy-loaded pages (names based on your src/pages folder screenshots)
-const HomePage = lazy(() => import("./pages/HomePage"));            // HomePage.jsx
-const Home = lazy(() => import("./pages/Home"));                    // Home.jsx
-const ProductListPage = lazy(() => import("./pages/ProductListPage")); // ProductListPage.jsx
-const ProductDetail = lazy(() => import("./pages/ProductDetail"));  // ProductDetail.jsx
-const CartPage = lazy(() => import("./pages/CartPage"));            // CartPage.jsx
-const Checkout = lazy(() => import("./pages/Checkout"));            // Checkout.jsx
-const ShippingPage = lazy(() => import("./pages/ShippingPage"));    // ShippingPage.jsx
-const Shipping = lazy(() => import("./pages/Shipping"));            // Shipping.jsx (if used)
-const PrivacyPolicy = lazy(() => import("./pages/PrivacyPolicy"));  // PrivacyPolicy.jsx
-const SizeGuide = lazy(() => import("./pages/SizeGuide"));          // SizeGuide.jsx
-const Terms = lazy(() => import("./pages/Terms"));                 // Terms.jsx
-const FAQ = lazy(() => import("./pages/FAQ"));                     // FAQ.jsx
-const BecomeDistributor = lazy(() => import("./pages/BecomeDistributor")); // BecomeDistributor.jsx
-const AboutPage = lazy(() => import("./pages/AboutPage"));         // AboutPage.jsx
-const ContactPage = lazy(() => import("./pages/ContactPage"));     // ContactPage.jsx
-const Contact = lazy(() => import("./pages/Contact"));             // Contact.jsx (if used)
-const Reviews = lazy(() => import("./pages/Reviews"));             // Reviews.jsx
-const Returns = lazy(() => import("./pages/Returns"));             // Returns.jsx
-const Testimonials = lazy(() => import("./pages/Testimonials"));   // Testimonials.jsx
-const WishlistPage = lazy(() => import("./pages/WishlistPage"));   // WishlistPage.jsx
-const NotFound = lazy(() => import("./pages/NotFound"));           // NotFound.jsx
+// Pages
+const HomePage = lazy(() => import("./pages/HomePage"));
+const Home = lazy(() => import("./pages/Home"));
+const ProductDetail = lazy(() => import("./pages/ProductDetail"));
+const CartPage = lazy(() => import("./pages/CartPage"));
+const Checkout = lazy(() => import("./pages/Checkout"));
+const ShippingPage = lazy(() => import("./pages/ShippingPage"));
+const PrivacyPolicy = lazy(() => import("./pages/PrivacyPolicy"));
+const SizeGuide = lazy(() => import("./pages/SizeGuide"));
+const Terms = lazy(() => import("./pages/Terms"));
+const FAQ = lazy(() => import("./pages/FAQ"));
+const BecomeDistributor = lazy(() => import("./pages/BecomeDistributor"));
+const AboutPage = lazy(() => import("./pages/AboutPage"));
+const ContactPage = lazy(() => import("./pages/ContactPage"));
+const Reviews = lazy(() => import("./pages/Reviews"));
+const Returns = lazy(() => import("./pages/Returns"));
+const Testimonials = lazy(() => import("./pages/Testimonials"));
+const WishlistPage = lazy(() => import("./pages/WishlistPage"));
+const NotFound = lazy(() => import("./pages/NotFound"));
 
-// NEW: admin entry point (delegate all /admin/* routes here)
+// ✅ SHOP PAGE WITH SEARCH
+const ShopProducts = lazy(() => import("./shop/ShopProducts"));
+
+// Admin
 const AdminPage = lazy(() => import("./admin/AdminPage"));
 
 function App() {
@@ -41,10 +41,16 @@ function App() {
       <main>
         <Suspense fallback={<div style={{ padding: 40, textAlign: "center" }}>Loading…</div>}>
           <Routes>
+            {/* Public pages */}
             <Route path="/" element={<HomePage />} />
             <Route path="/home" element={<Home />} />
-            <Route path="/shop" element={<ProductListPage />} />
-            <Route path="/products" element={<ProductListPage />} />
+
+            {/* ✅ SHOP ROUTE (SEARCH LIVES HERE) */}
+            <Route path="/shop" element={<ShopProducts />} />
+
+            {/* ❌ PRODUCTS ROUTE → REDIRECT */}
+            <Route path="/products" element={<Navigate to="/shop" replace />} />
+
             <Route path="/product/:slug" element={<ProductDetail />} />
             <Route path="/cart" element={<CartPage />} />
             <Route path="/checkout" element={<Checkout />} />
@@ -61,12 +67,10 @@ function App() {
             <Route path="/testimonials" element={<Testimonials />} />
             <Route path="/wishlist" element={<WishlistPage />} />
 
-            {/*
-              Admin subtree: delegate /admin/* to AdminPage which should handle
-              specific admin routes such as /admin/products, /admin/login, etc.
-            */}
+            {/* Admin */}
             <Route path="/admin/*" element={<AdminPage />} />
 
+            {/* 404 */}
             <Route path="/404" element={<NotFound />} />
             <Route path="*" element={<Navigate to="/404" replace />} />
           </Routes>
@@ -74,8 +78,6 @@ function App() {
       </main>
 
       <Footer />
-
-      {/* Cookie consent component (banner + manage modal). */}
       <CookieConsent />
     </div>
   );
