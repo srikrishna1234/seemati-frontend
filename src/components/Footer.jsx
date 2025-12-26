@@ -26,7 +26,9 @@ export default function Footer() {
           <p style={{ margin: 0 }}>
             Sri Krishna Apparells — Comfort-first kurti pants, palazzos & leggings.
           </p>
-          <p style={{ marginTop: 12 }}>Email: <a href="mailto:rs.bravishankar@gmail.com">rs.bravishankar@gmail.com</a></p>
+<p style={{ marginTop: 12 }}>
+  Email: <a href="mailto:support@seemati.in">support@seemati.in</a>
+</p>
         </div>
 
         <div>
