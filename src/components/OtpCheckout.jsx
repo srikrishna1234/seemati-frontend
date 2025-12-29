@@ -20,7 +20,8 @@ const secondaryBtn =
 
 
 // Use relative API paths (CRA proxy forwards to backend in dev)
-const API = "";
+const API = "https://api.seemati.in";
+
 
 // Small in-file logger: silenced in production
 const isDev = process.env.NODE_ENV === "development";
