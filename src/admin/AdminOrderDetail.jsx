@@ -110,11 +110,13 @@ const [error, setError] = useState("");
       <ul style={{ lineHeight: "1.8" }}>
   {(order.items || []).map((item, idx) => (
     <li key={idx}>
-      <strong>{item.name}</strong><br />
-      SKU: {item.sku}<br />
-      Color: {item.color} &nbsp;|&nbsp; Size: {item.size}<br />
-      Qty: {item.quantity} × ₹{item.price}
-    </li>
+  <strong>{item.title || "-"}</strong><br />
+  {item.sku && <>SKU: {item.sku}<br /></>}
+  {item.color && <>Color: {item.color} &nbsp;|&nbsp; </>}
+  {item.size && <>Size: {item.size}<br /></>}
+  Qty: {item.quantity} × ₹{item.price}
+</li>
+
   ))}
 </ul>
 
