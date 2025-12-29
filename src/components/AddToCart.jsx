@@ -14,40 +14,34 @@ export default function AddToCart({ product, quantity = 1, options = {}, childre
   const dispatch = useCartDispatch();
 
   function handleAdd() {
-    if (!product) return;
-    const id = product._id || product.id || product.productId || String(Math.random());
-    const item = {
-      productId: id,
-      title: product.title || product.name || product.slug || "Product",
-      price: Number(product.price ?? product.mrp ?? 0),
-      quantity: Number(quantity || 1),
-      thumbnail:
-        (product.thumbnail && (typeof product.thumbnail === "string" ? product.thumbnail : product.thumbnail.url)) ||
-        (product.images && product.images[0] && (product.images[0].url || product.images[0])) ||
-        "",
-      options: options || {},
-    };
+  if (!product) return;
 
-    dispatch({
-  type: "ADD_ITEM",
-  payload: {
-    productId: product._id,
-    name: product.name,
-    sku: product.sku,
-    price: product.price,
-    color: selectedColor,
-    size: selectedSize
-  }
-});
+  const id = product._id || product.id || product.productId;
 
+  const item = {
+    productId: id,
+    title: product.title || product.name || "Product",
+    sku: product.sku || "",
+    price: Number(product.price ?? product.mrp ?? 0),
+    quantity: Number(quantity || 1),
+    color: options.color || "",
+    size: options.size || "",
+    image:
+      (product.images && product.images[0] && (product.images[0].url || product.images[0])) ||
+      product.thumbnail ||
+      "",
+  };
 
-    // small visual toast / feedback
-    try {
-      // you may already have a toast mechanism; fallback to alertless console
-      const ev = new CustomEvent("cart-item-added", { detail: item });
-      window.dispatchEvent(ev);
-    } catch (e) {}
-  }
+  dispatch({
+    type: "ADD_ITEM",
+    payload: item,
+  });
+
+  // optional event hook
+  try {
+    window.dispatchEvent(new CustomEvent("cart-item-added", { detail: item }));
+  } catch (e) {}
+}
 
   return (
     <button type="button" onClick={handleAdd} className="btn-add-to-cart">
