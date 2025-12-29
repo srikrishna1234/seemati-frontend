@@ -262,7 +262,7 @@ export function OrderSuccess({ orderId }) {
     if (!orderId) return;
     (async () => {
       try {
-        const res = await fetch(`${API}/api/orders/${orderId}`, { credentials: "include" });
+        const res = await fetch(`${API}/api/orders/${orderId}`);
         if (!res.ok) {
           let d = null;
           try { d = await res.json(); } catch (e) { warn('order fetch parse error', e); }
@@ -362,7 +362,7 @@ export function CheckoutWithOtp({ initialCart = [], onOrderPlaced }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-        credentials: "include",
+        
       });
 
       if (!res.ok) {
