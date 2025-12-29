@@ -308,16 +308,7 @@ export function CheckoutWithOtp({ initialCart = [], onOrderPlaced }) {
   const [otpOpen, setOtpOpen] = useState(false);
   const [user, setUser] = useState(null);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch(`${API}/api/auth/me`, { credentials: "include" });
-        if (!res.ok) return;
-        const d = await res.json();
-        if (d?.ok) setUser(d.user);
-      } catch (e) { /* ignore */ }
-    })();
-  }, []);
+  
 
   function placeOrder() {
   setError(null);
