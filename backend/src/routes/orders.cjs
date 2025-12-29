@@ -31,7 +31,7 @@ router.post("/", async (req, res) => {
 }));
 
 const order = new Order({
-  userId: req.user.id,
+  userId: customer?.phone || "guest",
   customer,
   items: cleanItems,
   totals: { subtotal, shipping, tax, total },
@@ -50,12 +50,12 @@ const order = new Order({
 
 // Fetch current user's orders (GET /api/orders/mine) â€” requires auth
 // IMPORTANT: declare this before the param route "/:id" so "mine" doesn't get treated as an id.
-router.get("/mine", adminAuth, async (req, res) => {
+router.get("/mine", async (req, res) => {
   try {
     console.log("[DEBUG] /api/orders/mine entered");
     console.log("[DEBUG] req.user:", req.user);
 
-    const uid = req.user.id;
+    const uid = req.query.phone;
     console.log("[DEBUG] looking for orders by userId:", uid);
 
     const orders = await Order.find({ userId: uid })
