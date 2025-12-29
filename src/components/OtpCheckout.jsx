@@ -1,6 +1,7 @@
 // src/components/OtpCheckout.jsx
 import React, { useState, useEffect, useRef } from "react";
-import { clearCart } from "../utils/cartHelpers";
+import { clearCart, loadCart } from "../utils/cartHelpers";
+
 
 const inputStyle =
   "w-full px-4 py-4 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-pink-400 bg-white";
@@ -304,7 +305,6 @@ export function OrderSuccess({ orderId }) {
 
 /* CheckoutWithOtp - returns orderId via onOrderPlaced (parent should handle navigation & clearing cart) */
 export function CheckoutWithOtp({ initialCart = [], onOrderPlaced }) {
-  const [cart, setCart] = useState(initialCart);
   const [customer, setCustomer] = useState({ name: "", phone: "", address: "" });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -343,24 +343,28 @@ export function CheckoutWithOtp({ initialCart = [], onOrderPlaced }) {
       setLoading(true);
 
 
-      const payload = {
+      const latestCart = loadCart() || [];
+
+const payload = {
   customer,
   paymentMethod: "cod",
- items: cart.map((item) => ({
-  productId: item.productId,
-  title: item.title || item.name || "",
-  sku: item.sku,
-  color: item.color,
-  size: item.size,
-  quantity: item.quantity || 1,
-  price: item.price,
-  image: item.image || "",
-}))
+  items: latestCart.map((item) => ({
+    productId: item.productId,
+    title: item.title || item.name || "",
+    sku: item.sku || "",
+    color: item.color || "",
+    size: item.size || "",
+    quantity: Number(item.quantity || 1),
+    price: Number(item.price || 0),
+    image: item.image || item.thumbnail || "",
+  })),
+};
 
 
 
 
 };
+console.log("ORDER PAYLOAD ITEMS", payload.items);
 
 
      const res = await fetch(`${API}/api/orders`, {
