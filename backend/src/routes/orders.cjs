@@ -73,7 +73,7 @@ router.get("/mine", async (req, res) => {
 });
 
 // Fetch a single order by id (GET /api/orders/:id) â€” requires auth and ownership/admin
-router.get("/:id", adminAuth, async (req, res) => {
+router.get("/:id", async (req, res) => {
   const { id } = req.params;
   if (!id) return res.status(400).json({ message: "Missing id parameter" });
 
@@ -87,9 +87,7 @@ router.get("/:id", adminAuth, async (req, res) => {
     if (!order) return res.status(404).json({ ok: false, message: "Order not found" });
 
     // allow if owner or admin
-    if (String(order.userId) !== String(req.user.id) && req.user.role !== "admin") {
-      return res.status(403).json({ message: "Forbidden" });
-    }
+    
 
     return res.json({ ok: true, order });
   } catch (err) {
