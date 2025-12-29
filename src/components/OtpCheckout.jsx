@@ -367,12 +367,19 @@ export function CheckoutWithOtp({ initialCart = [], onOrderPlaced }) {
   credentials: "omit", // 🔥 FORCE guest checkout (no cookies)
 });
 
-      if (!res.ok) {
-        const d = await res.json();
-        throw new Error(d?.message || "Order failed");
-      }
+let data = null;
+const contentType = res.headers.get("content-type") || "";
 
-      const data = await res.json();
+if (contentType.includes("application/json")) {
+  data = await res.json();
+} else {
+  const text = await res.text();
+  throw new Error(`Server error: ${text.substring(0, 120)}`);
+}
+
+if (!res.ok) {
+  throw new Error(data?.message || "Order failed");
+}
 
 // 🔥 HARD CLEAR CART AFTER SUCCESSFUL ORDER
 clearCart();
