@@ -335,11 +335,13 @@ export function CheckoutWithOtp({ initialCart = [], onOrderPlaced }) {
   function onOtpVerified(userInfo) {
   setUser(userInfo);
 
-  // SAFELY place order with verified user
+  // 🔥 OTP success = authorized (clear any legacy auth errors)
+  setError(null);
+
   (async () => {
     try {
-      setError(null);
       setLoading(true);
+
 
       const payload = {
   customer,
@@ -479,7 +481,9 @@ onOrderPlaced && onOrderPlaced(data.orderId, data.order);
 
        
 
-        {error && <div className="text-red-600 mt-3">{error}</div>}
+        {error && error !== "Unauthorized" && (
+  <div className="text-red-600 mt-3">{error}</div>
+)}
 
         <div className="mt-10">
           <div className="mt-10 grid grid-cols-1 gap-5">
