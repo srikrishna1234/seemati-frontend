@@ -7,7 +7,7 @@ const Order = require("../../models/Order.cjs");
 const adminAuth = require("../middleware/adminAuth.cjs");
 
 // Create order (POST /api/orders) â€” requires auth
-router.post("/", adminAuth, async (req, res) => {
+router.post("/", async (req, res) => {
   try {
     const { customer, items, totals, paymentMethod } = req.body || {};
     if (!items || !Array.isArray(items) || items.length === 0) {
