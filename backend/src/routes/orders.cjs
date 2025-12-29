@@ -19,15 +19,26 @@ router.post("/", adminAuth, async (req, res) => {
     const tax = Math.round(subtotal * 0.05);
     const total = subtotal + shipping + tax;
 
-    const order = new Order({
-      userId: req.user.id,
-      customer,
-      items,
-      totals: { subtotal, shipping, tax, total },
-      status: paymentMethod === "cod" ? "confirmed" : "pending",
-      paymentMethod,
-      createdAt: new Date(),
-    });
+   const cleanItems = items.map(it => ({
+  productId: it.productId,
+  title: it.title || "",
+  sku: it.sku || "",
+  color: it.color || "",
+  size: it.size || "",
+  price: Number(it.price || 0),
+  quantity: Number(it.quantity || 1),
+  image: it.image || "",
+}));
+
+const order = new Order({
+  userId: req.user.id,
+  customer,
+  items: cleanItems,
+  totals: { subtotal, shipping, tax, total },
+  status: paymentMethod === "cod" ? "confirmed" : "pending",
+  paymentMethod,
+});
+
 
     await order.save();
     return res.json({ ok: true, orderId: order._id, order });
@@ -83,6 +94,36 @@ router.get("/:id", adminAuth, async (req, res) => {
     return res.json({ ok: true, order });
   } catch (err) {
     console.error("[ERROR] fetch order failed:", err && err.stack ? err.stack : err);
+    return res.status(500).json({ message: "Server error" });
+  }
+});
+// Update order status (PUT /api/orders/:id/status) — admin only
+router.put("/:id/status", adminAuth, async (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body || {};
+
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    return res.status(400).json({ message: "Invalid order id" });
+  }
+
+  if (!status) {
+    return res.status(400).json({ message: "Missing status" });
+  }
+
+  try {
+    const order = await Order.findByIdAndUpdate(
+      id,
+      { status },
+      { new: true }
+    );
+
+    if (!order) {
+      return res.status(404).json({ ok: false, message: "Order not found" });
+    }
+
+    return res.json({ ok: true, order });
+  } catch (err) {
+    console.error("[ERROR] order status update failed:", err);
     return res.status(500).json({ message: "Server error" });
   }
 });

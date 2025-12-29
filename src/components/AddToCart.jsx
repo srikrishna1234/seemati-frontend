@@ -28,7 +28,18 @@ export default function AddToCart({ product, quantity = 1, options = {}, childre
       options: options || {},
     };
 
-    dispatch({ type: "ADD_ITEM", payload: item });
+    dispatch({
+  type: "ADD_ITEM",
+  payload: {
+    productId: product._id,
+    name: product.name,
+    sku: product.sku,
+    price: product.price,
+    color: selectedColor,
+    size: selectedSize
+  }
+});
+
 
     // small visual toast / feedback
     try {

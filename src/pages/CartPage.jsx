@@ -213,6 +213,12 @@ useEffect(() => {
   <div style={{ flex: 1 }}>
     <strong>{it.title}</strong>
     <div style={{ marginTop: 6 }}>₹{it.price}</div>
+{(it.color || it.size) && (
+  <div style={{ fontSize: 13, color: "#555", marginTop: 4 }}>
+    {it.color && <span>Color: {it.color}</span>}
+    {it.size && <span> &nbsp;| Size: {it.size}</span>}
+  </div>
+)}
 
                 <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
                   <button onClick={() => persistAndSync(setItemQuantity(id, (it.quantity || 1) - 1))}>-</button>

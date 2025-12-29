@@ -387,14 +387,34 @@ const data = await resp.json();
 
     // compose derived colors
     const derived = rawColors.map((raw) => {
-      const hex = normalizeHex(raw);
-      const displayHex = hex || null;
-      const friendly = displayHex ? colorNames.hexToName(displayHex) : (String(raw || ""));
-      const mappedImg =
-        (colorImageMap && (colorImageMap[String(raw).toLowerCase()] || colorImageMap[String(friendly).toLowerCase()])) || null;
-      const imageUrl = mappedImg ? mappedImg : null;
-      return { raw, displayHex, friendly, imageUrl };
-    });
+  // support both string & object formats
+  let name = "";
+  let hex = null;
+
+  if (typeof raw === "string") {
+    name = raw.trim();
+    hex =
+      colorNames.nameToHex?.(name) ||
+      colorNames[name.toUpperCase()] ||
+      null;
+  } else if (typeof raw === "object" && raw !== null) {
+    name = String(raw.name || "").trim();
+    hex = normalizeHex(raw.hex) ||
+      colorNames.nameToHex?.(name) ||
+      colorNames[name.toUpperCase()] ||
+      null;
+  }
+
+  const friendly = name || "Color";
+
+  return {
+    raw: name,
+    displayHex: hex,
+    friendly,
+    imageUrl: null,
+  };
+});
+
 
     setDerivedColors(derived);
   }, [product?.images, product?.image, product?.thumbnail, product?.colors, product?.slug, product?._id]);
@@ -465,21 +485,21 @@ const data = await resp.json();
   function decQty() { setQuantity((q) => clampQty(q - 1)); }
   function onQtyChange(e) { setQuantity(clampQty(e.target.value)); }
 
-  async function handleAddToCart(e) {
+async function handleAddToCart(e) {
   e?.preventDefault?.();
   if (!product) return;
 
-  // 🔒 STRICTMODE GUARD (prevents double add)
   if (addToCartLockRef.current) return;
   addToCartLockRef.current = true;
 
-  if (Array.isArray(product.colors) && product.colors.length > 0 && !selectedColor) {
-    setError("Please select a color.");
+  if (product.colors?.length && !selectedColor) {
+    setError("Please select a color");
     addToCartLockRef.current = false;
     return;
   }
-  if (Array.isArray(product.sizes) && product.sizes.length > 0 && !selectedSize) {
-    setError("Please select a size.");
+
+  if (product.sizes?.length && !selectedSize) {
+    setError("Please select a size");
     addToCartLockRef.current = false;
     return;
   }
@@ -488,37 +508,29 @@ const data = await resp.json();
   setError(null);
 
   try {
-    if (typeof cartDispatch === "function") {
-      cartDispatch({
-        type: "ADD_ITEM",
-        payload: {
-          productId: product._id ?? product.id ?? product.slug,
-          title: product.title ?? product.name ?? "Product",
-          price: Number(product.price ?? 0),
-          image:
-            product.image ??
-            (product.images && product.images[0]
-              ? product.images[0].url || product.images[0]
-              : null),
-          quantity: clampQty(quantity),
-          meta: {
-            color: selectedColor ?? null,
-            size: selectedSize ?? null,
-          },
-        },
-      });
-    }
+    cartDispatch({
+      type: "ADD_ITEM",
+      payload: {
+        productId: product._id,
+        title: product.title,
+        price: Number(product.price),
+        image: product.images?.[0],
+        quantity: clampQty(quantity),
 
-      } catch (err) {
+        // 🔥 THESE TWO LINES FIX EVERYTHING
+        color: typeof selectedColor === "object" ? selectedColor.name : selectedColor,
+        size: selectedSize,
+
+        // optional but very useful
+        sku: `${product._id}-${selectedColor?.name || selectedColor}-${selectedSize}`,
+      },
+    });
+  } catch (err) {
     console.error("Add to cart failed:", err);
-    setError("Unable to add to cart.");
+    setError("Unable to add to cart");
   } finally {
     setAdding(false);
-
-    // 🔓 allow next click
-    setTimeout(() => {
-      addToCartLockRef.current = false;
-    }, 0);
+    addToCartLockRef.current = false;
   }
 }
 

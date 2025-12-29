@@ -5,10 +5,15 @@ const { Schema } = mongoose;
 const OrderItemSchema = new Schema({
   productId: String,
   title: String,
+  sku: String,        // ✅ ADD
+  color: String,      // ✅ ADD
+  size: String,       // ✅ ADD
   price: Number,
   quantity: Number,
   image: String,
 }, { _id: true });
+
+
 
 const TotalsSchema = new Schema({
   subtotal: Number,

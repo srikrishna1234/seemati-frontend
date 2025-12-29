@@ -93,7 +93,12 @@ export function addOrIncrementItem(item, qtyOrDelta = 1) {
     const items = Array.isArray(cart.items) ? [...cart.items] : [];
     const incoming = normalizeItemShape(item);
     const productId = incoming.productId;
-    const idx = items.findIndex(i => (i.productId ?? i._id ?? i.id ?? i.slug) === productId);
+    const idx = items.findIndex(i =>
+  (i.productId ?? i._id ?? i.id ?? i.slug) === productId &&
+  (i.size || null) === (incoming.size || null) &&
+  (i.color || null) === (incoming.color || null)
+);
+
     if (idx > -1) {
       const existing = { ...items[idx] };
       existing.quantity = Math.min(99, (Number(existing.quantity || existing.qty || 0) + Number(qtyOrDelta || 1)));

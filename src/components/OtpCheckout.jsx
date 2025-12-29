@@ -348,10 +348,24 @@ export function CheckoutWithOtp({ initialCart = [], onOrderPlaced }) {
       setLoading(true);
 
       const payload = {
-        customer,
-        items: cart,
-        paymentMethod: "cod",
-      };
+  customer,
+  paymentMethod: "cod",
+ items: cart.map((item) => ({
+  productId: item.productId,
+  title: item.title || item.name || "",
+  sku: item.sku,
+  color: item.color,
+  size: item.size,
+  quantity: item.quantity || 1,
+  price: item.price,
+  image: item.image || "",
+}))
+
+
+
+
+};
+
 
       const res = await fetch(`${API}/api/orders`, {
         method: "POST",

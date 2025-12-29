@@ -1,15 +1,29 @@
+// src/api/axiosInstance.js
 import axios from "axios";
 
-const API_BASE =
-  process.env.REACT_APP_API_BASE ||
-  "http://localhost:4000/api";
-
 const axiosInstance = axios.create({
-  baseURL: API_BASE,
-  withCredentials: true,
-  headers: {
-    "Content-Type": "application/json",
-  },
+  baseURL:
+    process.env.REACT_APP_API_BASE
+      ? `${process.env.REACT_APP_API_BASE}/api`
+      : "/api",
+  withCredentials: true, // 🔴 REQUIRED FOR ADMIN AUTH COOKIE
 });
+
+// Optional: simple dev logging (safe)
+axiosInstance.interceptors.response.use(
+  (res) => res,
+  (err) => {
+    if (err?.response) {
+      console.error(
+        "[API ERROR]",
+        err.response.status,
+        err.response.data
+      );
+    } else {
+      console.error("[API ERROR]", err.message);
+    }
+    return Promise.reject(err);
+  }
+);
 
 export default axiosInstance;

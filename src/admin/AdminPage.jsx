@@ -7,6 +7,8 @@ import AdminProductList from "./AdminProductList";
 import AdminProductEdit from "./AdminProductEdit";
 import AddProduct from "./AddProduct";
 import AdminAnnouncements from "./AdminAnnouncements";
+import AdminOrders from "./AdminOrders";
+import AdminOrderDetail from "./AdminOrderDetail";
 
 export default function AdminPage() {
   return (
@@ -26,6 +28,9 @@ export default function AdminPage() {
 
       <main style={{ padding: 20 }}>
         <Routes>
+		  <Route path="orders" element={<AdminOrders />} />
+		  <Route path="orders/:id" element={<AdminOrderDetail />} />
+
           {/* LOGIN PAGE */}
           <Route path="login" element={<AdminLogin />} />
 
@@ -33,12 +38,13 @@ export default function AdminPage() {
           <Route path="products" element={<AdminProductList />} />
           <Route path="products/new" element={<AddProduct />} />
           <Route path="products/:id" element={<AdminProductEdit />} />
+          
 
           {/* ANNOUNCEMENTS */}
           <Route path="announcements" element={<AdminAnnouncements />} />
 
           {/* DEFAULT → Login */}
-          <Route path="*" element={<AdminLogin />} />
+          <Route path="*" element={<AdminOrders />} />
         </Routes>
       </main>
     </div>

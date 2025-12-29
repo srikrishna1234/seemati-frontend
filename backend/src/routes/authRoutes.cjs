@@ -46,17 +46,18 @@ function createToken(payload) {
 
 // Cookie options
 function makeCookieOptions() {
-  const secure = NODE_ENV === 'production';
+  const isProd = process.env.NODE_ENV === 'production';
 
   return {
     httpOnly: true,
-    secure,
-    sameSite: 'None',
-    domain: '.seemati.in',   // ✅ THIS IS THE FIX
+    secure: isProd,                         // HTTPS only in prod
+    sameSite: isProd ? 'None' : 'Lax',      // local dev compatible
     path: '/',
-    maxAge: parseInt(process.env.COOKIE_MAX_AGE, 10) || 1000 * 60 * 60 * 24 * 7,
+    ...(isProd ? { domain: '.seemati.in' } : {}),
+    maxAge: 1000 * 60 * 60 * 24 * 7,
   };
 }
+
 
 
 // Normalize provider result to { success: boolean, ... }
@@ -147,7 +148,7 @@ router.post('/verify-otp', async (req, res) => {
       return res.status(401).json({ ok: false, message: msg, details: result && result.raw ? result.raw : undefined });
     }
 
-    const userPayload = { id: phone, phone, role: 'admin' };
+    const userPayload = { id: phone, phone, role: 'customer' };
     const token = createToken(userPayload);
     const cookieOptions = makeCookieOptions();
     res.cookie(COOKIE_NAME, token, cookieOptions);

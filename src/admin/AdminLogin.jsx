@@ -1,11 +1,13 @@
 // src/admin/AdminLogin.jsx
 import React, { useState } from "react";
-
-const BACKEND =
-  process.env.REACT_APP_API_BASE ||
-  "https://seemati-backend.onrender.com";
+import { useNavigate, useLocation } from "react-router-dom";
+const API_BASE =
+  process.env.REACT_APP_API_BASE || "https://seemati-backend.onrender.com";
 
 export default function AdminLogin() {
+  const navigate = useNavigate();
+  const location = useLocation();
+
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
   const [stage, setStage] = useState("enter");
@@ -25,25 +27,26 @@ export default function AdminLogin() {
 
     setLoading(true);
     try {
-      const res = await fetch(`${BACKEND}/api/auth/send-otp`, {
+      const res = await fetch(`${API_BASE}/api/auth/send-otp`, {
+
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
+        credentials: "include", // 🔑 cookie on localhost
         body: JSON.stringify({ phone: mobile }),
       });
 
       const json = await res.json().catch(() => ({}));
 
-      // FIX → backend returns json.ok, not json.success
       if (res.ok && json.ok) {
         setStage("verify");
         setMsg("OTP sent to your mobile.");
       } else {
-        setMsg(json.message || json.error || "Failed to send OTP.");
+        setMsg(json.message || "Failed to send OTP.");
       }
-    } catch (err) {
+    } catch {
       setMsg("Network error sending OTP");
     }
+
     setLoading(false);
   }
 
@@ -51,10 +54,6 @@ export default function AdminLogin() {
     const mobile = normalize(phone);
     setMsg("");
 
-    if (!/^\d{10}$/.test(mobile)) {
-      setMsg("Enter phone number again.");
-      return;
-    }
     if (!otp) {
       setMsg("Enter OTP.");
       return;
@@ -62,25 +61,29 @@ export default function AdminLogin() {
 
     setLoading(true);
     try {
-      const res = await fetch(`${BACKEND}/api/auth/verify-otp`, {
+      const res = await fetch(`${API_BASE}/api/auth/verify-otp`, {
+
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
+        credentials: "include", // 🔑 cookie on localhost
         body: JSON.stringify({ phone: mobile, otp }),
       });
 
       const json = await res.json().catch(() => ({}));
 
-      // FIX → backend returns json.ok
-      if (res.ok && json.ok) {
-        setMsg("Login successful… redirecting");
-        setTimeout(() => {
-          window.location.href = "/admin/products";
-        }, 500);
-      } else {
-        setMsg(json.message || json.error || "OTP verification failed.");
+   if (res.ok && json.ok) {
+  setMsg("Login successful… redirecting");
+
+  const from = location.state?.from || "/admin/orders";
+
+  setTimeout(() => {
+    navigate(from, { replace: true });
+  }, 300);
+}
+ else {
+        setMsg(json.message || "OTP verification failed.");
       }
-    } catch (err) {
+    } catch {
       setMsg("Network error verifying OTP");
     }
 
@@ -89,7 +92,7 @@ export default function AdminLogin() {
 
   return (
     <div style={{ maxWidth: 500, margin: "0 auto", padding: 24 }}>
-      <h1>Admin Login NEW</h1>
+      <h1>Admin Login</h1>
 
       {msg && <p style={{ color: "red" }}>{msg}</p>}
 
@@ -117,23 +120,8 @@ export default function AdminLogin() {
             placeholder="OTP"
             style={{ width: "100%", padding: 8, marginTop: 6 }}
           />
-          <button
-            onClick={verifyOtp}
-            disabled={loading}
-            style={{ marginTop: 10 }}
-          >
+          <button onClick={verifyOtp} disabled={loading} style={{ marginTop: 10 }}>
             {loading ? "Verifying…" : "Verify OTP"}
-          </button>
-
-          <button
-            onClick={() => {
-              setStage("enter");
-              setOtp("");
-              setMsg("");
-            }}
-            style={{ marginLeft: 10 }}
-          >
-            Change Number
           </button>
         </>
       )}
