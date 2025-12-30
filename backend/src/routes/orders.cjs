@@ -1,129 +1,48 @@
-﻿// backend/src/routes/orders.cjs
-const express = require("express");
-const router = express.Router();
-const mongoose = require("mongoose");
+﻿const mongoose = require("mongoose");
 
-const Order = require("../../models/Order.cjs");
-const adminAuth = require("../middleware/adminAuth.cjs");
+const OrderSchema = new mongoose.Schema(
+  {
+    userId: { type: String, index: true },
 
-// Create order (POST /api/orders) â€” requires auth
-router.post("/", async (req, res) => {
-  try {
-    const { customer, items, totals, paymentMethod } = req.body || {};
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ message: "No items" });
-    }
+    customer: {
+      name: { type: String },
+      phone: { type: String },
+      address: { type: String },
+    },
 
-    const subtotal = items.reduce((s, it) => s + (Number(it.price || 0) * (it.quantity || 1)), 0);
-    const shipping = subtotal > 999 ? 0 : 60;
-    const tax = Math.round(subtotal * 0.05);
-    const total = subtotal + shipping + tax;
+    items: [
+      {
+        productId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Product",
+          required: true,
+        },
 
-   const cleanItems = items.map(it => ({
-  productId: it.productId,
-  title: it.title || "",
-  sku: it.sku || "",
-  color: it.color || "",
-  size: it.size || "",
-  price: Number(it.price || 0),
-  quantity: Number(it.quantity || 1),
-  image: it.image || "",
-}));
+        title: { type: String, required: true },
 
-const order = new Order({
-  userId: customer?.phone || "guest",
-  customer,
-  items: cleanItems,
-  totals: { subtotal, shipping, tax, total },
-  status: paymentMethod === "cod" ? "confirmed" : "pending",
-  paymentMethod,
-});
+        // 🔥 THESE 3 FIELDS WERE MISSING BEFORE
+        sku: { type: String, default: "" },
+        color: { type: String, default: "" },
+        size: { type: String, default: "" },
 
+        price: { type: Number, required: true },
+        quantity: { type: Number, required: true },
 
-    await order.save();
-    return res.json({ ok: true, orderId: order._id, order });
-  } catch (err) {
-    console.error("[ERROR] order create failed:", err && err.stack ? err.stack : err);
-    res.status(500).json({ message: "Server error" });
-  }
-});
+        image: { type: String, default: "" },
+      },
+    ],
 
-// Fetch current user's orders (GET /api/orders/mine) â€” requires auth
-// IMPORTANT: declare this before the param route "/:id" so "mine" doesn't get treated as an id.
-router.get("/mine", async (req, res) => {
-  try {
-    console.log("[DEBUG] /api/orders/mine entered");
-    console.log("[DEBUG] req.user:", req.user);
+    totals: {
+      subtotal: { type: Number },
+      shipping: { type: Number },
+      tax: { type: Number },
+      total: { type: Number },
+    },
 
-    const uid = req.query.phone;
-    console.log("[DEBUG] looking for orders by userId:", uid);
+    status: { type: String, default: "pending" },
+    paymentMethod: { type: String, default: "cod" },
+  },
+  { timestamps: true }
+);
 
-    const orders = await Order.find({ userId: uid })
-      .sort({ createdAt: -1 })
-      .lean()
-      .limit(200);
-
-    console.log("[DEBUG] found", orders.length, "orders");
-
-    return res.json({ ok: true, count: orders.length, orders });
-  } catch (err) {
-    console.error("[ERROR] fetch my orders failed:", err && err.stack ? err.stack : err);
-    return res.status(500).json({ message: "Server error" });
-  }
-});
-
-// Fetch a single order by id (GET /api/orders/:id) â€” requires auth and ownership/admin
-router.get("/:id", async (req, res) => {
-  const { id } = req.params;
-  if (!id) return res.status(400).json({ message: "Missing id parameter" });
-
-  // validate ObjectId first to avoid CastError
-  if (!mongoose.Types.ObjectId.isValid(id)) {
-    return res.status(400).json({ message: "Invalid order id" });
-  }
-
-  try {
-    const order = await Order.findById(id).lean();
-    if (!order) return res.status(404).json({ ok: false, message: "Order not found" });
-
-    // allow if owner or admin
-    
-
-    return res.json({ ok: true, order });
-  } catch (err) {
-    console.error("[ERROR] fetch order failed:", err && err.stack ? err.stack : err);
-    return res.status(500).json({ message: "Server error" });
-  }
-});
-// Update order status (PUT /api/orders/:id/status) — admin only
-router.put("/:id/status", adminAuth, async (req, res) => {
-  const { id } = req.params;
-  const { status } = req.body || {};
-
-  if (!mongoose.Types.ObjectId.isValid(id)) {
-    return res.status(400).json({ message: "Invalid order id" });
-  }
-
-  if (!status) {
-    return res.status(400).json({ message: "Missing status" });
-  }
-
-  try {
-    const order = await Order.findByIdAndUpdate(
-      id,
-      { status },
-      { new: true }
-    );
-
-    if (!order) {
-      return res.status(404).json({ ok: false, message: "Order not found" });
-    }
-
-    return res.json({ ok: true, order });
-  } catch (err) {
-    console.error("[ERROR] order status update failed:", err);
-    return res.status(500).json({ message: "Server error" });
-  }
-});
-
-module.exports = router;
+module.exports = mongoose.model("Order", OrderSchema);
