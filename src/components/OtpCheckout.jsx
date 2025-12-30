@@ -316,10 +316,12 @@ export function CheckoutWithOtp({ initialCart = [], onOrderPlaced }) {
   function placeOrder() {
   setError(null);
 
-  if (!cart || cart.length === 0) {
-    setError("Cart is empty");
-    return;
-  }
+  const currentCart = loadCart() || [];
+
+if (currentCart.length === 0) {
+  setError("Cart is empty");
+  return;
+}
 
   if (!customer.name || !customer.phone || !customer.address) {
     setError("Please fill all customer details");
@@ -332,72 +334,61 @@ export function CheckoutWithOtp({ initialCart = [], onOrderPlaced }) {
 }
 
 
-  function onOtpVerified(userInfo) {
+ function onOtpVerified(userInfo) {
   setUser(userInfo);
-
-  // 🔥 OTP success = authorized (clear any legacy auth errors)
   setError(null);
 
   (async () => {
     try {
       setLoading(true);
 
-
       const latestCart = loadCart() || [];
 
-const payload = {
-  customer,
-  paymentMethod: "cod",
-  items: latestCart.map((item) => ({
-    productId: item.productId,
-    title: item.title || item.name || "",
-    sku: item.sku || "",
-    color: item.color || "",
-    size: item.size || "",
-    quantity: Number(item.quantity || 1),
-    price: Number(item.price || 0),
-    image: item.image || item.thumbnail || "",
-  })),
-};
+      if (latestCart.length === 0) {
+        throw new Error("Cart is empty");
+      }
 
+      const payload = {
+        customer,
+        paymentMethod: "cod",
+        items: latestCart.map((item) => ({
+          productId: item.productId,
+          title: item.title || item.name || "",
+          sku: item.sku || "",
+          color: item.color || "",
+          size: item.size || "",
+          quantity: Number(item.quantity || 1),
+          price: Number(item.price || 0),
+          image: item.image || item.thumbnail || "",
+        })),
+      };
 
+      console.log("ORDER PAYLOAD ITEMS", payload.items);
 
+      const res = await fetch(`${API}/api/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        credentials: "omit",
+      });
 
-};
-console.log("ORDER PAYLOAD ITEMS", payload.items);
+      let data;
+      const contentType = res.headers.get("content-type") || "";
+      if (contentType.includes("application/json")) {
+        data = await res.json();
+      } else {
+        const text = await res.text();
+        throw new Error(text);
+      }
 
+      if (!res.ok) {
+        throw new Error(data?.message || "Order failed");
+      }
 
-     const res = await fetch(`${API}/api/orders`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify(payload),
-  credentials: "omit", // 🔥 FORCE guest checkout (no cookies)
-});
+      clearCart();
+      window.dispatchEvent(new Event("cart-updated"));
 
-let data = null;
-const contentType = res.headers.get("content-type") || "";
-
-if (contentType.includes("application/json")) {
-  data = await res.json();
-} else {
-  const text = await res.text();
-  throw new Error(`Server error: ${text.substring(0, 120)}`);
-}
-
-if (!res.ok) {
-  throw new Error(data?.message || "Order failed");
-}
-
-// 🔥 HARD CLEAR CART AFTER SUCCESSFUL ORDER
-clearCart();
-
-// notify all listeners (navbar, cart page, etc.)
-try {
-  window.dispatchEvent(new Event("cart-updated"));
-} catch (e) {}
-
-// continue normal flow
-onOrderPlaced && onOrderPlaced(data.orderId, data.order);
+      onOrderPlaced && onOrderPlaced(data.orderId, data.order);
 
     } catch (e) {
       setError(e.message || "Order failed after OTP");
@@ -405,6 +396,8 @@ onOrderPlaced && onOrderPlaced(data.orderId, data.order);
       setLoading(false);
     }
   })();
+
+
 }
 
 
