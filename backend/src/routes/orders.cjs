@@ -1,48 +1,40 @@
-﻿const mongoose = require("mongoose");
+﻿const express = require("express");
+const router = express.Router();
+const Order = require("../../models/Order.cjs");
 
-const OrderSchema = new mongoose.Schema(
-  {
-    userId: { type: String, index: true },
+// CREATE ORDER
+router.post("/", async (req, res) => {
+  try {
+    const { customer, items, paymentMethod } = req.body;
 
-    customer: {
-      name: { type: String },
-      phone: { type: String },
-      address: { type: String },
-    },
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ ok: false, message: "No items" });
+    }
 
-    items: [
-      {
-        productId: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "Product",
-          required: true,
-        },
+    const subtotal = items.reduce(
+      (s, it) => s + Number(it.price || 0) * Number(it.quantity || 1),
+      0
+    );
+    const shipping = subtotal > 999 ? 0 : 60;
+    const tax = Math.round(subtotal * 0.05);
+    const total = subtotal + shipping + tax;
 
-        title: { type: String, required: true },
+    const order = new Order({
+      userId: customer?.phone || "guest",
+      customer,
+      items,
+      totals: { subtotal, shipping, tax, total },
+      paymentMethod: paymentMethod || "cod",
+      status: "confirmed",
+    });
 
-        // 🔥 THESE 3 FIELDS WERE MISSING BEFORE
-        sku: { type: String, default: "" },
-        color: { type: String, default: "" },
-        size: { type: String, default: "" },
+    await order.save();
 
-        price: { type: Number, required: true },
-        quantity: { type: Number, required: true },
+    return res.json({ ok: true, orderId: order._id, order });
+  } catch (err) {
+    console.error("[ORDER CREATE ERROR]", err);
+    return res.status(500).json({ ok: false, message: "Server error" });
+  }
+});
 
-        image: { type: String, default: "" },
-      },
-    ],
-
-    totals: {
-      subtotal: { type: Number },
-      shipping: { type: Number },
-      tax: { type: Number },
-      total: { type: Number },
-    },
-
-    status: { type: String, default: "pending" },
-    paymentMethod: { type: String, default: "cod" },
-  },
-  { timestamps: true }
-);
-
-module.exports = mongoose.model("Order", OrderSchema);
+module.exports = router;
