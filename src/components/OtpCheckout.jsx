@@ -316,12 +316,14 @@ export function CheckoutWithOtp({ initialCart = [], onOrderPlaced }) {
   function placeOrder() {
   setError(null);
 
-  const currentCart = loadCart() || [];
+ const currentCart = loadCart();
+const items = Array.isArray(currentCart?.items) ? currentCart.items : [];
 
-if (currentCart.length === 0) {
+if (items.length === 0) {
   setError("Cart is empty");
   return;
 }
+
 
   if (!customer.name || !customer.phone || !customer.address) {
     setError("Please fill all customer details");
@@ -342,28 +344,32 @@ if (currentCart.length === 0) {
     try {
       setLoading(true);
 
-      const latestCart = loadCart() || [];
+      const rawCart = loadCart();
+const itemsArray = Array.isArray(rawCart?.items) ? rawCart.items : [];
 
-      if (latestCart.length === 0) {
-        throw new Error("Cart is empty");
-      }
+if (itemsArray.length === 0) {
+  throw new Error("Cart is empty");
+}
 
-      const payload = {
-        customer,
-        paymentMethod: "cod",
-        items: latestCart.map((item) => ({
-          productId: item.productId,
-          title: item.title || item.name || "",
-          sku: item.sku || "",
-          color: item.color || "",
-          size: item.size || "",
-          quantity: Number(item.quantity || 1),
-          price: Number(item.price || 0),
-          image: item.image || item.thumbnail || "",
-        })),
-      };
+const payload = {
+  customer,
+  paymentMethod: "cod",
+  items: itemsArray.map((item) => ({
+    productId: item.productId,
+    title: item.title || item.name || "",
+    sku: item.sku || "",
+    color: item.color || "",
+    size: item.size || "",
+    quantity: Number(item.quantity || 1),
+    price: Number(item.price || 0),
+    image: item.image || item.thumbnail || "",
+  })),
+};
 
-      console.log("ORDER PAYLOAD ITEMS", payload.items);
+console.log("ORDER PAYLOAD ITEMS", payload.items);
+
+
+      
 
       const res = await fetch(`${API}/api/orders`, {
         method: "POST",
