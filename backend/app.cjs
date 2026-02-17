@@ -187,6 +187,26 @@ try {
 } catch (err) {
   console.error('[BOOT] orderRoutes mount error:', err && err.message);
 }
+// -------------------------
+// PAYMENT ROUTES
+// -------------------------
+try {
+  const paymentRoutes = tryRequire(
+    'src/routes/paymentRoutes.cjs',
+    'src/routes/paymentRoutes.js',
+    'routes/paymentRoutes.cjs',
+    'routes/paymentRoutes.js'
+  );
+
+  if (paymentRoutes) {
+    app.use('/api/payment', paymentRoutes);
+    console.log('[BOOT] Mounted paymentRoutes at /api/payment');
+  } else {
+    console.warn('[BOOT] paymentRoutes not found');
+  }
+} catch (err) {
+  console.error('[BOOT] paymentRoutes mount error:', err && err.message);
+}
 
 // Admin product mount (optional)
 try {
