@@ -27,6 +27,7 @@
     "multer": "^2.0.2",
     "rate-limit-redis": "^4.2.2",
     "rate-limiter-flexible": "^8.3.0",
+    "razorpay": "^2.9.6",
     "uuid": "^13.0.0"
   },
   "devDependencies": {
