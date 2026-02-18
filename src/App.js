@@ -1,6 +1,7 @@
 // src/App.js
 import React, { Suspense, lazy } from "react";
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, useParams } from "react-router-dom";
+import { OrderSuccess } from "./components/OtpCheckout";
 
 import Navbar from "./components/Navbar";
 import Footer from "./components/Footer";
@@ -13,7 +14,6 @@ const Home = lazy(() => import("./pages/Home"));
 const ProductDetail = lazy(() => import("./pages/ProductDetail"));
 const CartPage = lazy(() => import("./pages/CartPage"));
 const Checkout = lazy(() => import("./pages/Checkout"));
-import { OrderSuccess } from "./components/OtpCheckout";
 
 const ShippingPage = lazy(() => import("./pages/ShippingPage"));
 const PrivacyPolicy = lazy(() => import("./pages/PrivacyPolicy"));
@@ -34,7 +34,7 @@ const ShopProducts = lazy(() => import("./shop/ShopProducts"));
 
 // Admin
 const AdminPage = lazy(() => import("./admin/AdminPage"));
-import { useParams } from "react-router-dom";
+
 
 function OrderSuccessWrapper() {
   const { orderId } = useParams();
