@@ -13,6 +13,8 @@ const Home = lazy(() => import("./pages/Home"));
 const ProductDetail = lazy(() => import("./pages/ProductDetail"));
 const CartPage = lazy(() => import("./pages/CartPage"));
 const Checkout = lazy(() => import("./pages/Checkout"));
+import { OrderSuccess } from "./components/OtpCheckout";
+
 const ShippingPage = lazy(() => import("./pages/ShippingPage"));
 const PrivacyPolicy = lazy(() => import("./pages/PrivacyPolicy"));
 const SizeGuide = lazy(() => import("./pages/SizeGuide"));
@@ -32,6 +34,12 @@ const ShopProducts = lazy(() => import("./shop/ShopProducts"));
 
 // Admin
 const AdminPage = lazy(() => import("./admin/AdminPage"));
+import { useParams } from "react-router-dom";
+
+function OrderSuccessWrapper() {
+  const { orderId } = useParams();
+  return <OrderSuccess orderId={orderId} />;
+}
 
 function App() {
   return (
@@ -54,6 +62,8 @@ function App() {
             <Route path="/product/:slug" element={<ProductDetail />} />
             <Route path="/cart" element={<CartPage />} />
             <Route path="/checkout" element={<Checkout />} />
+			<Route path="/order-success/:orderId" element={<OrderSuccessWrapper />} />
+
             <Route path="/shipping" element={<ShippingPage />} />
             <Route path="/privacy-policy" element={<PrivacyPolicy />} />
             <Route path="/size-guide" element={<SizeGuide />} />
