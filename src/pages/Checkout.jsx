@@ -56,43 +56,29 @@ export default function Checkout() {
   }, []);
 
   /* ================= EMPTY CART ================= */
-  if (!cartItems.length) {
-    return (
-      <>
-       
-       <div
-  style={{
-    maxWidth: 600,
-    margin: "60px auto",
-    padding: 32,
-    textAlign: "center",
-    background: "#fff",
-    borderRadius: 12,
-    boxShadow: "0 10px 30px rgba(0,0,0,0.06)",
-  }}
->
+ if (!cartItems.length) {
+  return (
+    <div style={{ maxWidth: 600, margin: "60px auto", padding: 32, textAlign: "center" }}>
+      <h2>Your cart is empty</h2>
+      <button
+        onClick={() => navigate("/shop")}
+        style={{
+          marginTop: 20,
+          padding: "12px 20px",
+          background: "#0b5cff",
+          color: "#fff",
+          border: "none",
+          borderRadius: 8,
+          fontWeight: 700,
+          cursor: "pointer",
+        }}
+      >
+        Go to Shop
+      </button>
+    </div>
+  );
+}
 
-          <h2>Your cart is empty</h2>
-          <p>Please add items before checkout.</p>
-          <button
-            onClick={() => navigate("/shop")}
-            style={{
-              marginTop: 20,
-              padding: "12px 20px",
-              background: "#0b5cff",
-              color: "#fff",
-              border: "none",
-              borderRadius: 8,
-              fontWeight: 700,
-              cursor: "pointer",
-            }}
-          >
-            Go to Shop
-          </button>
-        </div>
-      </>
-    );
-  }
 
   /* ================= ORDER SUCCESS ================= */
  function handleOrderPlaced(orderId, order) {
