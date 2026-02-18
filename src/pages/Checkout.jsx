@@ -82,22 +82,23 @@ export default function Checkout() {
 
   /* ================= ORDER SUCCESS ================= */
  function handleOrderPlaced(orderId, order) {
-  try {
-    // Clear BOTH cart shapes (array + object)
-    localStorage.removeItem("cart");
-    localStorage.setItem("cart", JSON.stringify({ items: [] }));
-    localStorage.setItem("cart_items", JSON.stringify([])); // safety for legacy
-
-    // Notify entire app
-    window.dispatchEvent(new Event("cart-updated"));
-    window.dispatchEvent(new StorageEvent("storage"));
-  } catch (e) {
-    console.error("Failed to clear cart", e);
-  }
-
-  // ✅ Redirect to order success page
+  // ✅ First navigate to success page
   navigate(`/order-success/${orderId}`);
+
+  // ✅ Then clear cart AFTER navigation
+  setTimeout(() => {
+    try {
+      localStorage.removeItem("cart");
+      localStorage.setItem("cart", JSON.stringify({ items: [] }));
+      localStorage.setItem("cart_items", JSON.stringify([]));
+      window.dispatchEvent(new Event("cart-updated"));
+      window.dispatchEvent(new StorageEvent("storage"));
+    } catch (e) {
+      console.error("Failed to clear cart", e);
+    }
+  }, 300);
 }
+
 
 
 
