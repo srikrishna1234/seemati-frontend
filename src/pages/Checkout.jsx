@@ -109,8 +109,10 @@ export default function Checkout() {
     console.error("Failed to clear cart", e);
   }
 
-  navigate("/");
+  // ✅ Redirect to order success page
+  navigate(`/order-success/${orderId}`);
 }
+
 
 
 
