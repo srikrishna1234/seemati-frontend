@@ -305,11 +305,35 @@ export function OrderSuccess({ orderId }) {
 
 /* CheckoutWithOtp - returns orderId via onOrderPlaced (parent should handle navigation & clearing cart) */
 export function CheckoutWithOtp({ initialCart = [], onOrderPlaced }) {
+	  // Load Razorpay script once
+  
+
   const [customer, setCustomer] = useState({ name: "", phone: "", address: "" });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [otpOpen, setOtpOpen] = useState(false);
   const [user, setUser] = useState(null);
+// Safe Razorpay loader (build-safe)
+function loadRazorpayScript() {
+  return new Promise((resolve) => {
+    if (typeof window === "undefined") {
+      resolve(false);
+      return;
+    }
+
+    if (window.Razorpay) {
+      resolve(true);
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.async = true;
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
+}
 
   
 
@@ -345,66 +369,125 @@ if (items.length === 0) {
       setLoading(true);
 
       const rawCart = loadCart();
-const itemsArray = Array.isArray(rawCart?.items) ? rawCart.items : [];
+      const itemsArray = Array.isArray(rawCart?.items) ? rawCart.items : [];
 
-if (itemsArray.length === 0) {
-  throw new Error("Cart is empty");
-}
+      if (itemsArray.length === 0) {
+        throw new Error("Cart is empty");
+      }
 
-const payload = {
-  customer,
-  paymentMethod: "cod",
-  items: itemsArray.map((item) => ({
-    productId: item.productId,
-    title: item.title || item.name || "",
-    sku: item.sku || "",
-    color: item.color || "",
-    size: item.size || "",
-    quantity: Number(item.quantity || 1),
-    price: Number(item.price || 0),
-    image: item.image || item.thumbnail || "",
-  })),
-};
+      // Calculate total
+      const totalAmount = itemsArray.reduce(
+        (sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 1),
+        0
+      );
 
-console.log("ORDER PAYLOAD ITEMS", payload.items);
-
-
-      
-
-      const res = await fetch(`${API}/api/orders`, {
+      // 1️⃣ Create Razorpay order
+      const orderRes = await fetch(`${API}/api/payment/create-order`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        credentials: "omit",
+        body: JSON.stringify({
+          amount: totalAmount,
+          currency: "INR",
+          receipt: "receipt_" + Date.now(),
+        }),
       });
 
-      let data;
-      const contentType = res.headers.get("content-type") || "";
-      if (contentType.includes("application/json")) {
-        data = await res.json();
-      } else {
-        const text = await res.text();
-        throw new Error(text);
+      const razorpayOrder = await orderRes.json();
+
+      if (!razorpayOrder?.id) {
+        throw new Error("Failed to create Razorpay order");
       }
+// Load Razorpay safely
+const scriptLoaded = await loadRazorpayScript();
+if (!scriptLoaded) {
+  throw new Error("Razorpay SDK failed to load. Check internet connection.");
+}
 
-      if (!res.ok) {
-        throw new Error(data?.message || "Order failed");
-      }
+      // 2️⃣ Open Razorpay Checkout
+      const options = {
+        key: process.env.REACT_APP_RAZORPAY_KEY_ID,
+        amount: razorpayOrder.amount,
+        currency: razorpayOrder.currency,
+        name: "Seemati",
+        description: "Order Payment",
+        order_id: razorpayOrder.id,
+        handler: async function (response) {
+          try {
+            // 3️⃣ Verify signature
+            const verifyRes = await fetch(`${API}/api/payment/verify`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(response),
+            });
 
-      clearCart();
-      window.dispatchEvent(new Event("cart-updated"));
+            const verifyData = await verifyRes.json();
 
-      onOrderPlaced && onOrderPlaced(data.orderId, data.order);
+            if (!verifyData?.success) {
+              throw new Error("Payment verification failed");
+            }
+
+            // 4️⃣ Create final order in your system
+            const payload = {
+              customer,
+              paymentMethod: "razorpay",
+              razorpayPaymentId: response.razorpay_payment_id,
+              items: itemsArray.map((item) => ({
+                productId: item.productId,
+                title: item.title || item.name || "",
+                sku: item.sku || "",
+                color: item.color || "",
+                size: item.size || "",
+                quantity: Number(item.quantity || 1),
+                price: Number(item.price || 0),
+                image: item.image || item.thumbnail || "",
+              })),
+            };
+
+            const finalOrderRes = await fetch(`${API}/api/orders`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+            });
+
+            const finalData = await finalOrderRes.json();
+
+            if (!finalOrderRes.ok) {
+              throw new Error(finalData?.message || "Order save failed");
+            }
+
+            clearCart();
+            window.dispatchEvent(new Event("cart-updated"));
+
+            onOrderPlaced && onOrderPlaced(finalData.orderId, finalData.order);
+
+          } catch (err) {
+            setError(err.message || "Payment verification failed");
+          }
+        },
+        prefill: {
+          name: customer.name,
+          contact: customer.phone,
+        },
+        theme: {
+          color: "#000000",
+        },
+      };
+
+      if (typeof window === "undefined" || !window.Razorpay) {
+  throw new Error("Razorpay not available");
+}
+
+const rzp = new window.Razorpay(options);
+      rzp.open();
 
     } catch (e) {
-      setError(e.message || "Order failed after OTP");
+      setError(e.message || "Payment failed");
     } finally {
       setLoading(false);
     }
   })();
-
-
 }
+
 
 
   return (
