@@ -129,13 +129,8 @@ export default function Checkout() {
 
   /* ================= MAIN ================= */
   return (
-  <form
-    onSubmit={(e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      return false;
-    }}
-  >
+  <>
+
 
       {/* FREE SHIPPING — ALWAYS TOP */}
       <div style={{ position: "sticky", top: 0, zIndex: 50 }}>
@@ -258,7 +253,8 @@ export default function Checkout() {
           </aside>
         </div>
       </div>
-        </form>
+           </>
   );
 }
+
 
