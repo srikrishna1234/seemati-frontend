@@ -2,7 +2,9 @@
 const router = express.Router();
 const Order = require("../../models/Order.cjs");
 
+// ===============================
 // CREATE ORDER
+// ===============================
 router.post("/", async (req, res) => {
   try {
     const { customer, items, paymentMethod } = req.body;
@@ -15,6 +17,7 @@ router.post("/", async (req, res) => {
       (s, it) => s + Number(it.price || 0) * Number(it.quantity || 1),
       0
     );
+
     const shipping = subtotal > 999 ? 0 : 60;
     const tax = Math.round(subtotal * 0.05);
     const total = subtotal + shipping + tax;
@@ -33,6 +36,24 @@ router.post("/", async (req, res) => {
     return res.json({ ok: true, orderId: order._id, order });
   } catch (err) {
     console.error("[ORDER CREATE ERROR]", err);
+    return res.status(500).json({ ok: false, message: "Server error" });
+  }
+});
+
+// ===============================
+// GET ORDER BY ID
+// ===============================
+router.get("/:id", async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+
+    if (!order) {
+      return res.status(404).json({ ok: false, message: "Order not found" });
+    }
+
+    return res.json({ ok: true, order });
+  } catch (err) {
+    console.error("[ORDER FETCH ERROR]", err);
     return res.status(500).json({ ok: false, message: "Server error" });
   }
 });
