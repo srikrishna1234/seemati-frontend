@@ -458,7 +458,13 @@ if (!scriptLoaded) {
             clearCart();
             window.dispatchEvent(new Event("cart-updated"));
 
-            onOrderPlaced && onOrderPlaced(finalData.orderId, finalData.order);
+            const createdOrderId = finalData.order?._id || finalData.orderId;
+
+if (!createdOrderId) {
+  throw new Error("Order ID missing from server response");
+}
+
+onOrderPlaced && onOrderPlaced(createdOrderId, finalData.order);
 
           } catch (err) {
             setError(err.message || "Payment verification failed");
