@@ -77,7 +77,7 @@ export function computeTotals(cartLike) {
   const items = obj.items || [];
   const subtotal = items.reduce((s, it) => s + (Number(it.price || 0) * Number(it.quantity || it.qty || 0)), 0);
   const shipping = 0;
-  const tax = Math.round(subtotal * 0.05); // example tax
+  const tax = 0; // example tax
   const discount = 0;
   const total = subtotal + shipping + tax - discount;
   return { items, subtotal, shipping, tax, discount, total };
